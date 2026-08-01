@@ -42,9 +42,10 @@ import {
 interface AnalyticsViewProps {
   bets: Bet[];
   bookmakers: Bookmaker[];
+  userCurrency?: string;
 }
 
-export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers }) => {
+export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, userCurrency }) => {
   const [activeSubTab, setActiveSubTab] = useState<'overview' | 'heatmap_risk' | 'margins' | 'monte_carlo' | 'kelly'>('overview');
 
   // Kelly Criterion Calculator state
@@ -549,10 +550,10 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers }
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#27314a" vertical={false} />
                     <XAxis dataKey="date" stroke="#8d90a0" tick={{ fontSize: 11 }} />
-                    <YAxis stroke="#8d90a0" tick={{ fontSize: 11 }} tickFormatter={(v) => `${getCurrencySymbol()}${v}`} />
+                    <YAxis stroke="#8d90a0" tick={{ fontSize: 11 }} tickFormatter={(v) => `${getCurrencySymbol(userCurrency)}${v}`} />
                     <Tooltip
                       contentStyle={{ backgroundColor: '#0b1326', borderColor: '#27314a', borderRadius: '8px', color: '#fff' }}
-                      formatter={(val: any) => [`${getCurrencySymbol()}${Number(val).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Bankroll']}
+                      formatter={(val: any) => [`${getCurrencySymbol(userCurrency)}${Number(val).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Bankroll']}
                     />
                     <Area type="monotone" dataKey="balance" stroke="#4edea3" strokeWidth={2.5} fillOpacity={1} fill="url(#bankrollGrad)" />
                   </AreaChart>
@@ -633,7 +634,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers }
                       <YAxis stroke="#8d90a0" tick={{ fontSize: 10 }} />
                       <Tooltip
                         contentStyle={{ backgroundColor: '#0b1326', borderColor: '#27314a', borderRadius: '8px', color: '#fff' }}
-                        formatter={(val: any) => [`${formatCurrency(Number(val))}`, 'Profit/Loss']}
+                        formatter={(val: any) => [`${formatCurrency(Number(val), userCurrency)}`, 'Profit/Loss']}
                       />
                       <Bar dataKey="profit" fill="#8b5cf6" radius={[4, 4, 0, 0]}>
                         {tagPerformanceData.map((entry, index) => (
@@ -739,14 +740,14 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers }
                       </Pie>
                       <Tooltip
                         contentStyle={{ backgroundColor: '#0b1326', borderColor: '#27314a', borderRadius: '8px', color: '#fff' }}
-                        formatter={(val: any) => [`${getCurrencySymbol()}${Number(val).toFixed(2)}`, 'Allocated']}
+                        formatter={(val: any) => [`${getCurrencySymbol(userCurrency)}${Number(val).toFixed(2)}`, 'Allocated']}
                       />
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="absolute text-center pointer-events-none">
                     <span className="text-xs font-semibold text-[#8d90a0]">Staked</span>
                     <p className="text-sm font-bold font-mono text-white">
-                      {getCurrencySymbol()}{Math.round(totalStakedAll)}
+                      {getCurrencySymbol(userCurrency)}{Math.round(totalStakedAll)}
                     </p>
                   </div>
                 </div>
@@ -755,7 +756,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers }
                 <div className="md:col-span-7 space-y-3">
                   <div>
                     <div className="flex justify-between items-center text-[11px] mb-1">
-                      <span className="text-[#8d90a0] font-medium">High Tier (&ge; €100)</span>
+                      <span className="text-[#8d90a0] font-medium">High Tier (&ge; {formatCurrency(100, userCurrency)})</span>
                       <span className="font-mono font-bold text-rose-400">{highPct}% ({highStakeCount} bets)</span>
                     </div>
                     <div className="h-2 w-full bg-[#0b1326] rounded-full overflow-hidden">
@@ -765,7 +766,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers }
 
                   <div>
                     <div className="flex justify-between items-center text-[11px] mb-1">
-                      <span className="text-[#8d90a0] font-medium">Medium Tier (€30 - €99)</span>
+                      <span className="text-[#8d90a0] font-medium">Medium Tier ({formatCurrency(30, userCurrency)} - {formatCurrency(99, userCurrency)})</span>
                       <span className="font-mono font-bold text-[#2563eb]">{medPct}% ({medStakeCount} bets)</span>
                     </div>
                     <div className="h-2 w-full bg-[#0b1326] rounded-full overflow-hidden">
@@ -775,7 +776,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers }
 
                   <div>
                     <div className="flex justify-between items-center text-[11px] mb-1">
-                      <span className="text-[#8d90a0] font-medium">Low Tier (&lt; €30)</span>
+                      <span className="text-[#8d90a0] font-medium">Low Tier (&lt; {formatCurrency(30, userCurrency)})</span>
                       <span className="font-mono font-bold text-[#4edea3]">{lowPct}% ({lowStakeCount} bets)</span>
                     </div>
                     <div className="h-2 w-full bg-[#0b1326] rounded-full overflow-hidden">
@@ -1011,7 +1012,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers }
             </div>
 
             <div>
-              <label className="block text-[11px] text-[#8d90a0] mb-1">Bankroll ($)</label>
+              <label className="block text-[11px] text-[#8d90a0] mb-1">Bankroll ({getCurrencySymbol(userCurrency)})</label>
               <input
                 type="number"
                 value={mcBankroll}
@@ -1059,21 +1060,21 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers }
                 <div className="bg-[#0b1326] p-4 rounded-xl border border-[#27314a]">
                   <span className="text-xs text-[#8d90a0]">Median Outcome (50th %)</span>
                   <div className="text-xl font-bold font-mono text-[#4edea3]">
-                    {formatCurrency(mcResults.medianFinal)}
+                    {formatCurrency(mcResults.medianFinal, userCurrency)}
                   </div>
                 </div>
 
                 <div className="bg-[#0b1326] p-4 rounded-xl border border-[#27314a]">
                   <span className="text-xs text-[#8d90a0]">Worst Case (5th %)</span>
                   <div className="text-xl font-bold font-mono text-rose-400">
-                    {formatCurrency(mcResults.worstCase)}
+                    {formatCurrency(mcResults.worstCase, userCurrency)}
                   </div>
                 </div>
 
                 <div className="bg-[#0b1326] p-4 rounded-xl border border-[#27314a]">
                   <span className="text-xs text-[#8d90a0]">Best Case (95th %)</span>
                   <div className="text-xl font-bold font-mono text-[#2563eb]">
-                    {formatCurrency(mcResults.bestCase)}
+                    {formatCurrency(mcResults.bestCase, userCurrency)}
                   </div>
                 </div>
 
@@ -1148,7 +1149,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers }
             </div>
 
             <div>
-              <label className="block text-xs text-[#8d90a0] font-medium mb-1">Total Bankroll Size ({getCurrencySymbol()})</label>
+              <label className="block text-xs text-[#8d90a0] font-medium mb-1">Total Bankroll Size ({getCurrencySymbol(userCurrency)})</label>
               <input
                 type="number"
                 value={kellyBankrollSize}
@@ -1183,7 +1184,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers }
             <div className="space-y-1 text-right">
               <span className="text-xs text-[#8d90a0]">Recommended Currency Stake</span>
               <div className="text-2xl font-bold text-[#4edea3] font-mono">
-                {formatCurrency(recommendedStakeAmount)}
+                {formatCurrency(recommendedStakeAmount, userCurrency)}
               </div>
             </div>
           </div>

@@ -1,7 +1,7 @@
 import express, { Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { query } from './db';
+import { query, getDbPool } from './db';
 import { authenticateToken, AuthenticatedRequest } from './middleware';
 
 const router = express.Router();
@@ -12,29 +12,37 @@ const JWT_SECRET = process.env.JWT_SECRET || 'betlogic_super_secret_session_toke
  * Register a new user and seed their default bankroll.
  */
 router.post('/register', async (req: any, res: any) => {
+  const pool = getDbPool();
+  const client = await pool.connect();
+
   try {
     const { name, email, password, currency } = req.body;
 
     if (!name || !email || !password) {
+      client.release();
       return res.status(400).json({ error: 'Name, email, and password are required.' });
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
+      client.release();
       return res.status(400).json({ error: 'Please provide a valid email address.' });
     }
 
     // Check if user already exists
-    const checkUser = await query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
+    const checkUser = await client.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
     if (checkUser.rows.length > 0) {
+      client.release();
       return res.status(409).json({ error: 'An account with this email already exists.' });
     }
 
     // Hash password
     const passwordHash = await bcrypt.hash(password, 10);
 
+    await client.query('BEGIN');
+
     // Insert user
-    const userResult = await query(
+    const userResult = await client.query(
       `INSERT INTO users (name, email, password_hash, currency) 
        VALUES ($1, $2, $3, $4) 
        RETURNING id, name, email, currency`,
@@ -44,7 +52,7 @@ router.post('/register', async (req: any, res: any) => {
     const user = userResult.rows[0];
 
     // Auto-seed a default Primary Bankroll for the user
-    const defaultBankroll = await query(
+    const defaultBankroll = await client.query(
       `INSERT INTO bankrolls (user_id, name, currency, initial_balance, current_balance, color, description)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
@@ -54,18 +62,20 @@ router.post('/register', async (req: any, res: any) => {
     const bankrollId = defaultBankroll.rows[0].id;
 
     // Set as active bankroll for the user
-    await query('UPDATE users SET active_bankroll_id = $1 WHERE id = $2', [bankrollId, user.id]);
+    await client.query('UPDATE users SET active_bankroll_id = $1 WHERE id = $2', [bankrollId, user.id]);
 
     // Seed default bookmakers
     const defaultBookmakers = ['Bet365', 'DraftKings', 'FanDuel', 'Pinnacle', 'Bwin'];
     for (const bookmakerName of defaultBookmakers) {
-      await query(
+      await client.query(
         `INSERT INTO bookmakers (user_id, name, real_balance, free_bet_balance, average_margin, color)
          VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (user_id, name) DO NOTHING`,
         [user.id, bookmakerName, 0.00, 0.00, 5.00, '#10b981']
       );
     }
+
+    await client.query('COMMIT');
 
     // Generate JWT token
     const token = jwt.sign(
@@ -85,8 +95,15 @@ router.post('/register', async (req: any, res: any) => {
       },
     });
   } catch (err: any) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rbErr) {
+      // Ignore rollback error if transaction didn't start
+    }
     console.error('Error during registration:', err);
     return res.status(500).json({ error: 'Registration failed due to a server error.' });
+  } finally {
+    client.release();
   }
 });
 
@@ -153,7 +170,7 @@ router.get('/me', authenticateToken as any, async (req: AuthenticatedRequest, re
     );
 
     if (userResult.rows.length === 0) {
-      return res.status(404).json({ error: 'User profile not found.' });
+      return res.status(401).json({ error: 'User profile not found. Please log in again.' });
     }
 
     const user = userResult.rows[0];

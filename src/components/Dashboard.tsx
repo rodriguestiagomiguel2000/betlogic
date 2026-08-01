@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Bet, Bankroll, Bookmaker, BetStatus } from '../types';
-import { formatCurrency, formatOdds, calculateWinStreak } from '../utils/storage';
+import { formatCurrency, formatOdds, calculateWinStreak, getBookmakerBalanceForBankroll, getCurrencySymbol } from '../utils/storage';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { TrendingUp, Flame, ShieldAlert, Zap, Filter, CheckCircle2, XCircle, Clock, Plus, ScanLine, ArrowUpRight, Camera } from 'lucide-react';
 import { BookmakerLogo } from './BookmakerLogo';
@@ -9,6 +9,8 @@ interface DashboardProps {
   bets: Bet[];
   bankrolls: Bankroll[];
   bookmakers: Bookmaker[];
+  activeBankrollId?: string;
+  userCurrency?: string;
   onUpdateBetStatus: (betId: string, status: 'won' | 'lost' | 'void' | 'cashout', actualReturn?: number) => void;
   onUpdateBetLegStatus?: (betId: string, legId: string, status: BetStatus) => void;
   onNavigate: (tab: string) => void;
@@ -18,13 +20,22 @@ export const Dashboard: React.FC<DashboardProps> = ({
   bets,
   bankrolls,
   bookmakers,
+  activeBankrollId,
+  userCurrency,
   onUpdateBetStatus,
   onUpdateBetLegStatus,
   onNavigate
 }) => {
   // Filters
   const [filterMode, setFilterMode] = useState<'all' | 'live' | 'prematch'>('all');
-  const [selectedBankroll, setSelectedBankroll] = useState<string>('all');
+  const [selectedBankroll, setSelectedBankroll] = useState<string>(activeBankrollId || bankrolls[0]?.id || 'all');
+  const [userChangedBankroll, setUserChangedBankroll] = useState<boolean>(false);
+
+  React.useEffect(() => {
+    if (activeBankrollId && !userChangedBankroll) {
+      setSelectedBankroll(activeBankrollId);
+    }
+  }, [activeBankrollId]);
   const [selectedSport, setSelectedSport] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
 
@@ -45,8 +56,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
   });
 
   // Calculate Metrics
-  const totalBankrollBalance = bankrolls.reduce((sum, b) => sum + b.currentBalance, 0);
-  const totalFreeBets = bankrolls.reduce((sum, b) => sum + b.freeBetCredits, 0);
+  const totalBankrollBalance = bankrolls.reduce((sum, b) => {
+    if (selectedBankroll !== 'all' && b.id !== selectedBankroll) return sum;
+    const bmCash = bookmakers.reduce(
+      (bmSum, bm) => bmSum + getBookmakerBalanceForBankroll(bm, b.id).cashBalance,
+      0
+    );
+    return sum + b.currentBalance + bmCash;
+  }, 0);
+
+  const totalFreeBets = bankrolls.reduce((sum, b) => {
+    if (selectedBankroll !== 'all' && b.id !== selectedBankroll) return sum;
+    const bmFree = bookmakers.reduce(
+      (bmSum, bm) => bmSum + getBookmakerBalanceForBankroll(bm, b.id).freeBetBalance,
+      0
+    );
+    return sum + b.freeBetCredits + bmFree;
+  }, 0);
   
   const settledBets = filteredBets.filter((b) => b.status === 'won' || b.status === 'lost' || b.status === 'cashout');
   const totalStaked = settledBets.reduce((sum, b) => sum + b.stake, 0);
@@ -112,10 +138,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <ArrowUpRight size={16} className="text-[#4edea3]" />
           </div>
           <div className="text-xl md:text-2xl font-extrabold text-white">
-            {formatCurrency(totalBankrollBalance)}
+            {formatCurrency(totalBankrollBalance, userCurrency)}
           </div>
           <div className="text-xs text-[#8d90a0] flex items-center gap-1">
-            <span className="text-[#4edea3] font-medium">+{formatCurrency(totalFreeBets)}</span> free bet credits
+            <span className="text-[#4edea3] font-medium">+{formatCurrency(totalFreeBets, userCurrency)}</span> free bet credits
           </div>
         </div>
 
@@ -126,7 +152,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <TrendingUp size={16} className={netProfit >= 0 ? 'text-[#4edea3]' : 'text-[#ffb3ad]'} />
           </div>
           <div className={`text-xl md:text-2xl font-extrabold ${netProfit >= 0 ? 'text-[#4edea3]' : 'text-[#ffb3ad]'}`}>
-            {netProfit >= 0 ? '+' : ''}{formatCurrency(netProfit)}
+            {netProfit >= 0 ? '+' : ''}{formatCurrency(netProfit, userCurrency)}
           </div>
           <div className="text-xs text-[#8d90a0]">
             From {settledBets.length} settled wagers
@@ -143,7 +169,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             {roiPercentage >= 0 ? '+' : ''}{roiPercentage.toFixed(2)}%
           </div>
           <div className="text-xs text-[#8d90a0]">
-            Total stake: {formatCurrency(totalStaked)}
+            Total stake: {formatCurrency(totalStaked, userCurrency)}
           </div>
         </div>
 
@@ -209,15 +235,24 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <label className="block text-xs text-[#8d90a0] font-medium mb-1">Bankroll Target</label>
             <select
               value={selectedBankroll}
-              onChange={(e) => setSelectedBankroll(e.target.value)}
+              onChange={(e) => {
+                setUserChangedBankroll(true);
+                setSelectedBankroll(e.target.value);
+              }}
               className="w-full bg-[#0b1326] border border-[#27314a] rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#2563eb]"
             >
               <option value="all">All Bankrolls</option>
-              {bankrolls.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name} ({formatCurrency(b.currentBalance)})
-                </option>
-              ))}
+              {bankrolls.map((b) => {
+                const bmCash = bookmakers.reduce(
+                  (sum, bm) => sum + getBookmakerBalanceForBankroll(bm, b.id).cashBalance,
+                  0
+                );
+                return (
+                  <option key={b.id} value={b.id}>
+                    {b.name} ({formatCurrency(b.currentBalance + bmCash, userCurrency)})
+                  </option>
+                );
+              })}
             </select>
           </div>
 
@@ -261,7 +296,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <p className="text-xs text-[#8d90a0]">Track return growth over logged historical wagers</p>
           </div>
           <span className="text-xs font-mono font-bold text-[#4edea3]">
-            {netProfit >= 0 ? '+' : ''}{formatCurrency(netProfit)} overall
+            {netProfit >= 0 ? '+' : ''}{formatCurrency(netProfit, userCurrency)} overall
           </span>
         </div>
 
@@ -277,10 +312,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#27314a" vertical={false} />
                 <XAxis dataKey="date" stroke="#8d90a0" tick={{ fontSize: 11 }} />
-                <YAxis stroke="#8d90a0" tick={{ fontSize: 11 }} tickFormatter={(v) => `€${v}`} />
+                <YAxis stroke="#8d90a0" tick={{ fontSize: 11 }} tickFormatter={(v) => `${getCurrencySymbol(userCurrency)}${v}`} />
                 <Tooltip
                   contentStyle={{ backgroundColor: '#0b1326', borderColor: '#27314a', borderRadius: '8px', color: '#fff' }}
-                  formatter={(value: any) => [`€${value}`, 'Cumulative Profit']}
+                  formatter={(value: any) => [`${getCurrencySymbol(userCurrency)}${value}`, 'Cumulative Profit']}
                 />
                 <Area type="monotone" dataKey="profit" stroke="#4edea3" strokeWidth={2.5} fillOpacity={1} fill="url(#profitGrad)" />
               </AreaChart>
@@ -440,11 +475,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     </div>
 
                     <div className="flex items-center gap-3 font-mono">
-                      <span>Stake: <strong className="text-white">{formatCurrency(bet.stake)}</strong></span>
+                      <span>Stake: <strong className="text-white">{formatCurrency(bet.stake, userCurrency)}</strong></span>
                       <span>
                         Return:{' '}
                         <strong className={bet.status === 'won' ? 'text-[#4edea3]' : bet.status === 'lost' ? 'text-[#ffb3ad]' : 'text-white'}>
-                          {bet.actualReturn !== undefined ? formatCurrency(bet.actualReturn) : formatCurrency(bet.potentialPayout)}
+                          {bet.actualReturn !== undefined ? formatCurrency(bet.actualReturn, userCurrency) : formatCurrency(bet.potentialPayout, userCurrency)}
                         </strong>
                       </span>
                     </div>
@@ -502,11 +537,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <div className="bg-[#0b1326] p-3.5 rounded-xl border border-[#27314a] space-y-1.5">
                     <div className="text-xs text-[#8d90a0] flex justify-between">
                       <span>Date: {new Date(lightboxBet.date).toLocaleDateString()}</span>
-                      <span className="font-mono text-white">Stake: {formatCurrency(lightboxBet.stake)}</span>
+                      <span className="font-mono text-white">Stake: {formatCurrency(lightboxBet.stake, userCurrency)}</span>
                     </div>
                     <div className="text-xs text-[#8d90a0] flex justify-between">
                       <span>Total Odds: <strong className="text-white font-mono">@{formatOdds(lightboxBet.totalOdds)}</strong></span>
-                      <span className="font-mono text-[#4edea3] font-bold">Payout: {formatCurrency(lightboxBet.potentialPayout)}</span>
+                      <span className="font-mono text-[#4edea3] font-bold">Payout: {formatCurrency(lightboxBet.potentialPayout, userCurrency)}</span>
                     </div>
                   </div>
 

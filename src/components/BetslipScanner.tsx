@@ -19,12 +19,13 @@ import {
   ShieldAlert,
   Key
 } from 'lucide-react';
-import { formatCurrency, formatOdds } from '../utils/storage';
+import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
 
 interface BetslipScannerProps {
   bankrolls: Bankroll[];
   bookmakers: Bookmaker[];
   activeBankrollId?: string;
+  userCurrency?: string;
   onAddBet: (bet: Omit<Bet, 'id'>) => void;
   onNavigate: (tab: string) => void;
 }
@@ -61,6 +62,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   bankrolls,
   bookmakers,
   activeBankrollId,
+  userCurrency,
   onAddBet,
   onNavigate
 }) => {
@@ -73,6 +75,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<{
     is403: boolean;
+    isQuotaExceeded: boolean;
     attemptedModels: string[];
     message: string;
   } | null>(null);
@@ -261,8 +264,15 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
       console.error("Gemini OCR Parsing Error:", err);
       const finalErrorMessage = err.message || "Failed to scan and analyze betslip image.";
       setErrorMessage(finalErrorMessage);
+      
+      const is403 = finalErrorMessage.includes('403') || finalErrorMessage.includes('Secrets') || finalErrorMessage.includes('API key');
+      const isQuotaExceeded = finalErrorMessage.toLowerCase().includes('quota') || 
+                               finalErrorMessage.toLowerCase().includes('exhausted') || 
+                               finalErrorMessage.includes('429');
+
       setErrorDetails({
-        is403: finalErrorMessage.includes('403') || finalErrorMessage.includes('Secrets') || finalErrorMessage.includes('API key'),
+        is403,
+        isQuotaExceeded,
         attemptedModels: ['gemini-3.6-flash (server-side)'],
         message: finalErrorMessage
       });
@@ -619,8 +629,17 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
             <div className="space-y-1.5 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-base font-bold text-white">
-                  {errorDetails?.is403 ? '403 PERMISSION_DENIED: Gemini API Access Restricted' : 'Gemini OCR Parsing Failed'}
+                  {errorDetails?.isQuotaExceeded 
+                    ? '429 RESOURCE_EXHAUSTED: Gemini API Quota Limit Reached'
+                    : errorDetails?.is403 
+                    ? '403 PERMISSION_DENIED: Gemini API Access Restricted' 
+                    : 'Gemini OCR Parsing Failed'}
                 </h3>
+                {errorDetails?.isQuotaExceeded && (
+                  <span className="bg-amber-500/20 text-amber-400 border border-amber-500/40 text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase">
+                    HTTP 429
+                  </span>
+                )}
                 {errorDetails?.is403 && (
                   <span className="bg-rose-500/20 text-rose-400 border border-rose-500/40 text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase">
                     HTTP 403
@@ -663,6 +682,37 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                   <div>
                     <strong className="text-white block font-semibold">Check API Key HTTP / Referrer Restrictions</strong>
                     <span>Verify that your API Key does not have strict IP address or HTTP referrer restrictions blocking client-side browser requests from this app's preview domain.</span>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          )}
+
+          {errorDetails?.isQuotaExceeded && (
+            <div className="bg-[#0b1326] border border-[#27314a] p-4.5 rounded-xl space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+                <AlertTriangle size={15} /> Quota Limit Diagnostic Checklist & Solutions
+              </h4>
+              <ul className="space-y-2.5 text-xs text-[#8d90a0]">
+                <li className="flex items-start gap-2.5">
+                  <div className="w-5 h-5 rounded-full bg-amber-950 text-amber-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-amber-800">1</div>
+                  <div>
+                    <strong className="text-white block font-semibold">Free-Tier Requests Per Minute Limit</strong>
+                    <span>Free Google AI Studio API Keys have a rate limit of 15 Requests Per Minute (RPM). If you perform multiple uploads or re-scans in short succession, you will encounter a rate-limiting block.</span>
+                  </div>
+                </li>
+                <li className="flex items-start gap-2.5">
+                  <div className="w-5 h-5 rounded-full bg-amber-950 text-amber-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-amber-800">2</div>
+                  <div>
+                    <strong className="text-white block font-semibold">Daily Token Limit</strong>
+                    <span>Free-tier accounts also have a daily token usage quota of 25 million tokens. Scanning very large, high-resolution images multiple times can consume this budget quickly.</span>
+                  </div>
+                </li>
+                <li className="flex items-start gap-2.5">
+                  <div className="w-5 h-5 rounded-full bg-amber-950 text-amber-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-amber-800">3</div>
+                  <div>
+                    <strong className="text-white block font-semibold">Immediate Mitigation</strong>
+                    <span>Please wait at least 60 seconds before uploading again. If your token quota is fully exhausted, you can still use the <strong>Run Instant Demo Sample</strong> option below to test the full parsing interface.</span>
                   </div>
                 </li>
               </ul>
@@ -832,7 +882,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-xs text-[#8d90a0] font-medium mb-1">Total Stake ($)</label>
+                    <label className="block text-xs text-[#8d90a0] font-medium mb-1">Total Stake ({getCurrencySymbol(userCurrency)})</label>
                     <input
                       type="number"
                       step="0.01"

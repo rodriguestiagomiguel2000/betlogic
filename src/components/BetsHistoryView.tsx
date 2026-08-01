@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Bet, Bankroll, Bookmaker, BetStatus, SportType, BetType, TagDefinition } from '../types';
-import { formatCurrency, formatOdds } from '../utils/storage';
+import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
 import { BookmakerLogo } from './BookmakerLogo';
 import {
   Search,
@@ -32,6 +32,8 @@ interface BetsHistoryViewProps {
   bankrolls: Bankroll[];
   bookmakers: Bookmaker[];
   tagDefinitions: TagDefinition[];
+  activeBankrollId?: string;
+  userCurrency?: string;
   onUpdateBetStatus: (
     betId: string,
     status: BetStatus,
@@ -51,6 +53,8 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
   bankrolls,
   bookmakers,
   tagDefinitions,
+  activeBankrollId,
+  userCurrency,
   onUpdateBetStatus,
   onUpdateBetLegStatus,
   onNavigate,
@@ -61,7 +65,14 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [sportFilter, setSportFilter] = useState<string>('all');
   const [bookmakerFilter, setBookmakerFilter] = useState<string>('all');
-  const [bankrollFilter, setBankrollFilter] = useState<string>('all');
+  const [bankrollFilter, setBankrollFilter] = useState<string>(activeBankrollId || bankrolls[0]?.id || 'all');
+  const [userChangedBankroll, setUserChangedBankroll] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (activeBankrollId && !userChangedBankroll) {
+      setBankrollFilter(activeBankrollId);
+    }
+  }, [activeBankrollId]);
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [liveFilter, setLiveFilter] = useState<string>('all');
   const [dateRange, setDateRange] = useState<string>('all');
@@ -455,6 +466,26 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
             </select>
           </div>
 
+          {/* Bankroll Filter */}
+          <div>
+            <label className="block text-[10px] text-[#8d90a0] mb-1">Bankroll</label>
+            <select
+              value={bankrollFilter}
+              onChange={(e) => {
+                setUserChangedBankroll(true);
+                setBankrollFilter(e.target.value);
+              }}
+              className="w-full bg-[#0b1326] border border-[#27314a] rounded px-2.5 py-1.5 text-white"
+            >
+              <option value="all">All Bankrolls</option>
+              {bankrolls.map((br) => (
+                <option key={br.id} value={br.id}>
+                  {br.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Bet Type Filter */}
           <div>
             <label className="block text-[10px] text-[#8d90a0] mb-1">Bet Type</label>
@@ -728,17 +759,17 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
 
                         {/* Stake */}
                         <td className="p-3 text-right font-mono text-white">
-                          {formatCurrency(bet.stake)}
+                          {formatCurrency(bet.stake, userCurrency)}
                         </td>
 
                         {/* Payout & Net PnL */}
                         <td className="p-3 text-right font-mono">
                           <div className="font-bold text-white">
-                            {formatCurrency(bet.status === 'won' ? (bet.actualReturn ?? bet.potentialPayout) : bet.status === 'cashout' ? (bet.actualReturn ?? 0) : bet.potentialPayout)}
+                            {formatCurrency(bet.status === 'won' ? (bet.actualReturn ?? bet.potentialPayout) : bet.status === 'cashout' ? (bet.actualReturn ?? 0) : bet.potentialPayout, userCurrency)}
                           </div>
                           {bet.status !== 'pending' && bet.status !== 'void' && (
                             <div className={`text-[10px] font-bold ${profitLoss >= 0 ? 'text-[#4edea3]' : 'text-[#ffb3ad]'}`}>
-                              {profitLoss >= 0 ? '+' : ''}{formatCurrency(profitLoss)}
+                              {profitLoss >= 0 ? '+' : ''}{formatCurrency(profitLoss, userCurrency)}
                             </div>
                           )}
                         </td>
@@ -966,14 +997,14 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
 
                 <div className="pt-3 border-t border-[#27314a] flex items-center justify-between text-xs">
                   <div>
-                    <div className="text-[#8d90a0]">Stake: <span className="font-mono font-bold text-white">{formatCurrency(bet.stake)}</span></div>
+                    <div className="text-[#8d90a0]">Stake: <span className="font-mono font-bold text-white">{formatCurrency(bet.stake, userCurrency)}</span></div>
                     <div className="text-[#8d90a0]">Odds: <span className="font-mono font-bold text-white">@{formatOdds(bet.totalOdds)}</span></div>
                   </div>
 
                   <div className="text-right">
                     <div className="text-[#8d90a0]">Payout</div>
                     <div className="font-mono font-extrabold text-white text-sm">
-                      {formatCurrency(bet.status === 'won' ? (bet.actualReturn ?? bet.potentialPayout) : bet.potentialPayout)}
+                      {formatCurrency(bet.status === 'won' ? (bet.actualReturn ?? bet.potentialPayout) : bet.potentialPayout, userCurrency)}
                     </div>
                   </div>
                 </div>
@@ -1003,7 +1034,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
               <div className="font-bold text-white">{settlementBet.legs[0]?.event}</div>
               <div className="text-[#2563eb] font-semibold">{settlementBet.legs[0]?.selection}</div>
               <div className="text-[#8d90a0]">
-                Stake: {formatCurrency(settlementBet.stake)} • Potential: {formatCurrency(settlementBet.potentialPayout)}
+                Stake: {formatCurrency(settlementBet.stake, userCurrency)} • Potential: {formatCurrency(settlementBet.potentialPayout, userCurrency)}
               </div>
             </div>
 
@@ -1014,19 +1045,19 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                   onClick={() => handleConfirmSettlement('won')}
                   className="py-2.5 bg-[#005236] hover:bg-[#00704a] text-[#4edea3] border border-[#008f5d] rounded-lg font-bold text-xs cursor-pointer flex items-center justify-center gap-1"
                 >
-                  <CheckCircle2 size={16} /> Won ({formatCurrency(settlementBet.potentialPayout)})
+                  <CheckCircle2 size={16} /> Won ({formatCurrency(settlementBet.potentialPayout, userCurrency)})
                 </button>
                 <button
                   onClick={() => handleConfirmSettlement('lost')}
                   className="py-2.5 bg-[#601410] hover:bg-[#801b15] text-[#ffb3ad] border border-[#93231e] rounded-lg font-bold text-xs cursor-pointer flex items-center justify-center gap-1"
                 >
-                  <XCircle size={16} /> Lost ($0)
+                  <XCircle size={16} /> Lost ({formatCurrency(0, userCurrency)})
                 </button>
                 <button
                   onClick={() => handleConfirmSettlement('void')}
                   className="py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-600 rounded-lg font-bold text-xs cursor-pointer flex items-center justify-center gap-1"
                 >
-                  <Ban size={16} /> Push / Void ({formatCurrency(settlementBet.stake)})
+                  <Ban size={16} /> Push / Void ({formatCurrency(settlementBet.stake, userCurrency)})
                 </button>
                 <button
                   onClick={() => handleConfirmSettlement('cashout')}
@@ -1038,7 +1069,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
             </div>
 
             <div className="space-y-1 pt-2">
-              <label className="block text-xs text-[#8d90a0]">Custom Cashout Return Amount ($)</label>
+              <label className="block text-xs text-[#8d90a0]">Custom Cashout Return Amount ({getCurrencySymbol(userCurrency)})</label>
               <input
                 type="number"
                 value={customReturnInput}
@@ -1106,11 +1137,11 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                   <div className="bg-[#0b1326] p-3.5 rounded-xl border border-[#27314a] space-y-1.5">
                     <div className="text-xs text-[#8d90a0] flex justify-between">
                       <span>Date: {new Date(lightboxBet.date).toLocaleDateString()}</span>
-                      <span className="font-mono text-white">Stake: {formatCurrency(lightboxBet.stake)}</span>
+                      <span className="font-mono text-white">Stake: {formatCurrency(lightboxBet.stake, userCurrency)}</span>
                     </div>
                     <div className="text-xs text-[#8d90a0] flex justify-between">
                       <span>Total Odds: <strong className="text-white font-mono">@{formatOdds(lightboxBet.totalOdds)}</strong></span>
-                      <span className="font-mono text-[#4edea3] font-bold">Payout: {formatCurrency(lightboxBet.potentialPayout)}</span>
+                      <span className="font-mono text-[#4edea3] font-bold">Payout: {formatCurrency(lightboxBet.potentialPayout, userCurrency)}</span>
                     </div>
                   </div>
 

@@ -12,19 +12,34 @@ const EXPECTED_TABLES = [
   'bet_legs',
   'bankroll_transfers',
   'tag_definitions',
+  'bankroll_transactions',
 ];
 
 /**
  * Helper function to check and log database tables on startup.
  */
 export async function verifyDatabaseSchema() {
-  if (!process.env.DATABASE_URL) {
-    console.warn('⚠️ DATABASE_URL not set. Skipping database table verification on startup.');
+  const dbUrl = process.env.DATABASE_URL?.trim();
+  if (!dbUrl) {
+    console.warn('⚠️ DATABASE_URL not set. Running in lightweight in-memory storage mode.');
     return;
   }
 
   try {
     await query('ALTER TABLE bankrolls ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0');
+    await query(`
+      CREATE TABLE IF NOT EXISTS bankroll_transactions (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        bankroll_id UUID NOT NULL REFERENCES bankrolls(id) ON DELETE CASCADE,
+        date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        type VARCHAR(50) NOT NULL,
+        description TEXT,
+        bookmaker_id UUID REFERENCES bookmakers(id) ON DELETE SET NULL,
+        amount DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
     const res = await query(
       `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`
     );
@@ -42,7 +57,7 @@ export async function verifyDatabaseSchema() {
       console.log('✅ All expected database tables are present and verified.');
     }
   } catch (err: any) {
-    console.error('❌ Failed to verify database tables on startup:', err.message);
+    console.warn('⚠️ Could not verify database tables on startup (using fallback mode):', err.message || err);
   }
 }
 

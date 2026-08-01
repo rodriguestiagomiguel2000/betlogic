@@ -1,4 +1,4 @@
-import { Bet, UserPreferences, Bankroll, Bookmaker, TagDefinition } from '../types';
+import { Bet, UserPreferences, Bankroll, Bookmaker, TagDefinition, BankrollTransaction } from '../types';
 
 const API_BASE_URL = '/api';
 
@@ -152,6 +152,17 @@ export const bankrollsApi = {
     return apiRequest<{ message: string }>(`/bankrolls/${id}`, {
       method: 'DELETE',
     });
+  },
+
+  async reorder(bankrollIds: string[]): Promise<{ message: string }> {
+    return apiRequest<{ message: string }>('/bankrolls/reorder', {
+      method: 'PUT',
+      body: JSON.stringify({ bankrollIds }),
+    });
+  },
+
+  async transactions(id: string): Promise<BankrollTransaction[]> {
+    return apiRequest<BankrollTransaction[]>(`/bankrolls/${id}/transactions`);
   }
 };
 

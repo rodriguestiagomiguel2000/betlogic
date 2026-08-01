@@ -124,6 +124,19 @@ CREATE TABLE IF NOT EXISTS tag_definitions (
     UNIQUE (user_id, name)
 );
 
+-- 9. BANKROLL TRANSACTIONS (BALANCE SHEET)
+CREATE TABLE IF NOT EXISTS bankroll_transactions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    bankroll_id UUID NOT NULL REFERENCES bankrolls(id) ON DELETE CASCADE,
+    date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    type VARCHAR(50) NOT NULL, -- Initial Balance, Deposit, Withdrawal, Adjustment, Transfer
+    description TEXT,
+    bookmaker_id UUID REFERENCES bookmakers(id) ON DELETE SET NULL,
+    amount DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- INDEXES FOR HIGH-SPEED LOOKUPS
 CREATE INDEX IF NOT EXISTS idx_bets_user_date ON bets(user_id, date);
 CREATE INDEX IF NOT EXISTS idx_bets_bankroll ON bets(bankroll_id);
@@ -132,3 +145,4 @@ CREATE INDEX IF NOT EXISTS idx_bet_legs_bet ON bet_legs(bet_id);
 CREATE INDEX IF NOT EXISTS idx_bankrolls_user ON bankrolls(user_id);
 CREATE INDEX IF NOT EXISTS idx_bookmakers_user ON bookmakers(user_id);
 CREATE INDEX IF NOT EXISTS idx_transfers_user ON bankroll_transfers(user_id);
+CREATE INDEX IF NOT EXISTS idx_bankroll_transactions_bankroll ON bankroll_transactions(bankroll_id);

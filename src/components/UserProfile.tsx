@@ -11,6 +11,10 @@ export const UserProfile: React.FC<UserProfileProps> = ({ prefs, onUpdatePrefs }
   const [formData, setFormData] = useState<UserPreferences>(prefs);
   const [savedSuccess, setSavedSuccess] = useState<boolean>(false);
 
+  React.useEffect(() => {
+    setFormData(prefs);
+  }, [prefs]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onUpdatePrefs(formData);

@@ -289,10 +289,6 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
     });
 
     if (impact.realCashDelta !== 0 || impact.freeBetDelta !== 0) {
-      await client.query(
-        'UPDATE bankrolls SET current_balance = current_balance + $1, free_bet_credits = free_bet_credits + $2 WHERE id = $3 AND user_id = $4',
-        [impact.realCashDelta, impact.freeBetDelta, bankrollId, userId]
-      );
       await applyBookmakerBalanceChange(client, bankrollId, bookmakerId, impact.realCashDelta, impact.freeBetDelta);
     }
 
@@ -362,10 +358,6 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
     });
 
     if (origImpact.realCashDelta !== 0 || origImpact.freeBetDelta !== 0) {
-      await client.query(
-        'UPDATE bankrolls SET current_balance = current_balance - $1, free_bet_credits = free_bet_credits - $2 WHERE id = $3 AND user_id = $4',
-        [origImpact.realCashDelta, origImpact.freeBetDelta, orig.bankroll_id, userId]
-      );
       await applyBookmakerBalanceChange(client, orig.bankroll_id, orig.bookmaker_id, -origImpact.realCashDelta, -origImpact.freeBetDelta);
     }
 
@@ -431,10 +423,6 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
     if (newImpact.realCashDelta !== 0 || newImpact.freeBetDelta !== 0) {
       const targetBankroll = bankrollId || orig.bankroll_id;
       const targetBookmaker = bookmakerId || orig.bookmaker_id;
-      await client.query(
-        'UPDATE bankrolls SET current_balance = current_balance + $1, free_bet_credits = free_bet_credits + $2 WHERE id = $3 AND user_id = $4',
-        [newImpact.realCashDelta, newImpact.freeBetDelta, targetBankroll, userId]
-      );
       await applyBookmakerBalanceChange(client, targetBankroll, targetBookmaker, newImpact.realCashDelta, newImpact.freeBetDelta);
     }
 
@@ -485,10 +473,6 @@ router.delete('/:id', authenticateToken as any, async (req: AuthenticatedRequest
     });
 
     if (origImpact.realCashDelta !== 0 || origImpact.freeBetDelta !== 0) {
-      await client.query(
-        'UPDATE bankrolls SET current_balance = current_balance - $1, free_bet_credits = free_bet_credits - $2 WHERE id = $3 AND user_id = $4',
-        [origImpact.realCashDelta, origImpact.freeBetDelta, orig.bankroll_id, userId]
-      );
       await applyBookmakerBalanceChange(client, orig.bankroll_id, orig.bookmaker_id, -origImpact.realCashDelta, -origImpact.freeBetDelta);
     }
 

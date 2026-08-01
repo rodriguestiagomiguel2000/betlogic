@@ -50,6 +50,7 @@ export interface Bankroll {
   allocatedMargin: number;
   color: string;
   description?: string;
+  displayOrder?: number;
 }
 
 export interface BankrollBookmakerBalance {
@@ -86,6 +87,17 @@ export interface BankrollTransfer {
   rolloverRequired?: number;
   rolloverCompleted?: number;
   notes?: string;
+}
+
+export interface BankrollTransaction {
+  id: string;
+  userId: string;
+  bankrollId: string;
+  date: string;
+  type: string; // Initial Balance, Deposit, Withdrawal, Adjustment, Transfer
+  description: string;
+  bookmakerId?: string;
+  amount: number;
 }
 
 export interface CSVMappingField {

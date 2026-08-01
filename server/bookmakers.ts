@@ -1,5 +1,5 @@
 import express, { Response } from 'express';
-import { query } from './db';
+import { query, getDbPool } from './db';
 import { authenticateToken, AuthenticatedRequest } from './middleware';
 
 const router = express.Router();
@@ -140,8 +140,8 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
 
       await query(
         `UPDATE bookmakers SET 
-          real_balance = COALESCE((SELECT SUM(cash_balance)::INTEGER FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0),
-          free_bet_balance = COALESCE((SELECT SUM(free_bet_balance)::INTEGER FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0)
+          real_balance = COALESCE((SELECT SUM(cash_balance) FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0),
+          free_bet_balance = COALESCE((SELECT SUM(free_bet_balance) FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0)
          WHERE id = $1`,
         [b.id]
       );
@@ -187,6 +187,9 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
  * Update bookmaker details or balance for a bankroll.
  */
 router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  const pool = getDbPool();
+  const client = await pool.connect();
+
   try {
     const userId = req.user?.id;
     const bookmakerId = req.params.id;
@@ -195,18 +198,20 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
     const newCash = realBalance !== undefined ? parseFloat(realBalance) : (cashBalance !== undefined ? parseFloat(cashBalance) : undefined);
     const newFree = freeBetBalance !== undefined ? parseFloat(freeBetBalance) : undefined;
 
+    await client.query('BEGIN');
+
     let targetBankrollId = bankrollId;
     if ((newCash !== undefined || newFree !== undefined) && !targetBankrollId) {
-      const userRes = await query('SELECT active_bankroll_id as "activeBankrollId" FROM users WHERE id = $1', [userId]);
+      const userRes = await client.query('SELECT active_bankroll_id as "activeBankrollId" FROM users WHERE id = $1', [userId]);
       targetBankrollId = userRes.rows[0]?.activeBankrollId;
       if (!targetBankrollId) {
-        const brRes = await query('SELECT id FROM bankrolls WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1', [userId]);
+        const brRes = await client.query('SELECT id FROM bankrolls WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1', [userId]);
         targetBankrollId = brRes.rows[0]?.id;
       }
     }
 
     if (targetBankrollId && (newCash !== undefined || newFree !== undefined)) {
-      const existingRow = await query(
+      const existingRow = await client.query(
         `SELECT cash_balance as "cashBalance", free_bet_balance as "freeBetBalance" FROM bankroll_bookmaker_balances WHERE bankroll_id = $1 AND bookmaker_id = $2`,
         [targetBankrollId, bookmakerId]
       );
@@ -216,7 +221,25 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
       const targetCash = newCash !== undefined ? newCash : curCash;
       const targetFree = newFree !== undefined ? newFree : curFree;
 
-      await query(
+      if (targetCash < 0 || targetFree < 0) {
+        await client.query('ROLLBACK');
+        client.release();
+        return res.status(400).json({ error: 'Balances cannot be negative.' });
+      }
+
+      // Fetch bankroll to verify existence
+      const brRes = await client.query(
+        'SELECT id FROM bankrolls WHERE id = $1 AND user_id = $2',
+        [targetBankrollId, userId]
+      );
+
+      if (brRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        client.release();
+        return res.status(404).json({ error: 'Bankroll not found.' });
+      }
+
+      await client.query(
         `INSERT INTO bankroll_bookmaker_balances (bankroll_id, bookmaker_id, cash_balance, free_bet_balance)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (bankroll_id, bookmaker_id)
@@ -224,7 +247,7 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
         [targetBankrollId, bookmakerId, targetCash, targetFree]
       );
 
-      await query(
+      await client.query(
         `UPDATE bookmakers SET 
           real_balance = COALESCE((SELECT SUM(cash_balance) FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0),
           free_bet_balance = COALESCE((SELECT SUM(free_bet_balance) FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0)
@@ -233,7 +256,7 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
       );
     }
 
-    const result = await query(
+    const result = await client.query(
       `UPDATE bookmakers SET 
         name = COALESCE($1, name),
         logo_url = COALESCE($2, logo_url),
@@ -246,11 +269,13 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
     );
 
     if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      client.release();
       return res.status(404).json({ error: 'Bookmaker not found.' });
     }
 
     const b = result.rows[0];
-    const balancesRes = await query(
+    const balancesRes = await client.query(
       `SELECT bankroll_id as "bankrollId", cash_balance as "cashBalance", free_bet_balance as "freeBetBalance"
        FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1`,
       [bookmakerId]
@@ -261,6 +286,8 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
       freeBetBalance: parseFloat(x.freeBetBalance)
     }));
 
+    await client.query('COMMIT');
+
     return res.json({
       ...b,
       realBalance: balances.reduce((acc, x) => acc + x.cashBalance, 0),
@@ -269,8 +296,13 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
       balances
     });
   } catch (err: any) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rbErr) {}
     console.error('Error updating bookmaker:', err);
     return res.status(500).json({ error: 'Failed to update bookmaker.' });
+  } finally {
+    client.release();
   }
 });
 
@@ -296,12 +328,16 @@ router.delete('/:id', authenticateToken as any, async (req: AuthenticatedRequest
  * Process deposit, withdrawal, or free bet transaction for a bookmaker against a specific bankroll.
  */
 router.post('/:id/transactions', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  const pool = getDbPool();
+  const client = await pool.connect();
+
   try {
     const userId = req.user?.id;
     const bookmakerId = req.params.id;
     const { bankrollId, type, amount, cashDelta, freeBetDelta } = req.body;
 
     if (!bankrollId) {
+      client.release();
       return res.status(400).json({ error: 'bankroll_id is required.' });
     }
 
@@ -320,42 +356,92 @@ router.post('/:id/transactions', authenticateToken as any, async (req: Authentic
       if (freeBetDelta !== undefined) fDelta = parseFloat(freeBetDelta);
     }
 
+    await client.query('BEGIN');
+
+    // Fetch bankroll current balance
+    const brRes = await client.query(
+      'SELECT current_balance as "currentBalance", free_bet_credits as "freeBetCredits" FROM bankrolls WHERE id = $1 AND user_id = $2',
+      [bankrollId, userId]
+    );
+
+    if (brRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      client.release();
+      return res.status(404).json({ error: 'Bankroll not found.' });
+    }
+
+    const currentBankrollCash = parseFloat(brRes.rows[0].currentBalance || '0');
+
+    // Fetch current bookmaker balance for this bankroll
+    const bmBalRes = await client.query(
+      'SELECT cash_balance as "cashBalance", free_bet_balance as "freeBetBalance" FROM bankroll_bookmaker_balances WHERE bankroll_id = $1 AND bookmaker_id = $2',
+      [bankrollId, bookmakerId]
+    );
+
+    const currentBmCash = bmBalRes.rows.length > 0 ? parseFloat(bmBalRes.rows[0].cashBalance || '0') : 0;
+    const currentBmFree = bmBalRes.rows.length > 0 ? parseFloat(bmBalRes.rows[0].freeBetBalance || '0') : 0;
+
+    // Check balance sufficiency before transaction:
+    // 1. If cDelta < 0 (withdrawal from bookmaker): bookmaker cash must be >= |cDelta|
+    if (cDelta < 0 && currentBmCash < Math.abs(cDelta)) {
+      await client.query('ROLLBACK');
+      client.release();
+      return res.status(400).json({ error: 'Insufficient balance' });
+    }
+
+    // 2. If fDelta < 0 (reducing free bets): bookmaker free bets must be >= |fDelta|
+    if (fDelta < 0 && currentBmFree < Math.abs(fDelta)) {
+      await client.query('ROLLBACK');
+      client.release();
+      return res.status(400).json({ error: 'Insufficient balance' });
+    }
+
+    // Fetch bookmaker name for transaction log
+    const bmNameQuery = await client.query(
+      'SELECT name FROM bookmakers WHERE id = $1 AND user_id = $2',
+      [bookmakerId, userId]
+    );
+    const bookmakerName = bmNameQuery.rows[0]?.name || 'Sportsbook';
+
     // 1. Per-bankroll balance upsert
-    await query(
+    await client.query(
       `INSERT INTO bankroll_bookmaker_balances (bankroll_id, bookmaker_id, cash_balance, free_bet_balance)
-       VALUES ($1, $2, GREATEST(0, $3), GREATEST(0, $4))
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT (bankroll_id, bookmaker_id)
        DO UPDATE SET 
-         cash_balance = GREATEST(0, bankroll_bookmaker_balances.cash_balance + $3),
-         free_bet_balance = GREATEST(0, bankroll_bookmaker_balances.free_bet_balance + $4)`,
+          cash_balance = bankroll_bookmaker_balances.cash_balance + $3,
+          free_bet_balance = bankroll_bookmaker_balances.free_bet_balance + $4`,
       [bankrollId, bookmakerId, cDelta, fDelta]
     );
 
-    // 2. Aggregate recalculation for bookmakers table
-    await query(
+    // 2. Aggregate recalculation for bookmakers table (without ::INTEGER cast)
+    await client.query(
       `UPDATE bookmakers SET 
-        real_balance = COALESCE((SELECT SUM(cash_balance)::INTEGER FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0),
-        free_bet_balance = COALESCE((SELECT SUM(free_bet_balance)::INTEGER FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0)
+        real_balance = COALESCE((SELECT SUM(cash_balance) FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0),
+        free_bet_balance = COALESCE((SELECT SUM(free_bet_balance) FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0)
        WHERE id = $1 AND user_id = $2`,
       [bookmakerId, userId]
     );
 
-    // 3. Update bankroll balance if cash moved
-    if (cDelta !== 0) {
-      await query(
-        `UPDATE bankrolls SET current_balance = current_balance + $1 WHERE id = $2 AND user_id = $3`,
-        [cDelta, bankrollId, userId]
+    // 3. Log Deposit or Withdrawal in bankroll_transactions
+    if (cDelta > 0) {
+      await client.query(
+        `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [userId, bankrollId, new Date().toISOString(), 'Deposit', `Deposit to ${bookmakerName}`, bookmakerId, Math.abs(cDelta)]
       );
-    }
-    if (fDelta !== 0) {
-      await query(
-        `UPDATE bankrolls SET free_bet_credits = free_bet_credits + $1 WHERE id = $2 AND user_id = $3`,
-        [fDelta, bankrollId, userId]
+    } else if (cDelta < 0) {
+      await client.query(
+        `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [userId, bankrollId, new Date().toISOString(), 'Withdrawal', `Withdrawal to Bank Account (${bookmakerName})`, bookmakerId, -Math.abs(cDelta)]
       );
     }
 
+    await client.query('COMMIT');
+
     // Return updated bookmaker
-    const finalRes = await query(
+    const finalRes = await client.query(
       `SELECT 
         id, user_id as "userId", name, logo_url as "logoUrl", 
         icon_name as "iconName", real_balance as "realBalance", 
@@ -366,11 +452,12 @@ router.post('/:id/transactions', authenticateToken as any, async (req: Authentic
     );
 
     if (finalRes.rows.length === 0) {
+      client.release();
       return res.status(404).json({ error: 'Bookmaker not found.' });
     }
 
     const b = finalRes.rows[0];
-    const balancesRes = await query(
+    const balancesRes = await client.query(
       `SELECT bankroll_id as "bankrollId", cash_balance as "cashBalance", free_bet_balance as "freeBetBalance"
        FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1`,
       [bookmakerId]
@@ -389,8 +476,13 @@ router.post('/:id/transactions', authenticateToken as any, async (req: Authentic
       balances
     });
   } catch (err: any) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rbErr) {}
     console.error('Error processing bookmaker transaction:', err);
     return res.status(500).json({ error: 'Failed to process transaction.' });
+  } finally {
+    client.release();
   }
 });
 

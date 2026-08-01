@@ -299,7 +299,29 @@ const CURRENCY_MAP: Record<string, string> = {
 };
 
 export function getCurrencySymbol(currency?: string): string {
-  return '€';
+  let cur = currency;
+  if (!cur) {
+    try {
+      cur = loadStoredUserPrefs().currency;
+    } catch {
+      // ignore
+    }
+  }
+  if (!cur) cur = 'EUR';
+  const curCode = CURRENCY_MAP[cur] || cur;
+  switch (curCode) {
+    case 'USD':
+      return '$';
+    case 'GBP':
+      return '£';
+    case 'CAD':
+      return 'C$';
+    case 'BRL':
+      return 'R$';
+    case 'EUR':
+    default:
+      return '€';
+  }
 }
 
 export function parseCurrency(value: string | number): number {
@@ -310,17 +332,35 @@ export function parseCurrency(value: string | number): number {
 }
 
 export function formatCurrency(amount: number, currency?: string): string {
+  const cleanAmount = isNaN(amount) ? 0 : amount;
   try {
-    const cur = currency || 'EUR';
+    let cur = currency;
+    if (!cur) {
+      try {
+        cur = loadStoredUserPrefs().currency;
+      } catch {
+        // ignore
+      }
+    }
+    if (!cur) cur = 'EUR';
     const curCode = CURRENCY_MAP[cur] || cur;
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: curCode,
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
-    }).format(amount);
+    }).format(cleanAmount);
   } catch {
-    return `${currency || '€'}${amount.toFixed(2)}`;
+    let cur = currency;
+    if (!cur) {
+      try {
+        cur = loadStoredUserPrefs().currency;
+      } catch {
+        // ignore
+      }
+    }
+    if (!cur) cur = 'EUR';
+    return `${getCurrencySymbol(cur)}${cleanAmount.toFixed(2)}`;
   }
 }
 

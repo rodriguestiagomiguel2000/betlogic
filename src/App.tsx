@@ -53,14 +53,16 @@ export function App() {
   });
   const [tagDefinitions, setTagDefinitions] = useState<TagDefinition[]>([]);
 
-  const loadData = async () => {
+  const loadData = async (showSpinner = false) => {
     if (!isAuthenticated()) {
       setIsAuth(false);
       setLoading(false);
       return;
     }
 
-    setLoading(true);
+    if (showSpinner) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const [betsData, bankrollsData, bookmakersData, transfersData, tagsData, profileData] = await Promise.all([
@@ -93,7 +95,8 @@ export function App() {
     } catch (err: any) {
       console.error('Failed to load application data from backend:', err);
       setError(err.message || 'Failed to connect to backend / PostgreSQL database.');
-      if (err.message && (err.message.includes('expired') || err.message.includes('unauthorized'))) {
+      if (err.message && (err.message.includes('expired') || err.message.includes('unauthorized') || err.message.includes('not found') || err.message.includes('Please log in'))) {
+        logoutUser();
         setIsAuth(false);
       }
     } finally {
@@ -102,7 +105,7 @@ export function App() {
   };
 
   useEffect(() => {
-    loadData();
+    loadData(true);
 
     const handleLogoutEvent = () => {
       setIsAuth(false);
@@ -255,6 +258,32 @@ export function App() {
     }
   };
 
+  const handleReorderBankrolls = async (reorderedIds: string[]) => {
+    setBankrolls((prev) => {
+      const map = new Map(prev.map((b) => [b.id, b]));
+      const newOrdered: Bankroll[] = [];
+      reorderedIds.forEach((id, idx) => {
+        const item = map.get(id);
+        if (item) {
+          newOrdered.push({ ...item, displayOrder: idx });
+        }
+      });
+      prev.forEach((item) => {
+        if (!reorderedIds.includes(item.id)) {
+          newOrdered.push(item);
+        }
+      });
+      return newOrdered;
+    });
+
+    try {
+      await bankrollsApi.reorder(reorderedIds);
+    } catch (err: any) {
+      console.error('Failed to reorder bankrolls:', err);
+      await loadData();
+    }
+  };
+
   const handleAddBookmaker = async (data: Omit<Bookmaker, 'id'>) => {
     try {
       await bookmakersApi.create(data);
@@ -367,7 +396,7 @@ export function App() {
 
   const handleReconcileBookmaker = async (bookmakerId: string, newCash: number, newFreeBet: number, notes: string, targetBankrollId?: string) => {
     try {
-      await bookmakersApi.update(bookmakerId, { realBalance: newCash, freeBetBalance: newFreeBet });
+      await bookmakersApi.update(bookmakerId, { realBalance: newCash, freeBetBalance: newFreeBet, bankrollId: targetBankrollId });
       await loadData();
     } catch (err: any) {
       alert(`Bookmaker reconciliation failed: ${err.message}`);
@@ -470,6 +499,8 @@ export function App() {
             bets={bets}
             bankrolls={bankrolls}
             bookmakers={bookmakers}
+            activeBankrollId={userPrefs.activeBankrollId}
+            userCurrency={userPrefs.currency}
             onUpdateBetStatus={handleUpdateBetStatus}
             onNavigate={setActiveTab}
           />
@@ -491,6 +522,8 @@ export function App() {
             bankrolls={bankrolls}
             bookmakers={bookmakers}
             tagDefinitions={tagDefinitions}
+            activeBankrollId={userPrefs.activeBankrollId}
+            userCurrency={userPrefs.currency}
             onUpdateBetStatus={handleUpdateBetStatus}
             onUpdateBetLegStatus={handleUpdateBetLegStatus}
             onNavigate={setActiveTab}
@@ -504,6 +537,7 @@ export function App() {
             bankrolls={bankrolls}
             bets={bets}
             activeBankrollId={userPrefs.activeBankrollId}
+            userCurrency={userPrefs.currency}
             onAddBookmaker={handleAddBookmaker}
             onUpdateBookmaker={handleUpdateBookmaker}
             onUpdateBookmakerBalance={handleUpdateBookmakerBalance}
@@ -519,6 +553,7 @@ export function App() {
             bankrolls={bankrolls}
             bookmakers={bookmakers}
             activeBankrollId={userPrefs.activeBankrollId}
+            userCurrency={userPrefs.currency}
             onAddBet={handleAddBet}
             onNavigate={setActiveTab}
           />
@@ -540,6 +575,7 @@ export function App() {
           <AnalyticsView
             bets={bets}
             bookmakers={bookmakers}
+            userCurrency={userPrefs.currency}
           />
         )}
 
@@ -550,13 +586,17 @@ export function App() {
             bets={bets}
             transfers={transfers}
             activeBankrollId={userPrefs.activeBankrollId}
+            userCurrency={userPrefs.currency}
             onAddBankroll={handleAddBankroll}
             onUpdateBankrollBalance={handleUpdateBankrollBalance}
             onAddTransfer={handleAddTransfer}
             onSetActiveBankroll={handleSetActiveBankroll}
             onDeleteBankroll={handleDeleteBankroll}
             onReconcileBankroll={handleReconcileBankroll}
+            onReconcileBookmaker={handleReconcileBookmaker}
             onBatchUpdateBookmakers={handleBatchUpdateBookmakers}
+            onReorderBankrolls={handleReorderBankrolls}
+            onRefreshData={loadData}
           />
         )}
 

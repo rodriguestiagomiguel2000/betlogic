@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Bookmaker, Bet, Bankroll } from '../types';
-import { formatCurrency, formatOdds, getBookmakerBalanceForBankroll, parseCurrency } from '../utils/storage';
+import { formatCurrency, formatOdds, getBookmakerBalanceForBankroll, parseCurrency, getCurrencySymbol } from '../utils/storage';
 import { BookmakerLogo } from './BookmakerLogo';
 import {
   Building2,
@@ -34,6 +34,7 @@ interface BookmakersViewProps {
   bankrolls: Bankroll[];
   bets: Bet[];
   activeBankrollId?: string;
+  userCurrency?: string;
   onAddBookmaker: (bookmaker: Omit<Bookmaker, 'id'>, targetBankrollId?: string) => void;
   onUpdateBookmaker?: (bookmakerId: string, updates: Partial<Bookmaker>) => void;
   onUpdateBookmakerBalance: (
@@ -92,6 +93,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
   bankrolls,
   bets,
   activeBankrollId,
+  userCurrency,
   onAddBookmaker,
   onUpdateBookmaker,
   onUpdateBookmakerBalance,
@@ -113,10 +115,18 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
   const [reconcileBmNotes, setReconcileBmNotes] = useState<string>('');
 
   // Main Overview Target Bankroll Filter
-  const [overviewBankrollId, setOverviewBankrollId] = useState<string>('all');
+  const [overviewBankrollId, setOverviewBankrollId] = useState<string>(activeBankrollId || bankrolls[0]?.id || 'all');
+  const [userChangedOverview, setUserChangedOverview] = useState<boolean>(false);
 
   // Detail View Bankroll Context Selector
-  const [detailBankrollId, setDetailBankrollId] = useState<string>('all');
+  const [detailBankrollId, setDetailBankrollId] = useState<string>(activeBankrollId || bankrolls[0]?.id || 'all');
+
+  useEffect(() => {
+    if (activeBankrollId && !userChangedOverview) {
+      setOverviewBankrollId(activeBankrollId);
+      setDetailBankrollId(activeBankrollId);
+    }
+  }, [activeBankrollId]);
 
   // Modal States
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
@@ -265,14 +275,25 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
 
   // Overall system metrics for current overview selection
   const overviewMetrics = useMemo(() => {
-    const totalRealBalance = overviewBookmakers.reduce((acc, b) => {
+    const targetBankrolls = overviewBankrollId === 'all'
+      ? bankrolls
+      : bankrolls.filter((b) => b.id === overviewBankrollId);
+
+    const bankrollCashSum = targetBankrolls.reduce((sum, b) => sum + (b.currentBalance || 0), 0);
+    const bankrollFreeSum = targetBankrolls.reduce((sum, b) => sum + (b.freeBetCredits || 0), 0);
+
+    const bookmakerCashSum = overviewBookmakers.reduce((acc, b) => {
       const bal = getBookmakerBalanceForBankroll(b, overviewBankrollId);
       return acc + bal.cashBalance;
     }, 0);
-    const totalFreeBets = overviewBookmakers.reduce((acc, b) => {
+    const bookmakerFreeSum = overviewBookmakers.reduce((acc, b) => {
       const bal = getBookmakerBalanceForBankroll(b, overviewBankrollId);
       return acc + bal.freeBetBalance;
     }, 0);
+
+    const totalRealBalance = bankrollCashSum + bookmakerCashSum;
+    const totalFreeBets = bankrollFreeSum + bookmakerFreeSum;
+
     const avgMargin = overviewBookmakers.length > 0
       ? overviewBookmakers.reduce((acc, b) => acc + b.averageMargin, 0) / overviewBookmakers.length
       : 0;
@@ -294,7 +315,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
       totalProfit,
       totalCombined: totalRealBalance + totalFreeBets
     };
-  }, [overviewBookmakers, bets, overviewBankrollId]);
+  }, [overviewBookmakers, bets, overviewBankrollId, bankrolls]);
 
   // Scoped Deep-Dive Analytics for selected bookmaker
   const detailAnalytics = useMemo(() => {
@@ -503,7 +524,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
           <div className="bg-[#171f33] p-4 rounded-xl border border-[#27314a] space-y-1">
             <span className="text-[10px] uppercase font-bold tracking-wider text-[#8d90a0]">Net Profit / Loss</span>
             <div className={`text-lg font-extrabold font-mono ${detailAnalytics.netProfit >= 0 ? 'text-[#4edea3]' : 'text-[#ffb3ad]'}`}>
-              {detailAnalytics.netProfit >= 0 ? '+' : ''}{formatCurrency(detailAnalytics.netProfit)}
+              {detailAnalytics.netProfit >= 0 ? '+' : ''}{formatCurrency(detailAnalytics.netProfit, userCurrency)}
             </div>
             <span className="text-[10px] text-[#8d90a0] block">
               Yield: <strong className={detailAnalytics.roi >= 0 ? 'text-[#4edea3]' : 'text-[#ffb3ad]'}>{detailAnalytics.roi.toFixed(1)}%</strong>
@@ -529,7 +550,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
           <div className="bg-[#171f33] p-4 rounded-xl border border-[#27314a] space-y-1">
             <span className="text-[10px] uppercase font-bold tracking-wider text-[#8d90a0]">Real Cash Balance</span>
             <div className="text-lg font-extrabold text-white font-mono">
-              {formatCurrency(activeBookmaker.realBalance)}
+              {formatCurrency(activeBookmaker.realBalance, userCurrency)}
             </div>
             <span className="text-[10px] text-[#8d90a0] block">Available sportsbook funds</span>
           </div>
@@ -537,7 +558,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
           <div className="bg-[#171f33] p-4 rounded-xl border border-[#27314a] space-y-1">
             <span className="text-[10px] uppercase font-bold tracking-wider text-[#8d90a0]">Free Bet Credits</span>
             <div className="text-lg font-extrabold text-[#4edea3] font-mono">
-              {formatCurrency(activeBookmaker.freeBetBalance)}
+              {formatCurrency(activeBookmaker.freeBetBalance, userCurrency)}
             </div>
             <span className="text-[10px] text-[#4edea3] block">Promo bonus reserves</span>
           </div>
@@ -579,7 +600,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                       <div>
                         <span className="text-[10px] text-[#8d90a0] block">Net PnL</span>
                         <span className={`font-mono font-bold ${sb.netPnL >= 0 ? 'text-[#4edea3]' : 'text-[#ffb3ad]'}`}>
-                          {sb.netPnL >= 0 ? '+' : ''}{formatCurrency(sb.netPnL)}
+                          {sb.netPnL >= 0 ? '+' : ''}{formatCurrency(sb.netPnL, userCurrency)}
                         </span>
                       </div>
                       <div>
@@ -647,11 +668,11 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                           @{formatOdds(bet.totalOdds)}
                         </td>
                         <td className="p-3 text-right font-mono text-white">
-                          {formatCurrency(bet.stake)}
+                          {formatCurrency(bet.stake, userCurrency)}
                           {bet.isFreeBet && <span className="block text-[9px] text-[#4edea3]">Free Bet</span>}
                         </td>
                         <td className="p-3 text-right font-mono font-bold text-white">
-                          {formatCurrency(bet.actualReturn ?? (bet.status === 'won' ? bet.potentialPayout : 0))}
+                          {formatCurrency(bet.actualReturn ?? (bet.status === 'won' ? bet.potentialPayout : 0), userCurrency)}
                         </td>
                         <td className="p-3 text-center">
                           <span
@@ -702,15 +723,38 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
             <span className="text-xs text-[#8d90a0] font-bold">Target Bankroll:</span>
             <select
               value={overviewBankrollId}
-              onChange={(e) => setOverviewBankrollId(e.target.value)}
+              onChange={(e) => {
+                setUserChangedOverview(true);
+                setOverviewBankrollId(e.target.value);
+              }}
               className="bg-[#171f33] border border-[#27314a] text-white text-xs font-bold rounded px-2 py-1 cursor-pointer"
             >
-              <option value="all">All Bankrolls ({formatCurrency(bankrolls.reduce((sum, b) => sum + (b.currentBalance || 0), 0))} Cash + {formatCurrency(bankrolls.reduce((sum, b) => sum + (b.freeBetCredits || 0), 0))} Free Bets Combined)</option>
-              {bankrolls.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name} ({formatCurrency(b.currentBalance)} Cash + {formatCurrency(b.freeBetCredits)} Free Bets)
-                </option>
-              ))}
+              <option value="all">
+                All Bankrolls ({formatCurrency(
+                  bankrolls.reduce((sum, b) => sum + (b.currentBalance || 0), 0) +
+                  bookmakers.reduce((sum, bm) => sum + (bm.realBalance || 0), 0),
+                  userCurrency
+                )} Cash + {formatCurrency(
+                  bankrolls.reduce((sum, b) => sum + (b.freeBetCredits || 0), 0) +
+                  bookmakers.reduce((sum, bm) => sum + (bm.freeBetBalance || 0), 0),
+                  userCurrency
+                )} Free Bets Combined)
+              </option>
+              {bankrolls.map((b) => {
+                const bmCash = bookmakers.reduce(
+                  (sum, bm) => sum + getBookmakerBalanceForBankroll(bm, b.id).cashBalance,
+                  0
+                );
+                const bmFree = bookmakers.reduce(
+                  (sum, bm) => sum + getBookmakerBalanceForBankroll(bm, b.id).freeBetBalance,
+                  0
+                );
+                return (
+                  <option key={b.id} value={b.id}>
+                    {b.name} ({formatCurrency(b.currentBalance + bmCash, userCurrency)} Cash + {formatCurrency(b.freeBetCredits + bmFree, userCurrency)} Free Bets)
+                  </option>
+                );
+              })}
             </select>
           </div>
 
@@ -731,7 +775,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
             <Wallet size={16} className="text-[#2563eb]" />
           </div>
           <div className="text-2xl font-extrabold text-white font-mono">
-            {formatCurrency(overviewMetrics.totalRealBalance)}
+            {formatCurrency(overviewMetrics.totalRealBalance, userCurrency)}
           </div>
           <div className="text-[10px] text-[#8d90a0]">
             Allocated to {overviewBankrollId === 'all' ? 'all' : bankrolls.find((b) => b.id === overviewBankrollId)?.name}
@@ -744,7 +788,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
             <Gift size={16} className="text-[#4edea3]" />
           </div>
           <div className="text-2xl font-extrabold text-[#4edea3] font-mono">
-            {formatCurrency(overviewMetrics.totalFreeBets)}
+            {formatCurrency(overviewMetrics.totalFreeBets, userCurrency)}
           </div>
           <div className="text-[10px] text-[#8d90a0]">Risk-free promo balance</div>
         </div>
@@ -766,10 +810,10 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
             <Award size={16} className="text-[#b4c5ff]" />
           </div>
           <div className={`text-2xl font-extrabold font-mono ${overviewMetrics.totalProfit >= 0 ? 'text-[#4edea3]' : 'text-[#ffb3ad]'}`}>
-            {overviewMetrics.totalProfit >= 0 ? '+' : ''}{formatCurrency(overviewMetrics.totalProfit)}
+            {overviewMetrics.totalProfit >= 0 ? '+' : ''}{formatCurrency(overviewMetrics.totalProfit, userCurrency)}
           </div>
           <div className="text-[10px] text-[#8d90a0]">
-            Total Bankroll Value: <strong className="text-white font-mono">{formatCurrency(overviewMetrics.totalCombined)}</strong>
+            Total Bankroll Value: <strong className="text-white font-mono">{formatCurrency(overviewMetrics.totalCombined, userCurrency)}</strong>
           </div>
         </div>
       </div>
@@ -808,6 +852,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
             const recentBets = [...bmBets].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 2);
 
             const { cashBalance, freeBetBalance } = getBookmakerBalanceForBankroll(bm, overviewBankrollId);
+            const cardCur = userCurrency;
 
             return (
               <div
@@ -865,13 +910,13 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                     <div>
                       <span className="text-[10px] text-[#8d90a0] block">💵 Real Cash</span>
                       <span className="text-lg font-extrabold text-white font-mono">
-                        {formatCurrency(cashBalance)}
+                        {formatCurrency(cashBalance, cardCur)}
                       </span>
                     </div>
                     <div>
                       <span className="text-[10px] text-[#8d90a0] block">🎟️ Free Bet Credits</span>
                       <span className="text-lg font-extrabold text-[#4edea3] font-mono">
-                        {formatCurrency(freeBetBalance)}
+                        {formatCurrency(freeBetBalance, cardCur)}
                       </span>
                     </div>
                   </div>
@@ -890,7 +935,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                     <div className="bg-[#131b2e] p-2 rounded border border-[#27314a]">
                       <span className="text-[10px] text-[#8d90a0] block">Net Profit</span>
                       <span className={`font-bold font-mono ${netProfit >= 0 ? 'text-[#4edea3]' : 'text-[#ffb3ad]'}`}>
-                        {netProfit >= 0 ? '+' : ''}{formatCurrency(netProfit)}
+                        {netProfit >= 0 ? '+' : ''}{formatCurrency(netProfit, cardCur)}
                       </span>
                     </div>
                   </div>
@@ -905,11 +950,11 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                         let impactTxt = '';
                         if (rb.status === 'won') {
                           const profit = (rb.actualReturn ?? rb.potentialPayout) - rb.stake;
-                          impactTxt = `+${formatCurrency(profit)} on ${bm.name} (Won Wager)`;
+                          impactTxt = `+${formatCurrency(profit, cardCur)} on ${bm.name} (Won Wager)`;
                         } else if (rb.status === 'lost') {
-                          impactTxt = `-${formatCurrency(rb.stake)} on ${bm.name} (Lost Wager)`;
+                          impactTxt = `-${formatCurrency(rb.stake, cardCur)} on ${bm.name} (Lost Wager)`;
                         } else {
-                          impactTxt = `${rb.status.toUpperCase()} Wager (${formatCurrency(rb.stake)})`;
+                          impactTxt = `${rb.status.toUpperCase()} Wager (${formatCurrency(rb.stake, cardCur)})`;
                         }
                         return (
                           <div key={rb.id} className="text-[10px] flex items-center justify-between text-[#dae2fd]">
@@ -1010,7 +1055,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                 >
                   {bankrolls.map((br) => (
                     <option key={br.id} value={br.id}>
-                      {br.name} ({br.currency || 'EUR'})
+                      {br.name} ({userCurrency})
                     </option>
                   ))}
                 </select>
@@ -1018,7 +1063,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
 
               <div>
                 <label className="block text-[#8d90a0] mb-1">
-                  {txType === 'deposit' ? 'Deposit Amount ($)' : txType === 'withdraw' ? 'Withdrawal Amount ($)' : 'Free Bet Promo Credit ($)'}
+                  {txType === 'deposit' ? `Deposit Amount (${getCurrencySymbol(userCurrency)})` : txType === 'withdraw' ? `Withdrawal Amount (${getCurrencySymbol(userCurrency)})` : `Free Bet Promo Credit (${getCurrencySymbol(userCurrency)})`}
                 </label>
                 <input
                   type="number"
@@ -1079,7 +1124,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                 >
                   {bankrolls.map((b) => (
                     <option key={b.id} value={b.id}>
-                      {b.name} (${b.currentBalance} Cash)
+                      {b.name} ({formatCurrency(b.currentBalance, userCurrency)} Cash)
                     </option>
                   ))}
                 </select>
@@ -1087,7 +1132,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[#8d90a0] mb-1">Initial Balance ($)</label>
+                  <label className="block text-[#8d90a0] mb-1">Initial Balance ({getCurrencySymbol(userCurrency)})</label>
                   <input
                     type="number"
                     step="0.01"
@@ -1098,7 +1143,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-[#8d90a0] mb-1">Free Bet Credits ($)</label>
+                  <label className="block text-[#8d90a0] mb-1">Free Bet Credits ({getCurrencySymbol(userCurrency)})</label>
                   <input
                     type="number"
                     step="0.01"
@@ -1271,11 +1316,11 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                   <div className="p-3 bg-[#0b1326] rounded-lg border border-[#27314a] space-y-1 font-mono text-[11px]">
                     <div className="flex justify-between text-[#8d90a0]">
                       <span>Cash Balance:</span>
-                      <span className="text-white font-bold">${bookmakerToDelete.realBalance}</span>
+                      <span className="text-white font-bold">{formatCurrency(bookmakerToDelete.realBalance, userCurrency)}</span>
                     </div>
                     <div className="flex justify-between text-[#8d90a0]">
                       <span>Free Bet Credits:</span>
-                      <span className="text-[#4edea3] font-bold">${bookmakerToDelete.freeBetBalance}</span>
+                      <span className="text-[#4edea3] font-bold">{formatCurrency(bookmakerToDelete.freeBetBalance, userCurrency)}</span>
                     </div>
                   </div>
 
@@ -1326,7 +1371,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="block text-[#8d90a0] mb-1 font-medium">New Real Cash Balance ($)</label>
+                <label className="block text-[#8d90a0] mb-1 font-medium">New Real Cash Balance ({getCurrencySymbol(userCurrency)})</label>
                 <input
                   type="number"
                   step="0.01"
@@ -1335,12 +1380,12 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                   className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white font-mono"
                 />
                 <span className="text-[10px] text-[#8d90a0]">
-                  Current: ${reconcileBmTarget.realBalance} (Variance: {(reconcileBmCash - reconcileBmTarget.realBalance) >= 0 ? '+' : ''}${(reconcileBmCash - reconcileBmTarget.realBalance).toFixed(2)})
+                  Current: {formatCurrency(reconcileBmTarget.realBalance, userCurrency)} (Variance: {formatCurrency(reconcileBmCash - reconcileBmTarget.realBalance, userCurrency)})
                 </span>
               </div>
 
               <div>
-                <label className="block text-[#8d90a0] mb-1 font-medium">New Free Bet Credits ($)</label>
+                <label className="block text-[#8d90a0] mb-1 font-medium">New Free Bet Credits ({getCurrencySymbol(userCurrency)})</label>
                 <input
                   type="number"
                   step="0.01"
@@ -1349,7 +1394,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                   className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white font-mono"
                 />
                 <span className="text-[10px] text-[#8d90a0]">
-                  Current: ${reconcileBmTarget.freeBetBalance} (Variance: {(reconcileBmFreeBet - reconcileBmTarget.freeBetBalance) >= 0 ? '+' : ''}${(reconcileBmFreeBet - reconcileBmTarget.freeBetBalance).toFixed(2)})
+                  Current: {formatCurrency(reconcileBmTarget.freeBetBalance, userCurrency)} (Variance: {formatCurrency(reconcileBmFreeBet - reconcileBmTarget.freeBetBalance, userCurrency)})
                 </span>
               </div>
 
@@ -1377,7 +1422,11 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                 type="button"
                 onClick={() => {
                   if (onReconcileBookmaker) {
-                    const targetB = overviewBankrollId === 'all' ? (activeBankrollId || bankrolls[0]?.id || 'bank-1') : overviewBankrollId;
+                    const targetB = overviewBankrollId === 'all' ? (activeBankrollId || bankrolls[0]?.id) : overviewBankrollId;
+                    if (!targetB) {
+                      alert('Error: No active bankroll selected to attribute this adjustment to.');
+                      return;
+                    }
                     onReconcileBookmaker(reconcileBmTarget.id, reconcileBmCash, reconcileBmFreeBet, reconcileBmNotes, targetB);
                   }
                   setReconcileBmTarget(null);

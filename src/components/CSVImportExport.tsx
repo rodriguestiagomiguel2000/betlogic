@@ -514,7 +514,7 @@ bm-pinnacle,Pinnacle,EUR,4200,https://img.logo.dev/pinnacle.com,2026-03-10 09:30
               </div>
               <p className="text-xs text-[#8d90a0] mt-0.5">
                 {activeBankroll
-                  ? `Selected: ${activeBankroll.name} (Current balance: ${formatCurrency(activeBankroll.currentBalance, activeBankroll.currency)})`
+                  ? `Selected: ${activeBankroll.name} (Current balance: ${formatCurrency(activeBankroll.currentBalance, userCurrency || 'USD')})`
                   : 'Select default target bankroll for imported wagers'}
               </p>
             </div>
@@ -529,7 +529,7 @@ bm-pinnacle,Pinnacle,EUR,4200,https://img.logo.dev/pinnacle.com,2026-03-10 09:30
               <option value="">-- Choose Default Bankroll --</option>
               {bankrolls.map((b) => (
                 <option key={b.id} value={b.id}>
-                  {b.name} ({formatCurrency(b.currentBalance, b.currency)})
+                  {b.name} ({formatCurrency(b.currentBalance, userCurrency || 'USD')})
                 </option>
               ))}
             </select>

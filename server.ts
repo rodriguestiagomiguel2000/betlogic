@@ -181,6 +181,12 @@ Infer values strictly from the slip. Ensure decimal odds format is returned. Out
       return res.json(parsedData);
     } catch (err: any) {
       console.error('Betslip scanner error on backend:', err);
+      const errMsg = (err.message || '').toLowerCase();
+      if (errMsg.includes('resource_exhausted') || errMsg.includes('quota') || errMsg.includes('limit exceeded') || errMsg.includes('429')) {
+        return res.status(429).json({
+          error: 'Gemini API Quota Exceeded (429 RESOURCE_EXHAUSTED): You have exceeded your free Google AI Studio rate limits of 15 RPM or daily token budget. Please wait 60 seconds and retry.',
+        });
+      }
       return res.status(500).json({
         error: err.message || 'Failed to scan and parse the betslip using server-side Gemini OCR.',
       });
