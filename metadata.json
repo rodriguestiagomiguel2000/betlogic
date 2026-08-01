@@ -1,0 +1,8 @@
+{
+  "name": "BetLogic Tracker & Analytics",
+  "description": "High-performance sports betting portfolio tracker, betslip scanner, bankroll manager, and advanced risk analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
