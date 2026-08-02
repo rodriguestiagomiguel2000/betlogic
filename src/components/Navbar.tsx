@@ -1,4 +1,5 @@
 import React from 'react';
+import { motion } from 'motion/react';
 import {
   LayoutDashboard,
   History,
@@ -267,23 +268,38 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
       </header>
 
       {/* Mobile Bottom Floating Nav Bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#060e20] border-t border-[#1f283d] flex items-center justify-around py-3 px-1 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
-        {mobileNavItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = activeTab === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              className={`flex flex-col items-center gap-1.5 px-3 py-1 rounded-lg transition-colors min-w-[64px] ${
-                isActive ? 'text-[#2563eb]' : 'text-[#8d90a0] hover:text-[#dae2fd]'
-              }`}
-            >
-              <Icon size={20} />
-              <span className="text-[10px] font-bold uppercase tracking-wider">{item.label}</span>
-            </button>
-          );
-        })}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#060e20] border-t border-[#1f283d] px-1 pb-safe shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
+        <div className="flex items-center justify-between overflow-x-auto no-scrollbar snap-x py-1 px-1 gap-0.5">
+          {mobileNavItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                className={`flex flex-col items-center justify-center gap-1.5 py-2 rounded-xl transition-all min-w-[62px] flex-1 snap-center shrink-0 relative ${
+                  isActive 
+                    ? 'text-[#2563eb]' 
+                    : 'text-[#8d90a0] hover:text-[#dae2fd]'
+                }`}
+                style={{ minHeight: '56px' }}
+              >
+                <div className={`p-1.5 rounded-lg transition-colors ${isActive ? 'bg-[#2563eb]/10' : ''}`}>
+                  <Icon size={isActive ? 22 : 20} className={isActive ? 'animate-pulse-subtle' : ''} />
+                </div>
+                <span className={`text-[9px] font-bold uppercase tracking-tighter text-center whitespace-nowrap px-1 ${isActive ? 'opacity-100' : 'opacity-70'}`}>
+                  {item.label}
+                </span>
+                {isActive && (
+                  <motion.div 
+                    layoutId="activeTabIndicator"
+                    className="absolute bottom-0 w-8 h-0.5 rounded-full bg-[#2563eb]"
+                  />
+                )}
+              </button>
+            );
+          })}
+        </div>
       </nav>
     </>
   );

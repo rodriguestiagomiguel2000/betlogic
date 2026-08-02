@@ -238,16 +238,23 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
 
         {/* Legs Editor Section */}
         <div className="space-y-4 pt-4 border-t border-[#27314a]">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-              Bet Selections / Legs ({legs.length})
-            </h3>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center justify-between w-full sm:w-auto">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2.5">
+                <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-[#2563eb]/20 text-[#2563eb] text-xs font-black">
+                  {legs.length}
+                </div>
+                Bet Selections / Legs
+              </h3>
+            </div>
+
             <button
               type="button"
               onClick={handleAddLeg}
-              className="text-xs text-[#2563eb] hover:text-[#b4c5ff] font-semibold flex items-center gap-1"
+              className="w-full sm:w-auto h-12 sm:h-9 px-6 bg-[#2563eb] hover:bg-[#1d4ed8] text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-900/20 transition-all active:scale-[0.98]"
             >
-              <PlusCircle size={14} /> Add Another Leg
+              <PlusCircle size={18} /> 
+              <span>Add Another Leg</span>
             </button>
           </div>
 
