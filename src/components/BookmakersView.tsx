@@ -717,18 +717,18 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-col sm:flex-row flex-wrap items-center gap-3 w-full sm:w-auto">
           {/* Target Bankroll Selector */}
-          <div className="flex items-center gap-2 bg-[#0b1326] p-1.5 px-3 rounded-lg border border-[#2563eb]/40">
-            <Target size={15} className="text-[#2563eb]" />
-            <span className="text-xs text-[#8d90a0] font-bold">Target Bankroll:</span>
+          <div className="flex items-center gap-2 bg-[#0b1326] p-1.5 px-3 rounded-lg border border-[#2563eb]/40 w-full sm:w-auto overflow-hidden">
+            <Target size={15} className="text-[#2563eb] shrink-0" />
+            <span className="text-xs text-[#8d90a0] font-bold whitespace-nowrap">Target Bankroll:</span>
             <select
               value={overviewBankrollId}
               onChange={(e) => {
                 setUserChangedOverview(true);
                 setOverviewBankrollId(e.target.value);
               }}
-              className="bg-[#171f33] border border-[#27314a] text-white text-xs font-bold rounded px-2 py-1 cursor-pointer"
+              className="bg-[#171f33] border border-[#27314a] text-white text-xs font-bold rounded px-2 py-1 cursor-pointer flex-1 min-w-0 truncate"
             >
               <option value="all">
                 All Bankrolls ({formatCurrency(

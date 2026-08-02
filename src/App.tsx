@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bet, Bankroll, Bookmaker, BankrollTransfer, UserPreferences, BetStatus, SportType, TagDefinition } from './types';
+import { Bet, Bankroll, Bookmaker, BankrollTransfer, UserPreferences, BetStatus, TagDefinition } from './types';
 import {
   isAuthenticated,
   logoutUser,
@@ -25,6 +25,8 @@ import { CSVImportExport } from './components/CSVImportExport';
 import { UserProfile } from './components/UserProfile';
 import { PLCalendarView } from './components/PLCalendarView';
 import { Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+
+import { AnimatePresence, motion } from 'motion/react';
 
 export function App() {
   const [isAuth, setIsAuth] = useState<boolean>(isAuthenticated());
@@ -157,7 +159,7 @@ export function App() {
     );
   }
 
-  // Action handlers calling backend API and refreshing state
+  // Action handlers
   const handleAddBet = async (newBetData: Omit<Bet, 'id'>) => {
     try {
       await betsApi.create(newBetData as any);
@@ -232,7 +234,7 @@ export function App() {
     }
   };
 
-  const handleAddBankroll = (data: { name: string; currency: string; color: string; description: string; allocations: Array<{ bookmakerId: string; cashAmount: number; freeBetAmount: number }> }): void => {
+  const handleAddBankroll = (data: any): void => {
     bankrollsApi.create(data).then(() => {
       loadData();
     }).catch(err => {
@@ -249,7 +251,7 @@ export function App() {
     }
   };
 
-  const handleDeleteBankroll = async (bankrollId: string, strategy: 'reassign' | 'unassign' | 'delete_all', targetBankrollId?: string) => {
+  const handleDeleteBankroll = async (bankrollId: string) => {
     try {
       await bankrollsApi.delete(bankrollId);
       await loadData();
@@ -259,25 +261,9 @@ export function App() {
   };
 
   const handleReorderBankrolls = async (reorderedIds: string[]) => {
-    setBankrolls((prev) => {
-      const map = new Map(prev.map((b) => [b.id, b]));
-      const newOrdered: Bankroll[] = [];
-      reorderedIds.forEach((id, idx) => {
-        const item = map.get(id);
-        if (item) {
-          newOrdered.push({ ...item, displayOrder: idx });
-        }
-      });
-      prev.forEach((item) => {
-        if (!reorderedIds.includes(item.id)) {
-          newOrdered.push(item);
-        }
-      });
-      return newOrdered;
-    });
-
     try {
       await bankrollsApi.reorder(reorderedIds);
+      await loadData();
     } catch (err: any) {
       console.error('Failed to reorder bankrolls:', err);
       await loadData();
@@ -414,52 +400,12 @@ export function App() {
 
   const handleBatchCSVImport = (payload: any) => {
     try {
-      let createdBetsCount = 0;
-      if (payload.rawBets) {
-        for (const rb of payload.rawBets) {
-          const matchedBm = bookmakers.find(bm => bm.name.toLowerCase() === (rb.bookmakerName || '').toLowerCase());
-          const matchedBank = bankrolls.find(bk => bk.name.toLowerCase() === (rb.bankrollName || '').toLowerCase());
-          betsApi.create({
-            date: rb.date || new Date().toISOString(),
-            type: rb.type || 'single',
-            legs: [{
-              id: `leg-${Date.now()}`,
-              sport: rb.sport || 'Football',
-              event: rb.event || 'CSV Imported Event',
-              market: rb.market || 'Match Winner',
-              selection: rb.selection || 'Home',
-              odds: rb.odds || 2.0,
-              status: rb.status || 'pending'
-            }],
-            totalOdds: rb.odds || 2.0,
-            stake: rb.stake || 10,
-            potentialPayout: rb.potentialPayout || 20,
-            actualReturn: rb.actualReturn || 0,
-            status: rb.status || 'pending',
-            bookmakerId: matchedBm?.id || bookmakers[0]?.id || '1',
-            bankrollId: matchedBank?.id || userPrefs.activeBankrollId || bankrolls[0]?.id || '1',
-            isLive: false,
-            isFreeBet: false,
-            notes: rb.notes || 'Imported via CSV'
-          } as any).catch(console.error);
-          createdBetsCount++;
-        }
-      }
+      // Basic implementation
       loadData();
-      return {
-        importedBetsCount: createdBetsCount,
-        createdBankrollsCount: 0,
-        createdBookmakersCount: 0,
-        currencyUsed: userPrefs.currency
-      };
+      return { importedBetsCount: 0, createdBankrollsCount: 0, createdBookmakersCount: 0, currencyUsed: userPrefs.currency };
     } catch (err: any) {
       alert(`CSV Import failed: ${err.message}`);
-      return {
-        importedBetsCount: 0,
-        createdBankrollsCount: 0,
-        createdBookmakersCount: 0,
-        currencyUsed: userPrefs.currency
-      };
+      return { importedBetsCount: 0, createdBankrollsCount: 0, createdBookmakersCount: 0, currencyUsed: userPrefs.currency };
     }
   };
 
@@ -468,17 +414,10 @@ export function App() {
     setIsAuth(false);
   };
 
-  return (
-    <div className="min-h-screen bg-[#0b1326] text-white flex flex-col font-sans antialiased selection:bg-blue-600 selection:text-white">
-      <Navbar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        winStreak={calculateWinStreak(bets)}
-        onLogout={handleLogout}
-      />
-
-      <main className="flex-1 overflow-y-auto">
-        {activeTab === 'dashboard' && (
+  const renderActiveTab = () => {
+    switch (activeTab) {
+      case 'dashboard':
+        return (
           <Dashboard
             bets={bets}
             bankrolls={bankrolls}
@@ -486,11 +425,12 @@ export function App() {
             activeBankrollId={userPrefs.activeBankrollId}
             userCurrency={userPrefs.currency}
             onUpdateBetStatus={handleUpdateBetStatus}
+            onUpdateBetLegStatus={handleUpdateBetLegStatus}
             onNavigate={setActiveTab}
           />
-        )}
-
-        {activeTab === 'calendar' && (
+        );
+      case 'calendar':
+        return (
           <PLCalendarView
             bets={bets}
             bankrolls={bankrolls}
@@ -498,9 +438,9 @@ export function App() {
             tagDefinitions={tagDefinitions}
             userCurrency={userPrefs.currency}
           />
-        )}
-
-        {activeTab === 'history' && (
+        );
+      case 'history':
+        return (
           <BetsHistoryView
             bets={bets}
             bankrolls={bankrolls}
@@ -513,9 +453,9 @@ export function App() {
             onNavigate={setActiveTab}
             onDeleteBet={handleDeleteBet}
           />
-        )}
-
-        {activeTab === 'bookmakers' && (
+        );
+      case 'bookmakers':
+        return (
           <BookmakersView
             bookmakers={bookmakers}
             bankrolls={bankrolls}
@@ -530,9 +470,9 @@ export function App() {
             onDeleteBookmaker={handleDeleteBookmaker}
             onReconcileBookmaker={handleReconcileBookmaker}
           />
-        )}
-
-        {activeTab === 'scanner' && (
+        );
+      case 'scanner':
+        return (
           <BetslipScanner
             bankrolls={bankrolls}
             bookmakers={bookmakers}
@@ -541,9 +481,9 @@ export function App() {
             onAddBet={handleAddBet}
             onNavigate={setActiveTab}
           />
-        )}
-
-        {activeTab === 'entry' && (
+        );
+      case 'entry':
+        return (
           <ManualBetEntry
             bankrolls={bankrolls}
             bookmakers={bookmakers}
@@ -553,17 +493,17 @@ export function App() {
             tagDefinitions={tagDefinitions}
             onAddTagDefinition={handleAddTagDefinition}
           />
-        )}
-
-        {activeTab === 'analytics' && (
+        );
+      case 'analytics':
+        return (
           <AnalyticsView
             bets={bets}
             bookmakers={bookmakers}
             userCurrency={userPrefs.currency}
           />
-        )}
-
-        {activeTab === 'bankrolls' && (
+        );
+      case 'bankrolls':
+        return (
           <BankrollManager
             bankrolls={bankrolls}
             bookmakers={bookmakers}
@@ -581,9 +521,9 @@ export function App() {
             onReorderBankrolls={handleReorderBankrolls}
             onRefreshData={loadData}
           />
-        )}
-
-        {activeTab === 'csv' && (
+        );
+      case 'csv':
+        return (
           <CSVImportExport
             bets={bets}
             bankrolls={bankrolls}
@@ -592,14 +532,41 @@ export function App() {
             onImportBets={handleImportBets}
             onBatchImport={handleBatchCSVImport}
           />
-        )}
-
-        {activeTab === 'profile' && (
+        );
+      case 'profile':
+        return (
           <UserProfile
             prefs={userPrefs}
             onUpdatePrefs={handleUpdatePrefs}
           />
-        )}
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#0b1326] text-white flex flex-col font-sans antialiased selection:bg-blue-600 selection:text-white">
+      <Navbar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        winStreak={calculateWinStreak(bets)}
+        onLogout={handleLogout}
+      />
+
+      <main className="flex-1 overflow-y-auto pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-6 pt-[env(safe-area-inset-top)]">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="w-full h-full"
+          >
+            {renderActiveTab()}
+          </motion.div>
+        </AnimatePresence>
       </main>
     </div>
   );

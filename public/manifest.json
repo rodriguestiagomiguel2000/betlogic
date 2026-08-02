@@ -1,0 +1,16 @@
+{
+  "name": "BetLogic Pro",
+  "short_name": "BetLogic",
+  "description": "High Performance Betting Analytics & Bankroll Management",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b1326",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAJAAAACQCAYAAADnRuK4AAAACXBIWXMAAAsTAAALEwEAmpwYAAADfUlEQVR4nO3bX0hTcRzH8e9udrtut83mXNNoS9NAidYf6A8D00v7oUAI7S8K6SUE8VLBvAgK+qEIKvKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ8qIIifKiCInyogiJ+p6E9rV68e/DREAAAAASUVORK5CYII=",
+      "sizes": "144x144",
+      "type": "image/png"
+    }
+  ]
+}

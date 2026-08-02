@@ -80,6 +80,12 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
   const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'stake-desc' | 'odds-desc' | 'profit-desc'>('date-desc');
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
 
+  useEffect(() => {
+    if (window.innerWidth < 768) {
+      setViewMode('cards');
+    }
+  }, []);
+
   // Expanded legs state & Lightbox state
   const [expandedBetIds, setExpandedBetIds] = useState<Set<string>>(new Set());
   const [lightboxBet, setLightboxBet] = useState<Bet | null>(null);

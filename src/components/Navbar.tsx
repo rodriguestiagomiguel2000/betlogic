@@ -232,7 +232,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
       </aside>
 
       {/* Mobile Sticky Top Header */}
-      <header className="md:hidden sticky top-0 z-40 bg-[#060e20]/95 backdrop-blur-md border-b border-[#1f283d] px-4 py-3 flex items-center justify-between">
+      <header className="md:hidden sticky top-0 z-40 bg-[#060e20]/95 backdrop-blur-md border-b border-[#1f283d] px-4 py-3 pt-[calc(0.75rem+env(safe-area-inset-top))] flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <BrandLogo size="mobile" />
           <div>
@@ -267,7 +267,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
       </header>
 
       {/* Mobile Bottom Floating Nav Bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#060e20] border-t border-[#1f283d] flex items-center justify-around py-2 px-1">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#060e20] border-t border-[#1f283d] flex items-center justify-around py-3 px-1 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
         {mobileNavItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
@@ -275,12 +275,12 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
-              className={`flex flex-col items-center gap-1 px-2.5 py-1 rounded-lg transition-colors ${
+              className={`flex flex-col items-center gap-1.5 px-3 py-1 rounded-lg transition-colors min-w-[64px] ${
                 isActive ? 'text-[#2563eb]' : 'text-[#8d90a0] hover:text-[#dae2fd]'
               }`}
             >
-              <Icon size={18} />
-              <span className="text-[10px] font-medium">{item.label}</span>
+              <Icon size={20} />
+              <span className="text-[10px] font-bold uppercase tracking-wider">{item.label}</span>
             </button>
           );
         })}
