@@ -244,6 +244,27 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     }
   };
 
+  const normalizeScannedDate = (dateStr?: string): string | undefined => {
+    if (!dateStr || typeof dateStr !== 'string' || !dateStr.trim()) return undefined;
+
+    let cleaned = dateStr.trim();
+    const currentYear = new Date().getFullYear(); // 2026
+
+    // Replace past years 2024/2025 with current year 2026 when inferred incorrectly by model
+    cleaned = cleaned.replace(/\b202[0-5]\b/g, String(currentYear));
+
+    // If format is "DD/MM • HH:mm" or "DD/MM HH:mm" or "DD/MM" (e.g. "02/08 • 20:00" -> 2nd August 2026)
+    const ddMmMatch = cleaned.match(/^(\d{1,2})\/(\d{1,2})(?:\s*[•\s]\s*(\d{1,2}:\d{2}))?/);
+    if (ddMmMatch) {
+      const day = ddMmMatch[1].padStart(2, '0');
+      const month = ddMmMatch[2].padStart(2, '0');
+      const time = ddMmMatch[3] ? `T${ddMmMatch[3]}:00` : '';
+      return `${currentYear}-${month}-${day}${time}`;
+    }
+
+    return cleaned;
+  };
+
   const applyParsedData = (parsed: any) => {
     // Live detection
     const isLiveDetected = Boolean(
@@ -294,7 +315,8 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     setBetStatus(status);
 
     // Notes
-    const dateStr = parsed.placed_at || new Date().toISOString().slice(0, 10);
+    const rawDateStr = parsed.placed_at || new Date().toISOString().slice(0, 10);
+    const dateStr = normalizeScannedDate(rawDateStr) || new Date().toISOString().slice(0, 10);
     const idStr = parsed.bet_id ? ` [Ref: ${parsed.bet_id}]` : '';
     setNotes(`Scanned via Gemini 3.1 Flash Lite on ${dateStr}${idStr}`);
 
@@ -314,10 +336,18 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
 
     // Legs
     if (Array.isArray(parsed.legs) && parsed.legs.length > 0) {
+      const isMultiLeg = parsed.legs.length > 1;
       const extractedLegs: BetLeg[] = parsed.legs.map((leg: any, idx: number) => {
-        const legSelection = leg.selection || leg.team || parsed.selection || leg.market || 'Selection';
-        const legMarket = leg.market || parsed.market || 'Match Odds';
-        const legEvent = leg.event || parsed.event || leg.team || 'Match Event';
+        const legSelection = leg.selection || leg.team || (!isMultiLeg ? parsed.selection : '') || leg.market || 'Selection';
+        const legMarket = leg.market || (!isMultiLeg ? parsed.market : '') || 'Match Odds';
+        const legEvent = leg.event || (!isMultiLeg ? parsed.event : '') || leg.team || 'Match Event';
+
+        let legOdds = leg.odds_decimal ? Number(leg.odds_decimal) : (leg.odds ? Number(leg.odds) : NaN);
+        if (isNaN(legOdds) || legOdds <= 0) {
+          legOdds = !isMultiLeg ? Number(parsed.odds || parsed.total_odds || 1.85) : 1.85;
+        }
+
+        const rawLegDate = leg.event_date || leg.eventDate || parsed.placed_at || undefined;
 
         return {
           id: `scanned-leg-${Date.now()}-${idx}`,
@@ -325,9 +355,9 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
           event: legEvent,
           market: legMarket,
           selection: legSelection,
-          odds: leg.odds_decimal ? Number(leg.odds_decimal) : (leg.odds ? Number(leg.odds) : (parsed.total_odds || parsed.odds || 1.85)),
+          odds: legOdds,
           status: status === 'won' ? 'won' : status === 'lost' ? 'lost' : status === 'void' ? 'void' : 'pending',
-          eventDate: leg.event_date || leg.eventDate || parsed.placed_at || undefined,
+          eventDate: normalizeScannedDate(rawLegDate),
         };
       });
       setLegs(extractedLegs);
@@ -341,7 +371,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
         selection: parsed.selection || parsed.team || parsed.event || 'Selection',
         odds: parsed.odds ? Number(parsed.odds) : (parsed.total_odds ? Number(parsed.total_odds) : 1.85),
         status: status === 'won' ? 'won' : status === 'lost' ? 'lost' : status === 'void' ? 'void' : 'pending',
-        eventDate: parsed.event_date || parsed.placed_at || undefined,
+        eventDate: normalizeScannedDate(parsed.event_date || parsed.placed_at || undefined),
       };
       setLegs([singleLeg]);
     }

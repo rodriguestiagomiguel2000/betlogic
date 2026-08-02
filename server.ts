@@ -72,14 +72,37 @@ async function startServer() {
         });
       }
 
+      const currentYear = new Date().getFullYear();
       const prompt = `Analyze this sports betting slip image and extract all structured fields matching the schema exactly.
 Infer values strictly from the slip. Ensure decimal odds format is returned. Output clean, valid JSON only.
 
-Special parsing rules:
-1. LIVE / IN-PLAY BETS: Check for live indicators like "Halftime", red broadcast icons/dots ((•)), "Live", "In-Play", or active match scores (e.g., "0:0", "1:2"). Set is_live: true if any of these are present.
-2. CONDENSED MARKET & SELECTION LINES: On slips showing condensed lines like "1x2 Ferencvaros 0:0", parse "1x2" as the market, "Ferencvaros" (or the chosen team/outcome) as the selection/team, and separate out live match scores or status.
-3. FIXTURE / EVENT NAME: Extract full fixture names (e.g., "Ferencvaros vs Vasas FC").
-4. LEGS ARRAY: Always populate the legs array with at least 1 leg item even for single bets. Include event name, market, selection pick, decimal odds, and event kickoff date/time if visible.`;
+Special parsing & Extraction Rules:
+1. MULTI-LEG / PARLAY / MULTIPLE SLIPS (CRITICAL):
+   - If the slip header says "Multiple", "Parlay", "Accumulator", "Combo", "Bet Builder", OR shows 2 or more distinct selection cards/rows:
+   - Extract EVERY selection block as a separate, distinct item in the 'legs' array.
+   - On ReloadBet slips & similar layouts:
+     * Bold top line = 'selection' / pick (e.g. "Deportivo Madryn", "Mitre").
+     * Top right number = THAT LEG'S individual decimal odds 'odds_decimal' (e.g. 1.95, 1.43). NEVER put the combined total odds (e.g. 2.79) here!
+     * Middle line = 'market' (e.g. "1x2").
+     * Third line next to sport/ball icon = 'event' / match fixture (e.g. "Deportivo Madryn vs. All Boys", "Ciudad de Bolivar vs. Mitre").
+   - Set 'market_type' to "Multiple" or "Parlay".
+   - Set top-level 'total_odds' to the combined payout odds on the ticket (e.g. 2.79).
+   - Set top-level 'odds' to the combined total odds (e.g. 2.79) for multiple bets.
+
+2. CURRENT YEAR & DATE HANDLING (IMPORTANT):
+   - The current year is ${currentYear}.
+   - When dates like "02/08" or "02/08 • 20:00" or "02 Aug" are shown without an explicit year, ALWAYS assume the current year is ${currentYear} (e.g. "${currentYear}-08-02T20:00:00").
+   - European date format "02/08" is August 2nd (08-02), NOT February 8th.
+   - NEVER output past years unless explicitly printed on the physical slip.
+
+3. LIVE / IN-PLAY BETS:
+   - Look for "LIVE", "Halftime", red dots ((•)), active live scores (e.g. "0:0", "1:2"), or match clocks. Set is_live: true if present.
+
+4. BOOKMAKER:
+   - Identify sportsbook name (e.g., ReloadBet, Bet365, Pinnacle, BC.GAME). Return clean name.
+
+5. LEGS ARRAY:
+   - 'legs' array MUST NOT be empty. EVERY leg must contain non-empty 'event', 'selection', 'market', and individual 'odds_decimal'.`;
 
       // Enforce JSON Schema structured outputs using Gemini 3.1 Flash Lite
       const response = await ai.models.generateContent({
@@ -102,11 +125,11 @@ Special parsing rules:
             properties: {
               bookmaker: {
                 type: Type.STRING,
-                description: 'Name of the sportsbook/bookmaker (e.g. BC.GAME, Bet365, Pinnacle).',
+                description: 'Name of the sportsbook/bookmaker (e.g. ReloadBet, Bet365, Pinnacle, BC.GAME).',
               },
               event: {
                 type: Type.STRING,
-                description: 'Main match/fixture name (e.g. Ferencvaros vs Vasas FC or Liverpool vs Manchester City).',
+                description: 'Main match/fixture name for single bets or overall description for parlays.',
               },
               market: {
                 type: Type.STRING,
@@ -114,7 +137,7 @@ Special parsing rules:
               },
               selection: {
                 type: Type.STRING,
-                description: 'Selected outcome or team (e.g., Ferencvaros, Over 2.5, Real Madrid Win).',
+                description: 'Selected outcome or team (e.g., Deportivo Madryn, Over 2.5).',
               },
               sport: {
                 type: Type.STRING,
@@ -122,7 +145,7 @@ Special parsing rules:
               },
               odds: {
                 type: Type.NUMBER,
-                description: 'Decimal odds of the wager selection.',
+                description: 'Total or single decimal odds of the wager.',
               },
               stake: {
                 type: Type.NUMBER,
@@ -138,7 +161,7 @@ Special parsing rules:
               },
               is_live: {
                 type: Type.BOOLEAN,
-                description: 'True if the wager is an in-play/live bet or taken during halftime/in-game, indicated by live icons, red dots, "Halftime", "Live", or live score displays.',
+                description: 'True if the wager is an in-play/live bet or taken during halftime/in-game, indicated by LIVE badges, red dots, or match clocks.',
               },
               market_type: {
                 type: Type.STRING,
@@ -146,7 +169,7 @@ Special parsing rules:
               },
               placed_at: {
                 type: Type.STRING,
-                description: 'Date or timestamp when the bet was placed (format: YYYY-MM-DD or ISO string).',
+                description: `Date or timestamp when the bet was placed (ISO string YYYY-MM-DD or YYYY-MM-DDTHH:mm using current year ${currentYear}).`,
               },
               bet_id: {
                 type: Type.STRING,
@@ -158,21 +181,21 @@ Special parsing rules:
               },
               legs: {
                 type: Type.ARRAY,
-                description: 'Array of separate selections or legs parsed from the slip. ALWAYS populate at least one leg even for single bets.',
+                description: 'Array of separate selections or legs parsed from the slip. ALWAYS extract EVERY leg.',
                 items: {
                   type: Type.OBJECT,
                   properties: {
                     event: {
                       type: Type.STRING,
-                      description: 'Match fixture or event name (e.g. Ferencvaros vs Vasas FC).',
+                      description: 'Match fixture or event name (e.g. Deportivo Madryn vs. All Boys or Ciudad de Bolivar vs. Mitre). MUST NOT be empty.',
                     },
                     selection: {
                       type: Type.STRING,
-                      description: 'The specific pick or team outcome (e.g. Ferencvaros, Over 2.5 Goals).',
+                      description: 'The specific pick or team outcome (e.g. Deportivo Madryn, Mitre). MUST NOT be empty.',
                     },
                     team: {
                       type: Type.STRING,
-                      description: 'Selected team, athlete or outcome.',
+                      description: 'Selected team or outcome.',
                     },
                     market: {
                       type: Type.STRING,
@@ -180,18 +203,18 @@ Special parsing rules:
                     },
                     odds_decimal: {
                       type: Type.NUMBER,
-                      description: 'Decimal odds for this individual leg.',
+                      description: 'Decimal odds for this individual leg ONLY (e.g. 1.95 or 1.43). NEVER put total parlay odds here.',
                     },
                     event_date: {
                       type: Type.STRING,
-                      description: 'Kickoff or event date/time if visible on slip (ISO string YYYY-MM-DD or YYYY-MM-DDTHH:mm or Aug 2, 2026 at 17:30).',
+                      description: `Kickoff date/time if visible on slip (e.g. ${currentYear}-08-02T20:00:00). ALWAYS use current year ${currentYear} if no year is shown.`,
                     },
                   },
-                  required: ['event'],
+                  required: ['event', 'selection', 'odds_decimal'],
                 },
               },
             },
-            required: ['bookmaker', 'odds', 'stake', 'status'],
+            required: ['bookmaker', 'stake', 'status', 'legs'],
           },
         },
       });

@@ -63,11 +63,13 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
     const orderRes = await client.query('SELECT COALESCE(MAX(display_order), -1) + 1 as next_order FROM bankrolls WHERE user_id = $1', [userId]);
     const nextOrder = orderRes.rows[0]?.next_order ?? 0;
 
+    const totalInitialCash = allocations.reduce((sum: number, alloc: any) => sum + (parseFloat(alloc.cashAmount) || 0), 0);
+
     const result = await client.query(
       `INSERT INTO bankrolls (user_id, name, currency, initial_balance, current_balance, free_bet_credits, color, description, display_order)
-       VALUES ($1, $2, $3, 0, 0, 0, $4, $5, $6)
+       VALUES ($1, $2, $3, $4, 0, 0, $5, $6, $7)
        RETURNING id, user_id as "userId", name, currency, initial_balance as "initialBalance", current_balance as "currentBalance", free_bet_credits as "freeBetCredits", color, description, display_order as "displayOrder"`,
-      [userId, name, currency || 'EUR', color || '#2563eb', description || '', nextOrder]
+      [userId, name, currency || 'EUR', totalInitialCash, color || '#2563eb', description || '', nextOrder]
     );
 
     const newBankroll = result.rows[0];
@@ -94,6 +96,15 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
              WHERE id = $1`,
             [alloc.bookmakerId]
         );
+
+        // Log initial allocation transaction if cashAmount > 0
+        if (alloc.cashAmount && alloc.cashAmount > 0) {
+          await client.query(
+            `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [userId, newBankroll.id, new Date().toISOString(), 'Initial Balance', 'Initial bankroll allocation', alloc.bookmakerId, alloc.cashAmount]
+          ).catch(() => {});
+        }
     }
 
     await recomputeBankrollBalance(client, newBankroll.id);
@@ -242,6 +253,76 @@ router.delete('/:id', authenticateToken as any, async (req: AuthenticatedRequest
   } catch (err: any) {
     console.error('Error deleting bankroll:', err);
     return res.status(500).json({ error: 'Failed to delete bankroll.' });
+  }
+});
+
+/**
+ * GET /api/bankrolls/all-transactions
+ * Retrieve all transactions across all bankrolls for the authenticated user.
+ */
+router.get('/all-transactions', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+
+    // Ensure table exists
+    await query(`
+      CREATE TABLE IF NOT EXISTS bankroll_transactions (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        bankroll_id UUID NOT NULL REFERENCES bankrolls(id) ON DELETE CASCADE,
+        date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        type VARCHAR(50) NOT NULL,
+        description TEXT,
+        bookmaker_id UUID REFERENCES bookmakers(id) ON DELETE SET NULL,
+        amount DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `).catch(() => {});
+
+    // Check if any bankroll has no transaction log yet and seed initial balance
+    const brRes = await query(
+      `SELECT b.id, b.initial_balance, b.created_at,
+              COALESCE(SUM(bbb.cash_balance), 0) as alloc_total
+       FROM bankrolls b
+       LEFT JOIN bankroll_bookmaker_balances bbb ON bbb.bankroll_id = b.id
+       WHERE b.user_id = $1
+       GROUP BY b.id`,
+      [userId]
+    ).catch(() => ({ rows: [] }));
+
+    for (const br of brRes.rows) {
+      const initBal = Math.max(parseFloat(br.initial_balance || 0), parseFloat(br.alloc_total || 0));
+      if (initBal > 0) {
+        const txCheck = await query(
+          `SELECT id FROM bankroll_transactions WHERE bankroll_id = $1 AND user_id = $2 LIMIT 1`,
+          [br.id, userId]
+        ).catch(() => ({ rows: [] }));
+
+        if (txCheck.rows.length === 0) {
+          await query(
+            `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [userId, br.id, br.created_at || new Date().toISOString(), 'Initial Balance', 'Initial bankroll creation', null, initBal]
+          ).catch(() => {});
+        }
+      }
+    }
+
+    const queryText = `SELECT id, user_id as "userId", bankroll_id as "bankrollId", date::text as date, type, description, bookmaker_id as "bookmakerId", amount
+       FROM bankroll_transactions
+       WHERE user_id = $1
+       ORDER BY date ASC, created_at ASC`;
+
+    const result = await query(queryText, [userId]);
+    const transactions = result.rows.map((t) => ({
+      ...t,
+      amount: parseFloat(t.amount || 0),
+    }));
+
+    return res.json(transactions);
+  } catch (err: any) {
+    console.error('Error fetching all bankroll transactions:', err);
+    return res.status(500).json({ error: err.message || 'Failed to retrieve all bankroll transactions.' });
   }
 });
 

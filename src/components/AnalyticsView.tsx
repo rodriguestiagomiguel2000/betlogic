@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Bet, Bookmaker } from '../types';
+import { Bet, Bookmaker, BankrollTransaction } from '../types';
 import { formatCurrency, calculateWinStreak, getCurrencySymbol } from '../utils/storage';
 import {
   ResponsiveContainer,
@@ -42,10 +42,11 @@ import {
 interface AnalyticsViewProps {
   bets: Bet[];
   bookmakers: Bookmaker[];
+  transactions?: BankrollTransaction[];
   userCurrency?: string;
 }
 
-export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, userCurrency }) => {
+export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, transactions = [], userCurrency }) => {
   const [activeSubTab, setActiveSubTab] = useState<'overview' | 'heatmap_risk' | 'margins' | 'monte_carlo' | 'kelly'>('overview');
 
   // Kelly Criterion Calculator state
@@ -134,13 +135,51 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
   let medStakeAmt = 0;
   let lowStakeAmt = 0;
 
-  // Dynamic Bankroll Evolution calculation
-  const sortedBetsForEvolution = [...bets]
-    .filter((b) => b.status === 'won' || b.status === 'lost' || b.status === 'cashout')
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  // Dynamic Bankroll Evolution calculation based on chronological history of transactions and settled bets
+  interface TimelineItem {
+    rawDate: string;
+    capitalDelta: number;
+    betProfit: number;
+    descriptions: string[];
+  }
 
-  let currentBalEvolution = 5000; // Base bankroll start
-  const bankrollEvolutionData = sortedBetsForEvolution.map((bet, index) => {
+  const timelineMap: Record<string, TimelineItem> = {};
+
+  // 1. Process capital transactions (deposits, withdrawals, transfers, initial balances, adjustments)
+  if (transactions && transactions.length > 0) {
+    transactions.forEach((tx) => {
+      const d = new Date(tx.date);
+      if (isNaN(d.getTime())) return;
+      const rawDate = d.toISOString().slice(0, 10);
+      let amt = Number(tx.amount || 0);
+      if (tx.type && tx.type.toLowerCase().includes('withdraw') && amt > 0) {
+        amt = -amt;
+      }
+
+      if (!timelineMap[rawDate]) {
+        timelineMap[rawDate] = {
+          rawDate,
+          capitalDelta: 0,
+          betProfit: 0,
+          descriptions: []
+        };
+      }
+      timelineMap[rawDate].capitalDelta += amt;
+      if (tx.description) {
+        timelineMap[rawDate].descriptions.push(tx.description);
+      }
+    });
+  }
+
+  // 2. Process settled bets
+  const sortedBetsForEvolution = [...bets]
+    .filter((b) => b.status === 'won' || b.status === 'lost' || b.status === 'cashout');
+
+  sortedBetsForEvolution.forEach((bet) => {
+    const d = new Date(bet.date);
+    if (isNaN(d.getTime())) return;
+    const rawDate = d.toISOString().slice(0, 10);
+
     let profit = 0;
     if (bet.status === 'won') {
       profit = (bet.actualReturn || bet.potentialPayout) - bet.stake;
@@ -149,13 +188,60 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
     } else if (bet.status === 'cashout') {
       profit = (bet.actualReturn || 0) - bet.stake;
     }
-    currentBalEvolution += profit;
-    return {
-      betIndex: `#${index + 1}`,
-      date: new Date(bet.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-      balance: currentBalEvolution,
-    };
+
+    if (!timelineMap[rawDate]) {
+      timelineMap[rawDate] = {
+        rawDate,
+        capitalDelta: 0,
+        betProfit: 0,
+        descriptions: []
+      };
+    }
+    timelineMap[rawDate].betProfit += profit;
   });
+
+  const sortedTimeline = Object.values(timelineMap).sort((a, b) => a.rawDate.localeCompare(b.rawDate));
+
+  const bankrollEvolutionData: Array<{
+    date: string;
+    rawDate: string;
+    balance: number;
+    capitalDelta?: number;
+    betProfit?: number;
+  }> = [];
+
+  if (sortedTimeline.length > 0) {
+    const hasTransactions = transactions && transactions.length > 0;
+    let runningBalance = 0;
+
+    if (!hasTransactions) {
+      // Fallback for legacy mode without transaction log
+      const totalCurrentCash = bookmakers.reduce((sum, bm) => sum + (bm.realBalance || 0), 0);
+      const fallbackBaseline = Math.max(0, totalCurrentCash - currentTotalProfit);
+      runningBalance = fallbackBaseline;
+
+      bankrollEvolutionData.push({
+        date: 'Start',
+        rawDate: 'start',
+        balance: Number(fallbackBaseline.toFixed(2)),
+        capitalDelta: 0,
+        betProfit: 0
+      });
+    }
+
+    sortedTimeline.forEach((item) => {
+      runningBalance += item.capitalDelta + item.betProfit;
+      const displayDate = new Date(item.rawDate + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
+      bankrollEvolutionData.push({
+        date: displayDate,
+        rawDate: item.rawDate,
+        balance: Number(runningBalance.toFixed(2)),
+        capitalDelta: Number(item.capitalDelta.toFixed(2)),
+        betProfit: Number(item.betProfit.toFixed(2))
+      });
+    });
+  }
 
   // Dynamic ROI by Bookmaker calculation
   const bmRoiMap: Record<string, { staked: number; returned: number }> = {};
@@ -502,8 +588,31 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
                     <XAxis dataKey="date" stroke="#8d90a0" tick={{ fontSize: 11 }} />
                     <YAxis stroke="#8d90a0" tick={{ fontSize: 11 }} tickFormatter={(v) => `${getCurrencySymbol(userCurrency)}${v}`} />
                     <Tooltip
-                      contentStyle={{ backgroundColor: '#0b1326', borderColor: '#27314a', borderRadius: '8px', color: '#fff' }}
-                      formatter={(val: any) => [`${getCurrencySymbol(userCurrency)}${Number(val).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Bankroll']}
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const data = payload[0].payload;
+                          const sym = getCurrencySymbol(userCurrency);
+                          return (
+                            <div className="bg-[#0b1326] border border-[#27314a] p-3 rounded-lg text-xs space-y-1 shadow-xl">
+                              <p className="font-bold text-white mb-1">{data.date}</p>
+                              <p className="text-[#4edea3] font-semibold">
+                                Bankroll: {sym}{Number(data.balance).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </p>
+                              {data.capitalDelta !== undefined && data.capitalDelta !== 0 && (
+                                <p className={data.capitalDelta > 0 ? 'text-blue-400 font-mono' : 'text-amber-400 font-mono'}>
+                                  Capital Movement: {data.capitalDelta > 0 ? '+' : ''}{sym}{data.capitalDelta.toFixed(2)}
+                                </p>
+                              )}
+                              {data.betProfit !== undefined && data.betProfit !== 0 && (
+                                <p className={data.betProfit > 0 ? 'text-emerald-400 font-mono' : 'text-rose-400 font-mono'}>
+                                  Bet P&L: {data.betProfit > 0 ? '+' : ''}{sym}{data.betProfit.toFixed(2)}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
                     />
                     <Area type="monotone" dataKey="balance" stroke="#4edea3" strokeWidth={2.5} fillOpacity={1} fill="url(#bankrollGrad)" />
                   </AreaChart>

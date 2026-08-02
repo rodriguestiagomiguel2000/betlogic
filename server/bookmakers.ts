@@ -239,6 +239,15 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
         return res.status(404).json({ error: 'Bankroll not found.' });
       }
 
+      const cashDelta = targetCash - curCash;
+      if (Math.abs(cashDelta) > 0.001) {
+        await client.query(
+          `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [userId, targetBankrollId, new Date().toISOString(), 'Reconcile', `Balance adjustment (${cashDelta > 0 ? '+' : ''}${cashDelta.toFixed(2)})`, bookmakerId, cashDelta]
+        ).catch(() => {});
+      }
+
       await client.query(
         `INSERT INTO bankroll_bookmaker_balances (bankroll_id, bookmaker_id, cash_balance, free_bet_balance)
          VALUES ($1, $2, $3, $4)

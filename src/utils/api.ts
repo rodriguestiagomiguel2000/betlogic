@@ -163,6 +163,10 @@ export const bankrollsApi = {
 
   async transactions(id: string): Promise<BankrollTransaction[]> {
     return apiRequest<BankrollTransaction[]>(`/bankrolls/${id}/transactions`);
+  },
+
+  async allTransactions(): Promise<BankrollTransaction[]> {
+    return apiRequest<BankrollTransaction[]>('/bankrolls/all-transactions');
   }
 };
 

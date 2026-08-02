@@ -102,6 +102,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'calendar', label: 'Calendar', icon: Calendar },
     { id: 'history', label: 'History', icon: History },
+    { id: 'bankrolls', label: 'Bankrolls', icon: Wallet },
     { id: 'bookmakers', label: 'Books', icon: Building2 },
     { id: 'entry', label: 'Log Bet', icon: PlusCircle },
     { id: 'profile', label: 'Settings', icon: Settings }
@@ -277,12 +278,12 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
-                className={`flex flex-col items-center justify-center gap-1.5 py-2 rounded-xl transition-all min-w-[62px] flex-1 snap-center shrink-0 relative ${
+                className={`flex flex-col items-center justify-center gap-1 py-1.5 rounded-xl transition-all min-w-[46px] flex-1 snap-center shrink-0 relative ${
                   isActive 
                     ? 'text-[#2563eb]' 
                     : 'text-[#8d90a0] hover:text-[#dae2fd]'
                 }`}
-                style={{ minHeight: '56px' }}
+                style={{ minHeight: '52px' }}
               >
                 <div className={`p-1.5 rounded-lg transition-colors ${isActive ? 'bg-[#2563eb]/10' : ''}`}>
                   <Icon size={isActive ? 22 : 20} className={isActive ? 'animate-pulse-subtle' : ''} />

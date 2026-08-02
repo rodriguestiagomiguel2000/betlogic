@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bet, Bankroll, Bookmaker, BankrollTransfer, UserPreferences, BetStatus, TagDefinition } from './types';
+import { Bet, Bankroll, Bookmaker, BankrollTransfer, BankrollTransaction, UserPreferences, BetStatus, TagDefinition } from './types';
 import {
   isAuthenticated,
   logoutUser,
@@ -39,6 +39,7 @@ export function App() {
   const [bankrolls, setBankrolls] = useState<Bankroll[]>([]);
   const [bookmakers, setBookmakers] = useState<Bookmaker[]>([]);
   const [transfers, setTransfers] = useState<BankrollTransfer[]>([]);
+  const [transactions, setTransactions] = useState<BankrollTransaction[]>([]);
   const [userPrefs, setUserPrefs] = useState<UserPreferences>({
     currency: 'EUR',
     oddsFormat: 'decimal',
@@ -67,13 +68,14 @@ export function App() {
     }
     setError(null);
     try {
-      const [betsData, bankrollsData, bookmakersData, transfersData, tagsData, profileData] = await Promise.all([
+      const [betsData, bankrollsData, bookmakersData, transfersData, tagsData, profileData, transactionsData] = await Promise.all([
         betsApi.list(),
         bankrollsApi.list(),
         bookmakersApi.list(),
         transfersApi.list(),
         tagsApi.list(),
-        authApi.getProfile()
+        authApi.getProfile(),
+        bankrollsApi.allTransactions().catch(() => [])
       ]);
 
       setBets(betsData);
@@ -81,6 +83,7 @@ export function App() {
       setBookmakers(bookmakersData);
       setTransfers(transfersData);
       setTagDefinitions(tagsData);
+      setTransactions(transactionsData);
 
       if (profileData) {
         setUserPrefs(prev => ({
@@ -499,6 +502,7 @@ export function App() {
           <AnalyticsView
             bets={bets}
             bookmakers={bookmakers}
+            transactions={transactions}
             userCurrency={userPrefs.currency}
           />
         );
