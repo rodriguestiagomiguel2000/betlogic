@@ -918,8 +918,6 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
             }, 0);
 
             const isActivePrimary = b.id === activeBankrollId;
-            const bBmCash = bookmakers.reduce((sum, bm) => sum + getBookmakerBalanceForBankroll(bm, b.id).cashBalance, 0);
-            const bBmFree = bookmakers.reduce((sum, bm) => sum + getBookmakerBalanceForBankroll(bm, b.id).freeBetBalance, 0);
             const bTotalCash = b.currentBalance;
             const bTotalFree = b.freeBetCredits;
 

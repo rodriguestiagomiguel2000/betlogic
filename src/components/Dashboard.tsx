@@ -235,13 +235,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
             >
               <option value="all">All Bankrolls</option>
               {bankrolls.map((b) => {
-                const bmCash = bookmakers.reduce(
-                  (sum, bm) => sum + getBookmakerBalanceForBankroll(bm, b.id).cashBalance,
-                  0
-                );
                 return (
                   <option key={b.id} value={b.id}>
-                    {b.name} ({formatCurrency(b.currentBalance + bmCash, userCurrency)})
+                    {b.name} ({formatCurrency(b.currentBalance, userCurrency)})
                   </option>
                 );
               })}

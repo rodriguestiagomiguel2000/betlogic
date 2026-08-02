@@ -732,27 +732,17 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
             >
               <option value="all">
                 All Bankrolls ({formatCurrency(
-                  bankrolls.reduce((sum, b) => sum + (b.currentBalance || 0), 0) +
-                  bookmakers.reduce((sum, bm) => sum + (bm.realBalance || 0), 0),
+                  bankrolls.reduce((sum, b) => sum + (b.currentBalance || 0), 0),
                   userCurrency
                 )} Cash + {formatCurrency(
-                  bankrolls.reduce((sum, b) => sum + (b.freeBetCredits || 0), 0) +
-                  bookmakers.reduce((sum, bm) => sum + (bm.freeBetBalance || 0), 0),
+                  bankrolls.reduce((sum, b) => sum + (b.freeBetCredits || 0), 0),
                   userCurrency
                 )} Free Bets Combined)
               </option>
               {bankrolls.map((b) => {
-                const bmCash = bookmakers.reduce(
-                  (sum, bm) => sum + getBookmakerBalanceForBankroll(bm, b.id).cashBalance,
-                  0
-                );
-                const bmFree = bookmakers.reduce(
-                  (sum, bm) => sum + getBookmakerBalanceForBankroll(bm, b.id).freeBetBalance,
-                  0
-                );
                 return (
                   <option key={b.id} value={b.id}>
-                    {b.name} ({formatCurrency(b.currentBalance + bmCash, userCurrency)} Cash + {formatCurrency(b.freeBetCredits + bmFree, userCurrency)} Free Bets)
+                    {b.name} ({formatCurrency(b.currentBalance, userCurrency)} Cash + {formatCurrency(b.freeBetCredits, userCurrency)} Free Bets)
                   </option>
                 );
               })}
