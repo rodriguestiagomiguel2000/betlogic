@@ -1,5 +1,5 @@
 import express, { Response } from 'express';
-import { query, getDbPool } from './db';
+import { query, getDbPool, recomputeBankrollBalance } from './db';
 import { authenticateToken, AuthenticatedRequest } from './middleware';
 
 const router = express.Router();
@@ -247,6 +247,9 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
         [targetBankrollId, bookmakerId, targetCash, targetFree]
       );
 
+      // Recompute bankroll total
+      await recomputeBankrollBalance(client, targetBankrollId);
+
       await client.query(
         `UPDATE bookmakers SET 
           real_balance = COALESCE((SELECT SUM(cash_balance) FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0),
@@ -358,20 +361,6 @@ router.post('/:id/transactions', authenticateToken as any, async (req: Authentic
 
     await client.query('BEGIN');
 
-    // Fetch bankroll current balance
-    const brRes = await client.query(
-      'SELECT current_balance as "currentBalance", free_bet_credits as "freeBetCredits" FROM bankrolls WHERE id = $1 AND user_id = $2',
-      [bankrollId, userId]
-    );
-
-    if (brRes.rows.length === 0) {
-      await client.query('ROLLBACK');
-      client.release();
-      return res.status(404).json({ error: 'Bankroll not found.' });
-    }
-
-    const currentBankrollCash = parseFloat(brRes.rows[0].currentBalance || '0');
-
     // Fetch current bookmaker balance for this bankroll
     const bmBalRes = await client.query(
       'SELECT cash_balance as "cashBalance", free_bet_balance as "freeBetBalance" FROM bankroll_bookmaker_balances WHERE bankroll_id = $1 AND bookmaker_id = $2',
@@ -413,6 +402,9 @@ router.post('/:id/transactions', authenticateToken as any, async (req: Authentic
           free_bet_balance = bankroll_bookmaker_balances.free_bet_balance + $4`,
       [bankrollId, bookmakerId, cDelta, fDelta]
     );
+
+    // Recompute bankroll total
+    await recomputeBankrollBalance(client, bankrollId);
 
     // 2. Aggregate recalculation for bookmakers table (without ::INTEGER cast)
     await client.query(

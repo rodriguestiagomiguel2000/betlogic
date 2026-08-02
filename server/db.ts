@@ -33,6 +33,16 @@ function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
 }
 
+export async function recomputeBankrollBalance(client: any, bankrollId: string) {
+  await client.query(
+    `UPDATE bankrolls
+     SET current_balance = COALESCE((SELECT SUM(cash_balance) FROM bankroll_bookmaker_balances WHERE bankroll_id = $1), 0),
+         free_bet_credits = COALESCE((SELECT SUM(free_bet_balance) FROM bankroll_bookmaker_balances WHERE bankroll_id = $1), 0)
+     WHERE id = $1`,
+    [bankrollId]
+  );
+}
+
 /**
  * Executes a simulated query against the in-memory database fallback.
  */
@@ -233,6 +243,17 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
       ],
       rowCount: 1,
     };
+  }
+
+  if (/UPDATE bankrolls SET current_balance = COALESCE\(.*\), free_bet_credits = COALESCE\(.*\)/i.test(sql)) {
+    const [bankrollId] = params;
+    const br = memoryStore.bankrolls.find((b) => b.id === bankrollId);
+    if (br) {
+      const bbbList = memoryStore.bankrollBookmakerBalances.filter((x) => x.bankroll_id === bankrollId);
+      br.current_balance = bbbList.reduce((sum, x) => sum + (x.cash_balance || 0), 0);
+      br.free_bet_credits = bbbList.reduce((sum, x) => sum + (x.free_bet_balance || 0), 0);
+    }
+    return { rows: [], rowCount: br ? 1 : 0 };
   }
 
   if (/UPDATE bankrolls SET current_balance = current_balance \+ \$1/i.test(sql)) {

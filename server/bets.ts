@@ -1,5 +1,5 @@
 import express, { Response } from 'express';
-import { query, getDbPool } from './db';
+import { query, getDbPool, recomputeBankrollBalance } from './db';
 import { authenticateToken, AuthenticatedRequest } from './middleware';
 
 const router = express.Router();
@@ -28,6 +28,9 @@ async function applyBookmakerBalanceChange(client: any, bankrollId: string, book
      WHERE id = $1`,
     [bookmakerId]
   );
+  
+  // Recompute bankroll total
+  await recomputeBankrollBalance(client, bankrollId);
 }
 
 function computeBetFinancialImpact(bet: {

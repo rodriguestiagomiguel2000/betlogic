@@ -1,5 +1,5 @@
 import express, { Response } from 'express';
-import { query, getDbPool } from './db';
+import { query, getDbPool, recomputeBankrollBalance } from './db';
 import { authenticateToken, AuthenticatedRequest } from './middleware';
 
 const router = express.Router();
@@ -48,50 +48,74 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
  * Create a new bankroll.
  */
 router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  const client = await getDbPool().connect();
   try {
     const userId = req.user?.id;
-    const { name, currency, initialBalance, freeBetCredits, color, description } = req.body;
+    const { name, currency, color, description, allocations } = req.body;
 
-    if (!name) {
-      return res.status(400).json({ error: 'Bankroll name is required.' });
+    if (!name || !allocations || !Array.isArray(allocations) || allocations.length === 0) {
+      client.release();
+      return res.status(400).json({ error: 'Bankroll name and at least one allocation are required.' });
     }
 
-    const initBal = initialBalance !== undefined ? parseFloat(initialBalance) : 1000.00;
-    const freeBal = freeBetCredits !== undefined ? parseFloat(freeBetCredits) : 0.00;
+    await client.query('BEGIN');
 
-    const orderRes = await query('SELECT COALESCE(MAX(display_order), -1) + 1 as next_order FROM bankrolls WHERE user_id = $1', [userId]);
+    const orderRes = await client.query('SELECT COALESCE(MAX(display_order), -1) + 1 as next_order FROM bankrolls WHERE user_id = $1', [userId]);
     const nextOrder = orderRes.rows[0]?.next_order ?? 0;
 
-    const result = await query(
+    const result = await client.query(
       `INSERT INTO bankrolls (user_id, name, currency, initial_balance, current_balance, free_bet_credits, color, description, display_order)
-       VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8)
+       VALUES ($1, $2, $3, 0, 0, 0, $4, $5, $6)
        RETURNING id, user_id as "userId", name, currency, initial_balance as "initialBalance", current_balance as "currentBalance", free_bet_credits as "freeBetCredits", color, description, display_order as "displayOrder"`,
-      [userId, name, currency || 'EUR', initBal, freeBal, color || '#2563eb', description || '', nextOrder]
+      [userId, name, currency || 'EUR', color || '#2563eb', description || '', nextOrder]
     );
 
     const newBankroll = result.rows[0];
 
-    // Log the Initial Balance in bankroll_transactions
-    await query(
-      `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [userId, newBankroll.id, new Date().toISOString(), 'Initial Balance', 'Initial bankroll creation', null, initBal]
-    );
+    // Insert allocations
+    for (const alloc of allocations) {
+        if ((alloc.cashAmount || 0) < 0 || (alloc.freeBetAmount || 0) < 0) {
+            await client.query('ROLLBACK');
+            client.release();
+            return res.status(400).json({ error: 'Allocation amounts cannot be negative.' });
+        }
+        await client.query(
+          `INSERT INTO bankroll_bookmaker_balances (bankroll_id, bookmaker_id, cash_balance, free_bet_balance)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (bankroll_id, bookmaker_id)
+           DO UPDATE SET cash_balance = bankroll_bookmaker_balances.cash_balance + $3, free_bet_balance = bankroll_bookmaker_balances.free_bet_balance + $4`,
+          [newBankroll.id, alloc.bookmakerId, alloc.cashAmount || 0, alloc.freeBetAmount || 0]
+        );
+        // Also update bookmakers real_balance/free_bet_balance
+        await client.query(
+            `UPDATE bookmakers SET 
+              real_balance = COALESCE((SELECT SUM(cash_balance) FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0),
+              free_bet_balance = COALESCE((SELECT SUM(free_bet_balance) FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0)
+             WHERE id = $1`,
+            [alloc.bookmakerId]
+        );
+    }
+
+    await recomputeBankrollBalance(client, newBankroll.id);
 
     // If this is the user's first bankroll or active bankroll is unset, set it as active
-    await query(
+    await client.query(
       `UPDATE users SET active_bankroll_id = COALESCE(active_bankroll_id, $1) WHERE id = $2`,
       [newBankroll.id, userId]
     );
+    
+    await client.query('COMMIT');
+    client.release();
 
     return res.status(201).json({
-      ...newBankroll,
-      initialBalance: parseFloat(newBankroll.initialBalance),
-      currentBalance: parseFloat(newBankroll.currentBalance),
-      freeBetCredits: parseFloat(newBankroll.freeBetCredits),
-      displayOrder: parseInt(newBankroll.displayOrder || 0),
+        ...newBankroll,
+        initialBalance: parseFloat(newBankroll.initialBalance),
+        currentBalance: parseFloat(newBankroll.currentBalance),
+        freeBetCredits: parseFloat(newBankroll.freeBetCredits),
     });
   } catch (err: any) {
+    await client.query('ROLLBACK');
+    client.release();
     console.error('Error creating bankroll:', err);
     return res.status(500).json({ error: 'Failed to create bankroll.' });
   }

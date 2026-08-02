@@ -232,7 +232,7 @@ export function App() {
     }
   };
 
-  const handleAddBankroll = (data: Omit<Bankroll, 'id'>): void => {
+  const handleAddBankroll = (data: { name: string; currency: string; color: string; description: string; allocations: Array<{ bookmakerId: string; cashAmount: number; freeBetAmount: number }> }): void => {
     bankrollsApi.create(data).then(() => {
       loadData();
     }).catch(err => {
@@ -369,28 +369,6 @@ export function App() {
       });
     } catch (err: any) {
       alert(`Failed to update profile: ${err.message}`);
-    }
-  };
-
-  const handleReconcileBankroll = async (bankrollId: string, newCash: number, newFreeBet: number, notes: string) => {
-    try {
-      const b = bankrolls.find(item => item.id === bankrollId);
-      if (!b) return;
-      const diff = newCash - b.currentBalance;
-      if (diff !== 0) {
-        await transfersApi.create({
-          date: new Date().toISOString(),
-          fromBankrollId: bankrollId,
-          toBankrollId: bankrollId,
-          amount: Math.abs(diff),
-          isFreeBetCredit: false,
-          notes: `Reconciliation: ${notes}`
-        });
-      }
-      await bankrollsApi.update(bankrollId, { currentBalance: newCash, freeBetCredits: newFreeBet });
-      await loadData();
-    } catch (err: any) {
-      alert(`Reconciliation failed: ${err.message}`);
     }
   };
 
@@ -592,7 +570,6 @@ export function App() {
             onAddTransfer={handleAddTransfer}
             onSetActiveBankroll={handleSetActiveBankroll}
             onDeleteBankroll={handleDeleteBankroll}
-            onReconcileBankroll={handleReconcileBankroll}
             onReconcileBookmaker={handleReconcileBookmaker}
             onBatchUpdateBookmakers={handleBatchUpdateBookmakers}
             onReorderBankrolls={handleReorderBankrolls}

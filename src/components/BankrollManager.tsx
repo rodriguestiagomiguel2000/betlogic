@@ -40,12 +40,11 @@ interface BankrollManagerProps {
   transfers: BankrollTransfer[];
   activeBankrollId?: string;
   userCurrency?: string;
-  onAddBankroll: (bankroll: Omit<Bankroll, 'id'>) => string | void;
+  onAddBankroll: (bankroll: { name: string; currency: string; color: string; description: string; allocations: Array<{ bookmakerId: string; cashAmount: number; freeBetAmount: number }> }) => string | void;
   onUpdateBankrollBalance: (bankrollId: string, newBalance: number) => void;
   onAddTransfer: (transfer: Omit<BankrollTransfer, 'id'>) => void;
   onSetActiveBankroll?: (bankrollId: string) => void;
   onDeleteBankroll?: (bankrollId: string, strategy: 'reassign' | 'unassign' | 'delete_all', targetBankrollId?: string) => void;
-  onReconcileBankroll?: (bankrollId: string, newCash: number, newFreeBet: number, notes: string) => void;
   onReconcileBookmaker?: (bookmakerId: string, newRealCash: number, newFreeBet: number, notes: string, targetBankrollId?: string) => void;
   onBatchUpdateBookmakers?: (updates: Array<{ id: string; bankrollId?: string; realBalance?: number; freeBetBalance?: number }>) => void;
   onReorderBankrolls?: (reorderedIds: string[]) => void;
@@ -64,7 +63,6 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
   onAddTransfer,
   onSetActiveBankroll,
   onDeleteBankroll,
-  onReconcileBankroll,
   onReconcileBookmaker,
   onBatchUpdateBookmakers,
   onReorderBankrolls,
@@ -102,7 +100,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
   const [dwBankrollId, setDwBankrollId] = useState<string>('');
   const [dwBookmakerId, setDwBookmakerId] = useState<string>('');
   const [dwType, setDwType] = useState<'deposit' | 'withdraw'>('deposit');
-  const [dwAmount, setDwAmount] = useState<number>(100);
+  const [dwAmount, setDwAmount] = useState<string>('100');
   const [dwLoading, setDwLoading] = useState<boolean>(false);
   const [dwError, setDwError] = useState<string | null>(null);
 
@@ -111,42 +109,46 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
   const [deleteStrategy, setDeleteStrategy] = useState<'reassign' | 'unassign' | 'delete_all'>('reassign');
   const [targetReassignBankrollId, setTargetReassignBankrollId] = useState<string>('');
 
-  // Reconciliation Modal State
+  // Reconciliation Modal State for Bankroll's Bookmakers
   const [reconcileBankrollTarget, setReconcileBankrollTarget] = useState<Bankroll | null>(null);
-  const [reconcileNewCash, setReconcileNewCash] = useState<number>(0);
-  const [reconcileNewFreeBet, setReconcileNewFreeBet] = useState<number>(0);
   const [reconcileSelectedBookmakerId, setReconcileSelectedBookmakerId] = useState<string>('');
-  const [reconcileBmCash, setReconcileBmCash] = useState<number>(0);
-  const [reconcileBmFreeBet, setReconcileBmFreeBet] = useState<number>(0);
+  const [reconcileBmCash, setReconcileBmCash] = useState<string>('0');
+  const [reconcileBmFreeBet, setReconcileBmFreeBet] = useState<string>('0');
   const [reconcileNotes, setReconcileNotes] = useState<string>('');
 
   // Transfer Form State
   const [fromBankroll, setFromBankroll] = useState<string>(bankrolls[0]?.id || '');
   const [toBankroll, setToBankroll] = useState<string>(bankrolls[1]?.id || '');
+  const [fromBookmakerId, setFromBookmakerId] = useState<string>('');
+  const [toBookmakerId, setToBookmakerId] = useState<string>('');
   const [transferAmount, setTransferAmount] = useState<number>(100);
   const [isFreeBetTransfer, setIsFreeBetTransfer] = useState<boolean>(false);
   const [rolloverRequired, setRolloverRequired] = useState<number>(300);
   const [transferNotes, setTransferNotes] = useState<string>('Bonus credit reallocation');
 
-  // Add Bankroll Form State & Matrix
+  useEffect(() => {
+    if (fromBankroll) {
+      const bms = bookmakers.filter(bm => bm.balances?.some(bal => bal.bankrollId === fromBankroll) || bm.bankrollId === fromBankroll);
+      if (bms.length > 0 && !bms.find(b => b.id === fromBookmakerId)) {
+        setFromBookmakerId(bms[0].id);
+      }
+    }
+  }, [fromBankroll, bookmakers]);
+
+  useEffect(() => {
+    if (toBankroll) {
+      const bms = bookmakers; // Destination can be any bookmaker (or maybe just all bookmakers available for user)
+      if (bms.length > 0 && !bms.find(b => b.id === toBookmakerId)) {
+        setToBookmakerId(bms[0].id);
+      }
+    }
+  }, [toBankroll, bookmakers]);
+
+  // Add Bankroll Form State & Allocations
   const [newBankrollName, setNewBankrollName] = useState<string>('');
   const [newBankrollCurrency, setNewBankrollCurrency] = useState<string>('EUR');
-  const [newBankrollInitial, setNewBankrollInitial] = useState<number>(1000);
+  const [newBankrollAllocations, setNewBankrollAllocations] = useState<Array<{ bookmakerId: string; cashAmount: string; freeBetAmount: string }>>([{ bookmakerId: '', cashAmount: '', freeBetAmount: '' }]);
   const [newBankrollDesc, setNewBankrollDesc] = useState<string>('');
-  const [bookmakerAllocations, setBookmakerAllocations] = useState<Record<string, { selected: boolean; realBalance: number; freeBetBalance: number }>>({});
-
-  // Initialize matrix when opening Add Modal or when bookmakers change
-  useEffect(() => {
-    const initialMap: Record<string, { selected: boolean; realBalance: number; freeBetBalance: number }> = {};
-    bookmakers.forEach((bm) => {
-      initialMap[bm.id] = {
-        selected: false,
-        realBalance: bm.realBalance || 0,
-        freeBetBalance: bm.freeBetBalance || 0
-      };
-    });
-    setBookmakerAllocations(initialMap);
-  }, [bookmakers, showAddBankrollModal]);
 
   // Search & Filter for Deep-Dive Bet History Table
   const [betSearchQuery, setBetSearchQuery] = useState<string>('');
@@ -170,7 +172,8 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
     e.preventDefault();
     const targetBr = targetBankroll;
     const targetBmId = dwBookmakerId || (bookmakers.length > 0 ? bookmakers[0].id : '');
-    if (!targetBr || !targetBmId || dwAmount <= 0) {
+    const amount = parseFloat(dwAmount);
+    if (!targetBr || !targetBmId || amount <= 0) {
       setDwError('Please select a valid sportsbook and enter an amount greater than 0.');
       return;
     }
@@ -180,7 +183,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
       await bookmakersApi.transaction(targetBmId, {
         bankrollId: targetBr.id,
         type: dwType,
-        amount: dwAmount
+        amount: amount
       });
       setShowDepositWithdrawModal(false);
       if (onRefreshData) {
@@ -211,7 +214,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
     } else {
       setTransactions([]);
     }
-  }, [selectedBankrollId, txRefreshTrigger, showTransferModal, showDepositWithdrawModal, bankrolls]);
+  }, [selectedBankrollId, txRefreshTrigger, bankrolls]);
 
   const transactionsWithRunningBalance = useMemo(() => {
     let running = 0;
@@ -230,27 +233,16 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
     }
   }, [showDepositWithdrawModal, bookmakers, dwBookmakerId]);
 
-  // Real-time matrix cash calculation
-  const totalAllocatedCash = useMemo(() => {
-    return Object.values(bookmakerAllocations).reduce((acc, item) => {
-      return item.selected ? acc + (Number(item.realBalance) || 0) : acc;
-    }, 0);
-  }, [bookmakerAllocations]);
-
-  const totalAllocatedFreeBets = useMemo(() => {
-    return Object.values(bookmakerAllocations).reduce((acc, item) => {
-      return item.selected ? acc + (Number(item.freeBetBalance) || 0) : acc;
-    }, 0);
-  }, [bookmakerAllocations]);
-
-  const allocationDiff = newBankrollInitial - totalAllocatedCash;
-
   // Compute Bankroll Scoped Analytics
-  const bankrollAnalytics = useMemo(() => {
+  
+
+  const scopedBets = useMemo(() => {
+    if (!activeBankroll) return [];
+    return bets.filter((b) => b.bankrollId === activeBankroll.id);
+  }, [activeBankroll, bets]);
+
+  const coreAnalytics = useMemo(() => {
     if (!activeBankroll) return null;
-
-    const scopedBets = bets.filter((b) => b.bankrollId === activeBankroll.id);
-
     let totalVolumeStaked = 0;
     let activeExposure = 0;
     let totalReturns = 0;
@@ -276,7 +268,6 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
     });
 
     const settledCount = wonCount + lostCount;
-    // Net profit for settled bets = total returns - settled staked volume
     const settledStaked = scopedBets
       .filter((b) => b.status !== 'pending')
       .reduce((acc, b) => acc + b.stake, 0);
@@ -293,51 +284,56 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
       (sum, bm) => sum + getBookmakerBalanceForBankroll(bm, activeBankroll.id).freeBetBalance,
       0
     );
-    const totalPortfolioValue =
-      activeBankroll.currentBalance + bookmakerCashSum + activeBankroll.freeBetCredits + bookmakerFreeBetSum;
+    const totalPortfolioValue = activeBankroll.currentBalance + activeBankroll.freeBetCredits;
 
-    // Cumulative Profit Growth Chart Data
+    return {
+      totalPortfolioValue,
+      bookmakerCashSum,
+      bookmakerFreeBetSum,
+      totalVolumeStaked,
+      activeExposure,
+      netPnL,
+      roi,
+      winRate,
+      settledCount,
+      pendingCount
+    };
+  }, [scopedBets, activeBankroll, bookmakers]);
+
+  const growthChartData = useMemo(() => {
     const sortedBets = [...scopedBets].sort(
       (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
     );
 
     let cumulativeProfit = 0;
-    const growthChartData = [
-      { date: 'Start', profit: 0 }
-    ];
+    const data = [{ date: 'Start', profit: 0 }];
 
     sortedBets.forEach((bet) => {
       if (bet.status === 'won') {
-        const p = (bet.actualReturn ?? bet.potentialPayout) - bet.stake;
-        cumulativeProfit += p;
+        cumulativeProfit += (bet.actualReturn ?? bet.potentialPayout) - bet.stake;
       } else if (bet.status === 'lost') {
         cumulativeProfit -= bet.stake;
       } else if (bet.status === 'cashout') {
         cumulativeProfit += (bet.actualReturn ?? 0) - bet.stake;
       }
       if (bet.status !== 'pending') {
-        growthChartData.push({
+        data.push({
           date: new Date(bet.date).toLocaleDateString([], { month: 'short', day: 'numeric' }),
           profit: Number(cumulativeProfit.toFixed(2))
         });
       }
     });
+    return data;
+  }, [scopedBets]);
 
-    // Sportsbook Breakdown Table for this Bankroll
-    const bookmakerBreakdownMap: Record<string, {
-      id: string;
-      name: string;
-      cashBalance: number;
-      freeBetBalance: number;
-      betsCount: number;
-      staked: number;
-      netPnL: number;
-    }> = {};
+  const bookmakerBreakdown = useMemo(() => {
+    if (!activeBankroll) return [];
+    const map = {};
 
     bookmakers.forEach((bm) => {
       const bal = getBookmakerBalanceForBankroll(bm, activeBankroll.id);
       if (bal.cashBalance > 0 || bal.freeBetBalance > 0 || bm.bankrollId === activeBankroll.id || scopedBets.some((b) => b.bookmakerId === bm.id)) {
-        bookmakerBreakdownMap[bm.id] = {
+        map[bm.id] = {
           id: bm.id,
           name: bm.name,
           cashBalance: bal.cashBalance,
@@ -350,10 +346,10 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
     });
 
     scopedBets.forEach((bet) => {
-      if (!bookmakerBreakdownMap[bet.bookmakerId]) {
+      if (!map[bet.bookmakerId]) {
         const bm = bookmakers.find((b) => b.id === bet.bookmakerId);
         const bal = bm ? getBookmakerBalanceForBankroll(bm, activeBankroll.id) : { cashBalance: 0, freeBetBalance: 0 };
-        bookmakerBreakdownMap[bet.bookmakerId] = {
+        map[bet.bookmakerId] = {
           id: bet.bookmakerId,
           name: bm ? bm.name : 'Unknown Sportsbook',
           cashBalance: bal.cashBalance,
@@ -364,7 +360,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
         };
       }
 
-      const item = bookmakerBreakdownMap[bet.bookmakerId];
+      const item = map[bet.bookmakerId];
       item.betsCount += 1;
       item.staked += bet.stake;
 
@@ -377,24 +373,18 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
       }
     });
 
-    const bookmakerBreakdown = Object.values(bookmakerBreakdownMap);
+    return Object.values(map);
+  }, [scopedBets, activeBankroll, bookmakers]);
 
+  const bankrollAnalytics = useMemo(() => {
+    if (!coreAnalytics) return null;
     return {
       scopedBets,
-      totalPortfolioValue,
-      bookmakerCashSum,
-      bookmakerFreeBetSum,
-      totalVolumeStaked,
-      activeExposure,
-      netPnL,
-      roi,
-      winRate,
-      settledCount,
-      pendingCount,
+      ...coreAnalytics,
       growthChartData,
       bookmakerBreakdown
     };
-  }, [activeBankroll, bets, bookmakers]);
+  }, [scopedBets, coreAnalytics, growthChartData, bookmakerBreakdown]);
 
   // Filtered bets for Deep-Dive Bet History
   const filteredBankrollBets = useMemo(() => {
@@ -415,12 +405,14 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
 
   const handleExecuteTransfer = (e: React.FormEvent) => {
     e.preventDefault();
-    if (transferAmount <= 0 || fromBankroll === toBankroll) return;
+    if (transferAmount <= 0 || fromBankroll === toBankroll || !fromBookmakerId || !toBookmakerId) return;
 
     onAddTransfer({
       date: new Date().toISOString(),
       fromBankrollId: fromBankroll,
       toBankrollId: toBankroll,
+      fromBookmakerId,
+      toBookmakerId,
       amount: transferAmount,
       isFreeBetCredit: isFreeBetTransfer,
       rolloverRequired: isFreeBetTransfer ? rolloverRequired : undefined,
@@ -438,15 +430,17 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
     onAddBankroll({
       name: newBankrollName,
       currency: newBankrollCurrency,
-      initialBalance: newBankrollInitial,
-      currentBalance: 0,
-      freeBetCredits: 0,
-      allocatedMargin: 0,
+      allocations: newBankrollAllocations.map(a => ({
+        bookmakerId: a.bookmakerId,
+        cashAmount: parseFloat(a.cashAmount) || 0,
+        freeBetAmount: parseFloat(a.freeBetAmount) || 0
+      })),
       color: '#2563eb',
       description: newBankrollDesc
     });
 
     setNewBankrollName('');
+    setNewBankrollAllocations([{ bookmakerId: '', cashAmount: '', freeBetAmount: '' }]);
     setShowAddBankrollModal(false);
   };
 
@@ -482,7 +476,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
               onClick={() => {
                 setDwBookmakerId(bookmakers[0]?.id || '');
                 setDwType('deposit');
-                setDwAmount(100);
+                setDwAmount('100');
                 setDwError(null);
                 setShowDepositWithdrawModal(true);
               }}
@@ -510,7 +504,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
               {formatCurrency(bankrollAnalytics.totalPortfolioValue, userCurrency)}
             </div>
             <span className="text-[10px] text-[#4edea3] font-mono block">
-              {formatCurrency(activeBankroll.currentBalance + bankrollAnalytics.bookmakerCashSum, userCurrency)} Cash + {formatCurrency(activeBankroll.freeBetCredits + bankrollAnalytics.bookmakerFreeBetSum, userCurrency)} Promo
+              {formatCurrency(activeBankroll.currentBalance, userCurrency)} Cash + {formatCurrency(activeBankroll.freeBetCredits, userCurrency)} Promo
             </span>
           </div>
 
@@ -890,7 +884,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
               setDwBankrollId(firstBr?.id || '');
               setDwBookmakerId(bookmakers[0]?.id || '');
               setDwType('deposit');
-              setDwAmount(firstBr ? Math.max(1, Math.min(100, firstBr.currentBalance)) : 50);
+              setDwAmount((firstBr ? Math.max(1, Math.min(100, firstBr.currentBalance)) : 50).toString());
               setDwError(null);
               setShowDepositWithdrawModal(true);
             }}
@@ -929,8 +923,8 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
             const isActivePrimary = b.id === activeBankrollId;
             const bBmCash = bookmakers.reduce((sum, bm) => sum + getBookmakerBalanceForBankroll(bm, b.id).cashBalance, 0);
             const bBmFree = bookmakers.reduce((sum, bm) => sum + getBookmakerBalanceForBankroll(bm, b.id).freeBetBalance, 0);
-            const bTotalCash = b.currentBalance + bBmCash;
-            const bTotalFree = b.freeBetCredits + bBmFree;
+            const bTotalCash = b.currentBalance;
+            const bTotalFree = b.freeBetCredits;
 
             return (
               <div
@@ -1028,7 +1022,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                         setDwBankrollId(b.id);
                         setDwBookmakerId(bookmakers[0]?.id || '');
                         setDwType('deposit');
-                        setDwAmount(Math.max(1, Math.min(100, b.currentBalance)));
+                        setDwAmount(Math.max(1, Math.min(100, b.currentBalance)).toString());
                         setDwError(null);
                         setShowDepositWithdrawModal(true);
                       }}
@@ -1039,11 +1033,21 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                     <button
                       onClick={() => {
                         setReconcileBankrollTarget(b);
-                        setReconcileNewCash(b.currentBalance);
-                        setReconcileNewFreeBet(b.freeBetCredits);
+                        const bms = bookmakers.filter(bm => bm.balances?.some(bal => bal.bankrollId === b.id) || bm.bankrollId === b.id);
+                        if (bms.length > 0) {
+                          setReconcileSelectedBookmakerId(bms[0].id);
+                          const bal = getBookmakerBalanceForBankroll(bms[0], b.id);
+                          setReconcileBmCash(bal.cashBalance.toString());
+                          setReconcileBmFreeBet(bal.freeBetBalance.toString());
+                        } else {
+                          setReconcileSelectedBookmakerId('');
+                          setReconcileBmCash('0');
+                          setReconcileBmFreeBet('0');
+                        }
                         setReconcileNotes('');
                       }}
-                      className="py-1.5 px-2 bg-[#0b1326] hover:bg-[#1a233a] text-white border border-[#27314a] rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1"
+                      className="py-1.5 px-2 bg-[#0b1326] hover:bg-[#1a233a] text-[#8d90a0] hover:text-white border border-[#27314a] rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1"
+                      title="Reconcile a bookmaker's balance in this bankroll"
                     >
                       <RefreshCw size={12} className="text-[#2563eb]" /> Reconcile
                     </button>
@@ -1151,13 +1155,27 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                 <select
                   value={fromBankroll}
                   onChange={(e) => setFromBankroll(e.target.value)}
-                  className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white"
+                  className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white mb-2"
                 >
                   {bankrolls.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name} ({formatCurrency(b.currentBalance, userCurrency)})
                     </option>
                   ))}
+                </select>
+                
+                <label className="block text-[#8d90a0] mb-1">Source Bookmaker</label>
+                <select
+                  value={fromBookmakerId}
+                  onChange={(e) => setFromBookmakerId(e.target.value)}
+                  className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white"
+                >
+                  {bookmakers.filter(bm => bm.balances?.some(bal => bal.bankrollId === fromBankroll) || bm.bankrollId === fromBankroll).map(bm => (
+                    <option key={bm.id} value={bm.id}>{bm.name} ({formatCurrency(getBookmakerBalanceForBankroll(bm, fromBankroll).cashBalance, userCurrency)} Cash)</option>
+                  ))}
+                  {bookmakers.filter(bm => bm.balances?.some(bal => bal.bankrollId === fromBankroll) || bm.bankrollId === fromBankroll).length === 0 && (
+                    <option value="" disabled>No bookmakers with balance</option>
+                  )}
                 </select>
               </div>
 
@@ -1166,13 +1184,27 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                 <select
                   value={toBankroll}
                   onChange={(e) => setToBankroll(e.target.value)}
-                  className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white"
+                  className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white mb-2"
                 >
                   {bankrolls.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
                     </option>
                   ))}
+                </select>
+
+                <label className="block text-[#8d90a0] mb-1">Destination Bookmaker</label>
+                <select
+                  value={toBookmakerId}
+                  onChange={(e) => setToBookmakerId(e.target.value)}
+                  className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white"
+                >
+                  {bookmakers.map((bm) => (
+                    <option key={bm.id} value={bm.id}>{bm.name}</option>
+                  ))}
+                  {bookmakers.length === 0 && (
+                    <option value="" disabled>No bookmakers available</option>
+                  )}
                 </select>
               </div>
 
@@ -1249,46 +1281,100 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
             </div>
 
             <form onSubmit={handleCreateBankroll} className="space-y-4 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-[#8d90a0] mb-1 font-medium">Bankroll Name</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. High Yield Unit"
-                    value={newBankrollName}
-                    onChange={(e) => setNewBankrollName(e.target.value)}
-                    className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white"
-                    required
-                  />
-                </div>
+              <div>
+                <label className="block text-[#8d90a0] mb-1 font-medium">Bankroll Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g. High Yield Unit"
+                  value={newBankrollName}
+                  onChange={(e) => setNewBankrollName(e.target.value)}
+                  className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white"
+                  required
+                />
+              </div>
 
-                <div>
-                  <label className="block text-[#8d90a0] mb-1 font-medium">Currency</label>
-                  <select
-                    value={newBankrollCurrency}
-                    onChange={(e) => setNewBankrollCurrency(e.target.value)}
-                    className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white"
-                  >
-                    <option value="EUR">EUR (€)</option>
-                    <option value="USD">USD ($)</option>
-                    <option value="GBP">GBP (£)</option>
-                    <option value="CAD">CAD (C$)</option>
-                    <option value="BRL">BRL (R$)</option>
-                  </select>
-                </div>
+              <div>
+                <label className="block text-[#8d90a0] mb-1 font-medium">Currency</label>
+                <select
+                  value={newBankrollCurrency}
+                  onChange={(e) => setNewBankrollCurrency(e.target.value)}
+                  className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white"
+                >
+                  <option value="EUR">EUR (€)</option>
+                  <option value="USD">USD ($)</option>
+                  <option value="GBP">GBP (£)</option>
+                  <option value="CAD">CAD (C$)</option>
+                  <option value="BRL">BRL (R$)</option>
+                </select>
+              </div>
 
-                <div>
-                  <label className="block text-[#8d90a0] mb-1 font-medium">Starting Balance</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={newBankrollInitial}
-                    onChange={(e) => setNewBankrollInitial(Number(e.target.value))}
-                    className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white font-mono"
-                    required
-                  />
-                </div>
+              <div className="space-y-2">
+                <label className="block text-[#8d90a0] font-medium">Initial Allocations</label>
+                {newBankrollAllocations.map((alloc, idx) => (
+                  <div key={idx} className="flex gap-2 items-end">
+                    <div className="flex-1">
+                      <label className="block text-[10px] text-[#8d90a0] mb-0.5">Bookmaker</label>
+                      <select
+                        value={alloc.bookmakerId}
+                        onChange={(e) => {
+                          const newAllocs = [...newBankrollAllocations];
+                          newAllocs[idx].bookmakerId = e.target.value;
+                          setNewBankrollAllocations(newAllocs);
+                        }}
+                        className="w-full bg-[#0b1326] border border-[#27314a] rounded px-2 py-1 text-white text-xs"
+                      >
+                        <option value="">Select...</option>
+                        {bookmakers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="w-24">
+                      <label className="block text-[10px] text-[#8d90a0] mb-0.5">Cash ({newBankrollCurrency})</label>
+                      <input
+                        type="number"
+                        value={alloc.cashAmount}
+                        onChange={(e) => {
+                          const newAllocs = [...newBankrollAllocations];
+                          newAllocs[idx].cashAmount = e.target.value;
+                          setNewBankrollAllocations(newAllocs);
+                        }}
+                        className="w-full bg-[#0b1326] border border-[#27314a] rounded px-2 py-1 text-white text-xs"
+                      />
+                    </div>
+                    <div className="w-24">
+                      <label className="block text-[10px] text-[#8d90a0] mb-0.5">Free Bet ({newBankrollCurrency})</label>
+                      <input
+                        type="number"
+                        value={alloc.freeBetAmount}
+                        onChange={(e) => {
+                          const newAllocs = [...newBankrollAllocations];
+                          newAllocs[idx].freeBetAmount = e.target.value;
+                          setNewBankrollAllocations(newAllocs);
+                        }}
+                        className="w-full bg-[#0b1326] border border-[#27314a] rounded px-2 py-1 text-white text-xs"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setNewBankrollAllocations(newBankrollAllocations.filter((_, i) => i !== idx))}
+                      className="text-red-400 hover:text-red-300 mb-1"
+                    >
+                      <XCircle size={16} />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setNewBankrollAllocations([...newBankrollAllocations, { bookmakerId: '', cashAmount: '', freeBetAmount: '' }])}
+                  className="text-xs text-[#2563eb] hover:underline"
+                >
+                  + Add another allocation
+                </button>
+              </div>
+
+              <div>
+                <label className="block text-[#8d90a0] font-medium text-right">
+                    Total: {newBankrollAllocations.reduce((sum, a) => sum + (parseFloat(a.cashAmount) || 0) + (parseFloat(a.freeBetAmount) || 0), 0).toFixed(2)}
+                </label>
               </div>
 
               <div>
@@ -1427,7 +1513,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
             <div className="flex items-center justify-between border-b border-[#27314a] pb-3">
               <h3 className="text-lg font-bold text-white flex items-center gap-2">
                 <RefreshCw size={18} className="text-[#2563eb]" />
-                <span>Reconcile {reconcileBankrollTarget.name}</span>
+                <span>Reconcile Bookmaker</span>
               </h3>
               <button
                 onClick={() => setReconcileBankrollTarget(null)}
@@ -1439,43 +1525,80 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="block text-[#8d90a0] mb-1 font-medium">New Real Cash Balance ({getCurrencySymbol(userCurrency)})</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={reconcileNewCash}
-                  onChange={(e) => setReconcileNewCash(Number(e.target.value))}
-                  className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white font-mono"
-                />
-                <span className="text-[10px] text-[#8d90a0]">
-                  Current: {formatCurrency(reconcileBankrollTarget.currentBalance, userCurrency)} (Variance: {formatCurrency(reconcileNewCash - reconcileBankrollTarget.currentBalance, userCurrency)})
-                </span>
-              </div>
-
-              <div>
-                <label className="block text-[#8d90a0] mb-1 font-medium">New Free Bet Credits ({getCurrencySymbol(userCurrency)})</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={reconcileNewFreeBet}
-                  onChange={(e) => setReconcileNewFreeBet(Number(e.target.value))}
-                  className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white font-mono"
-                />
-                <span className="text-[10px] text-[#8d90a0]">
-                  Current: {formatCurrency(reconcileBankrollTarget.freeBetCredits, userCurrency)} (Variance: {formatCurrency(reconcileNewFreeBet - reconcileBankrollTarget.freeBetCredits, userCurrency)})
-                </span>
-              </div>
-
-              <div>
-                <label className="block text-[#8d90a0] mb-1 font-medium">Adjustment Reason / Audit Note</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Discrepancy correction or micro rounding fix"
-                  value={reconcileNotes}
-                  onChange={(e) => setReconcileNotes(e.target.value)}
+                <label className="block text-[#8d90a0] mb-1 font-medium">Select Bookmaker in {reconcileBankrollTarget.name}</label>
+                <select
+                  value={reconcileSelectedBookmakerId}
+                  onChange={(e) => {
+                    setReconcileSelectedBookmakerId(e.target.value);
+                    const bm = bookmakers.find(b => b.id === e.target.value);
+                    if (bm) {
+                      const bal = getBookmakerBalanceForBankroll(bm, reconcileBankrollTarget.id);
+                      setReconcileBmCash(bal.cashBalance.toString());
+                      setReconcileBmFreeBet(bal.freeBetBalance.toString());
+                    } else {
+                      setReconcileBmCash('0');
+                      setReconcileBmFreeBet('0');
+                    }
+                  }}
                   className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white"
-                />
+                >
+                  {bookmakers.filter(bm => bm.balances?.some(b => b.bankrollId === reconcileBankrollTarget.id) || bm.bankrollId === reconcileBankrollTarget.id).map(bm => (
+                    <option key={bm.id} value={bm.id}>{bm.name}</option>
+                  ))}
+                  {bookmakers.filter(bm => bm.balances?.some(b => b.bankrollId === reconcileBankrollTarget.id) || bm.bankrollId === reconcileBankrollTarget.id).length === 0 && (
+                    <option value="" disabled>No bookmakers in this bankroll</option>
+                  )}
+                </select>
               </div>
+
+              {reconcileSelectedBookmakerId && (() => {
+                const selectedBm = bookmakers.find(b => b.id === reconcileSelectedBookmakerId);
+                if (!selectedBm) return null;
+                const bal = getBookmakerBalanceForBankroll(selectedBm, reconcileBankrollTarget.id);
+                
+                return (
+                  <>
+                    <div>
+                      <label className="block text-[#8d90a0] mb-1 font-medium">New Real Cash Balance ({getCurrencySymbol(userCurrency)})</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={reconcileBmCash}
+                        onChange={(e) => setReconcileBmCash(e.target.value)}
+                        className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white font-mono"
+                      />
+                      <span className="text-[10px] text-[#8d90a0]">
+                        Current: {formatCurrency(bal.cashBalance, userCurrency)} (Variance: {formatCurrency((parseFloat(reconcileBmCash) || 0) - bal.cashBalance, userCurrency)})
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="block text-[#8d90a0] mb-1 font-medium">New Free Bet Credits ({getCurrencySymbol(userCurrency)})</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={reconcileBmFreeBet}
+                        onChange={(e) => setReconcileBmFreeBet(e.target.value)}
+                        className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white font-mono"
+                      />
+                      <span className="text-[10px] text-[#8d90a0]">
+                        Current: {formatCurrency(bal.freeBetBalance, userCurrency)} (Variance: {formatCurrency((parseFloat(reconcileBmFreeBet) || 0) - bal.freeBetBalance, userCurrency)})
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="block text-[#8d90a0] mb-1 font-medium">Adjustment Reason / Audit Note</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Discrepancy correction or micro rounding fix"
+                        value={reconcileNotes}
+                        onChange={(e) => setReconcileNotes(e.target.value)}
+                        className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white"
+                      />
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             <div className="flex gap-2 pt-2 border-t border-[#27314a]">
@@ -1489,12 +1612,13 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  if (onReconcileBankroll) {
-                    onReconcileBankroll(reconcileBankrollTarget.id, reconcileNewCash, reconcileNewFreeBet, reconcileNotes);
+                  if (onReconcileBookmaker && reconcileSelectedBookmakerId) {
+                    onReconcileBookmaker(reconcileSelectedBookmakerId, parseFloat(reconcileBmCash) || 0, parseFloat(reconcileBmFreeBet) || 0, reconcileNotes, reconcileBankrollTarget.id);
                   }
                   setReconcileBankrollTarget(null);
                 }}
-                className="flex-1 py-2 bg-[#2563eb] hover:bg-[#1d4ed8] text-white font-bold rounded-lg shadow transition-colors cursor-pointer text-xs"
+                disabled={!reconcileSelectedBookmakerId}
+                className="flex-1 py-2 bg-[#2563eb] hover:bg-[#1d4ed8] disabled:opacity-50 text-white font-bold rounded-lg shadow transition-colors cursor-pointer text-xs"
               >
                 Save Adjustment
               </button>
@@ -1624,8 +1748,8 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                     type="number"
                     step="0.01"
                     min="0.01"
-                    value={dwAmount || ''}
-                    onChange={(e) => setDwAmount(parseFloat(e.target.value) || 0)}
+                    value={dwAmount}
+                    onChange={(e) => setDwAmount(e.target.value)}
                     className="w-full bg-[#0b1326] border border-[#27314a] rounded-lg pl-8 pr-3 py-2.5 text-white text-xs font-mono focus:outline-none focus:border-[#2563eb]"
                     required
                   />
@@ -1642,7 +1766,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={dwLoading || bookmakers.length === 0 || !targetBankroll || dwAmount <= 0}
+                  disabled={dwLoading || bookmakers.length === 0 || !targetBankroll || parseFloat(dwAmount) <= 0}
                   className="px-4 py-2 bg-[#10b981] hover:bg-[#059669] text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                 >
                   {dwLoading ? 'Processing...' : dwType === 'deposit' ? 'Confirm Deposit' : 'Confirm Withdrawal'}

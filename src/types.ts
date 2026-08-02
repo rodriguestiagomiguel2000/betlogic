@@ -81,6 +81,8 @@ export interface BankrollTransfer {
   date: string;
   fromBankrollId: string;
   toBankrollId: string;
+  fromBookmakerId: string;
+  toBookmakerId: string;
   amount: number;
   isFreeBetCredit: boolean;
   conversionRate?: number;

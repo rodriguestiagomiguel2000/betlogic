@@ -134,7 +134,7 @@ export const bankrollsApi = {
     return apiRequest<Bankroll[]>('/bankrolls');
   },
 
-  async create(data: Omit<Bankroll, 'id'>): Promise<Bankroll> {
+  async create(data: { name: string; currency: string; color: string; description: string; allocations: Array<{ bookmakerId: string; cashAmount: number; freeBetAmount: number }> }): Promise<Bankroll> {
     return apiRequest<Bankroll>('/bankrolls', {
       method: 'POST',
       body: JSON.stringify(data),

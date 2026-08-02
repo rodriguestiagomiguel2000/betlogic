@@ -110,8 +110,8 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const [reconcileBmTarget, setReconcileBmTarget] = useState<Bookmaker | null>(null);
-  const [reconcileBmCash, setReconcileBmCash] = useState<number>(0);
-  const [reconcileBmFreeBet, setReconcileBmFreeBet] = useState<number>(0);
+  const [reconcileBmCash, setReconcileBmCash] = useState<string>('0');
+  const [reconcileBmFreeBet, setReconcileBmFreeBet] = useState<string>('0');
   const [reconcileBmNotes, setReconcileBmNotes] = useState<string>('');
 
   // Main Overview Target Bankroll Filter
@@ -132,7 +132,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
   const [selectedBookmakerForTx, setSelectedBookmakerForTx] = useState<Bookmaker | null>(null);
   const [txType, setTxType] = useState<'deposit' | 'withdraw' | 'freebet'>('deposit');
-  const [txAmount, setTxAmount] = useState<number>(100);
+  const [txAmount, setTxAmount] = useState<string>('100');
   const [txBankrollId, setTxBankrollId] = useState<string>(bankrolls[0]?.id || '');
 
   // New Bookmaker form state
@@ -291,8 +291,8 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
       return acc + bal.freeBetBalance;
     }, 0);
 
-    const totalRealBalance = bankrollCashSum + bookmakerCashSum;
-    const totalFreeBets = bankrollFreeSum + bookmakerFreeSum;
+    const totalRealBalance = bookmakerCashSum;
+    const totalFreeBets = bookmakerFreeSum;
 
     const avgMargin = overviewBookmakers.length > 0
       ? overviewBookmakers.reduce((acc, b) => acc + b.averageMargin, 0) / overviewBookmakers.length
@@ -451,7 +451,8 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
 
   const handleExecuteTx = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedBookmakerForTx || txAmount <= 0 || !txBankrollId) return;
+    const amount = parseCurrency(txAmount);
+    if (!selectedBookmakerForTx || amount <= 0 || !txBankrollId) return;
 
     const current = getBookmakerBalanceForBankroll(selectedBookmakerForTx, txBankrollId);
 
@@ -459,14 +460,14 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
     let newFree = current.freeBetBalance;
 
     if (txType === 'deposit') {
-      newReal += txAmount;
+      newReal += amount;
     } else if (txType === 'withdraw') {
-      newReal = Math.max(0, newReal - txAmount);
+      newReal = Math.max(0, newReal - amount);
     } else if (txType === 'freebet') {
-      newFree += txAmount;
+      newFree += amount;
     }
 
-    onUpdateBookmakerBalance(selectedBookmakerForTx.id, newReal, newFree, txBankrollId, txType, txAmount);
+    onUpdateBookmakerBalance(selectedBookmakerForTx.id, newReal, newFree, txBankrollId, txType, amount);
     setSelectedBookmakerForTx(null);
   };
 
@@ -984,8 +985,8 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                   <button
                     onClick={() => {
                       setReconcileBmTarget(bm);
-                      setReconcileBmCash(cashBalance);
-                      setReconcileBmFreeBet(freeBetBalance);
+                      setReconcileBmCash(cashBalance.toString());
+                      setReconcileBmFreeBet(freeBetBalance.toString());
                       setReconcileBmNotes('');
                     }}
                     className="p-2 bg-[#0b1326] hover:bg-[#1f283d] text-[#2563eb] border border-[#27314a] rounded-lg transition-colors cursor-pointer flex items-center justify-center"
@@ -1070,7 +1071,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                   step="0.01"
                   min="0.01"
                   value={txAmount}
-                  onChange={(e) => setTxAmount(parseCurrency(e.target.value))}
+                  onChange={(e) => setTxAmount(e.target.value)}
                   className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white font-mono text-sm"
                   required
                 />
@@ -1376,11 +1377,11 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                   type="number"
                   step="0.01"
                   value={reconcileBmCash}
-                  onChange={(e) => setReconcileBmCash(Number(e.target.value))}
+                  onChange={(e) => setReconcileBmCash(e.target.value)}
                   className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white font-mono"
                 />
                 <span className="text-[10px] text-[#8d90a0]">
-                  Current: {formatCurrency(reconcileBmTarget.realBalance, userCurrency)} (Variance: {formatCurrency(reconcileBmCash - reconcileBmTarget.realBalance, userCurrency)})
+                  Current: {formatCurrency(reconcileBmTarget.realBalance, userCurrency)} (Variance: {formatCurrency(parseFloat(reconcileBmCash) - reconcileBmTarget.realBalance, userCurrency)})
                 </span>
               </div>
 
@@ -1390,11 +1391,11 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                   type="number"
                   step="0.01"
                   value={reconcileBmFreeBet}
-                  onChange={(e) => setReconcileBmFreeBet(Number(e.target.value))}
+                  onChange={(e) => setReconcileBmFreeBet(e.target.value)}
                   className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white font-mono"
                 />
                 <span className="text-[10px] text-[#8d90a0]">
-                  Current: {formatCurrency(reconcileBmTarget.freeBetBalance, userCurrency)} (Variance: {formatCurrency(reconcileBmFreeBet - reconcileBmTarget.freeBetBalance, userCurrency)})
+                  Current: {formatCurrency(reconcileBmTarget.freeBetBalance, userCurrency)} (Variance: {formatCurrency(parseFloat(reconcileBmFreeBet) - reconcileBmTarget.freeBetBalance, userCurrency)})
                 </span>
               </div>
 
@@ -1427,7 +1428,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                       alert('Error: No active bankroll selected to attribute this adjustment to.');
                       return;
                     }
-                    onReconcileBookmaker(reconcileBmTarget.id, reconcileBmCash, reconcileBmFreeBet, reconcileBmNotes, targetB);
+                    onReconcileBookmaker(reconcileBmTarget.id, parseFloat(reconcileBmCash) || 0, parseFloat(reconcileBmFreeBet) || 0, reconcileBmNotes, targetB);
                   }
                   setReconcileBmTarget(null);
                 }}

@@ -58,20 +58,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
   // Calculate Metrics
   const totalBankrollBalance = bankrolls.reduce((sum, b) => {
     if (selectedBankroll !== 'all' && b.id !== selectedBankroll) return sum;
-    const bmCash = bookmakers.reduce(
-      (bmSum, bm) => bmSum + getBookmakerBalanceForBankroll(bm, b.id).cashBalance,
-      0
-    );
-    return sum + b.currentBalance + bmCash;
+    return sum + b.currentBalance;
   }, 0);
 
   const totalFreeBets = bankrolls.reduce((sum, b) => {
     if (selectedBankroll !== 'all' && b.id !== selectedBankroll) return sum;
-    const bmFree = bookmakers.reduce(
-      (bmSum, bm) => bmSum + getBookmakerBalanceForBankroll(bm, b.id).freeBetBalance,
-      0
-    );
-    return sum + b.freeBetCredits + bmFree;
+    return sum + b.freeBetCredits;
   }, 0);
   
   const settledBets = filteredBets.filter((b) => b.status === 'won' || b.status === 'lost' || b.status === 'cashout');

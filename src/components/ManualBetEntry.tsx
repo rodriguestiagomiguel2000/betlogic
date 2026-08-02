@@ -29,7 +29,7 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
       ? activeBankrollId
       : bankrolls[0]?.id || ''
   );
-  const [stake, setStake] = useState<number>(50);
+  const [stake, setStake] = useState<string>('50');
   const [isLive, setIsLive] = useState<boolean>(false);
   const [isFreeBet, setIsFreeBet] = useState<boolean>(false);
   const [freeBetDestination, setFreeBetDestination] = useState<'cash' | 'free_bet'>('cash');
@@ -53,7 +53,7 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
   ]);
 
   const totalOdds = legs.reduce((acc, leg) => acc * (leg.odds || 1), 1);
-  const potentialPayout = stake * totalOdds;
+  const potentialPayout = parseFloat(stake) * totalOdds;
 
   const handleAddLeg = () => {
     setLegs([
@@ -83,15 +83,16 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (legs.length === 0 || stake <= 0) return;
+    const stakeAmount = parseFloat(stake);
+    if (legs.length === 0 || stakeAmount <= 0) return;
 
     onAddBet({
       date: new Date().toISOString(),
       type: betType,
       legs,
       totalOdds: Number(totalOdds.toFixed(3)),
-      stake,
-      potentialPayout: Number(potentialPayout.toFixed(2)),
+      stake: stakeAmount,
+      potentialPayout: Number((stakeAmount * totalOdds).toFixed(2)),
       status: 'pending',
       bookmakerId: selectedBookmaker,
       bankrollId: selectedBankroll,
@@ -122,7 +123,7 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
           <div className="bg-[#0b1326] p-4 rounded-xl border border-[#27314a] text-left space-y-2 text-xs">
             <div className="flex justify-between">
               <span className="text-[#8d90a0]">Stake:</span>
-              <span className="font-mono text-white font-bold">{formatCurrency(stake)}</span>
+              <span className="font-mono text-white font-bold">{formatCurrency(parseFloat(stake))}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-[#8d90a0]">Combined Odds:</span>
@@ -339,7 +340,7 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
               step="0.01"
               min="0.01"
               value={stake}
-              onChange={(e) => setStake(Number(e.target.value))}
+              onChange={(e) => setStake(e.target.value)}
               className="w-full bg-[#0b1326] border border-[#27314a] rounded-lg px-3 py-2 text-sm font-mono text-white font-bold"
               required
             />
