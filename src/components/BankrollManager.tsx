@@ -445,10 +445,11 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
   };
 
   // If a bankroll deep-dive is active, render the Bankroll Detailed Dashboard
-  if (activeBankroll && bankrollAnalytics) {
-    return (
-      <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto pb-24 md:pb-12 animate-fade-in">
-        {/* Breadcrumb Navigation & Top Bar */}
+  return (
+    <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto pb-24 md:pb-12 animate-fade-in">
+      {activeBankroll && bankrollAnalytics ? (
+        <>
+          {/* Breadcrumb Navigation & Top Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-[#171f33] p-4 rounded-xl border border-[#27314a]">
           <div className="flex items-center gap-3">
             <button
@@ -858,14 +859,10 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
             )}
           </div>
         )}
-      </div>
-    );
-  }
-
-  // Otherwise render Main Overview Grid
-  return (
-    <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto pb-24 md:pb-12 animate-fade-in">
-      {/* Top Banner */}
+        </>
+      ) : (
+        <>
+          {/* Top Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[#171f33] p-5 rounded-xl border border-[#27314a]">
         <div>
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
@@ -1142,6 +1139,8 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
           </div>
         )}
       </div>
+      </>
+      )}
 
       {/* Transfer Modal */}
       {showTransferModal && (

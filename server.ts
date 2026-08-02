@@ -14,7 +14,6 @@ if (fs.existsSync(renderSecretPath)) {
 }
 
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import authRouter from './server/auth';
 import betsRouter from './server/bets';
@@ -76,9 +75,9 @@ async function startServer() {
       const prompt = `Analyze this sports betting slip image and extract all structured fields matching the schema exactly.
 Infer values strictly from the slip. Ensure decimal odds format is returned. Output clean, valid JSON only.`;
 
-      // Enforce JSON Schema structured outputs using Gemini 3.6 Flash
+      // Enforce JSON Schema structured outputs using Gemini 3.1 Flash Lite
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-3.1-flash-lite',
         contents: [
           {
             inlineData: {
@@ -195,6 +194,7 @@ Infer values strictly from the slip. Ensure decimal odds format is returned. Out
 
   // Vite middleware setup for Development
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -205,7 +205,7 @@ Infer values strictly from the slip. Ensure decimal odds format is returned. Out
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     // Standard catch-all route to serve index.html for React SPA routing on Render
-    app.get('*', (req, res) => {
+    app.get('*all', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

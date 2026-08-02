@@ -16,7 +16,8 @@ import {
   TrendingUp,
   ShieldCheck,
   User,
-  Calendar
+  Calendar,
+  LogOut
 } from 'lucide-react';
 import { APP_LOGO_BASE64 } from '../assets/logoData';
 
@@ -24,6 +25,7 @@ interface NavbarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   winStreak: { currentStreak: number; streakType: 'win' | 'loss' };
+  onLogout: () => void;
 }
 
 const BrandLogo: React.FC<{ size: 'desktop' | 'mobile' }> = ({ size }) => {
@@ -60,7 +62,7 @@ const BrandLogo: React.FC<{ size: 'desktop' | 'mobile' }> = ({ size }) => {
   );
 };
 
-export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStreak }) => {
+export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStreak, onLogout }) => {
   const navSections = [
     {
       title: 'OVERVIEW',
@@ -213,6 +215,19 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
             </div>
             <ChevronRight size={14} className="text-[#8d90a0] group-hover:text-white transition-colors" />
           </div>
+
+          <button
+            onClick={onLogout}
+            className="w-full mt-2 flex items-center gap-3 p-2 rounded-xl text-red-400 hover:bg-red-400/10 transition-colors cursor-pointer group"
+          >
+            <div className="w-8 h-8 rounded-full bg-red-400/10 border border-red-400/20 flex items-center justify-center">
+              <LogOut size={16} />
+            </div>
+            <div className="flex-1 text-left">
+              <div className="text-xs font-bold">Log Out</div>
+              <div className="text-[10px] opacity-70">End your session</div>
+            </div>
+          </button>
         </div>
       </aside>
 
@@ -239,6 +254,14 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
             className="p-1.5 rounded bg-[#171f33] text-[#dae2fd] border border-[#27314a]"
           >
             <Bell size={16} />
+          </button>
+
+          <button
+            onClick={onLogout}
+            className="p-1.5 rounded bg-[#171f33] text-red-400 border border-red-400/20"
+            title="Log Out"
+          >
+            <LogOut size={16} />
           </button>
         </div>
       </header>

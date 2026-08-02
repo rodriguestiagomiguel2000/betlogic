@@ -258,7 +258,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
       const result = await response.json();
       setRawOcrJson(JSON.stringify(result, null, 2));
       applyParsedData(result);
-      setNotes(`Scanned via secure server-side Gemini 3.6 Flash`);
+      setNotes(`Scanned via secure server-side Gemini 3.1 Flash Lite`);
       setScanningState('scanned');
     } catch (err: any) {
       console.error("Gemini OCR Parsing Error:", err);
@@ -273,7 +273,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
       setErrorDetails({
         is403,
         isQuotaExceeded,
-        attemptedModels: ['gemini-3.6-flash (server-side)'],
+        attemptedModels: ['gemini-3.1-flash-lite (server-side)'],
         message: finalErrorMessage
       });
       setScanningState('error');

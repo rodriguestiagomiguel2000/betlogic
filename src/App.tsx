@@ -463,12 +463,18 @@ export function App() {
     }
   };
 
+  const handleLogout = () => {
+    logoutUser();
+    setIsAuth(false);
+  };
+
   return (
     <div className="min-h-screen bg-[#0b1326] text-white flex flex-col font-sans antialiased selection:bg-blue-600 selection:text-white">
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         winStreak={calculateWinStreak(bets)}
+        onLogout={handleLogout}
       />
 
       <main className="flex-1 overflow-y-auto">
