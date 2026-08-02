@@ -75,25 +75,39 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
 
   // Profit Milestone Goal
   const targetMilestone = 15000;
-  const currentTotalProfit = bets.reduce((sum, b) => {
+  const settledBets = bets.filter((b) => b.status === 'won' || b.status === 'lost' || b.status === 'cashout');
+  const settledWinsCount = bets.filter((b) => b.status === 'won').length;
+  
+  const currentTotalProfit = settledBets.reduce((sum, b) => {
     if (b.status === 'won') return sum + ((b.actualReturn || b.potentialPayout) - b.stake);
     if (b.status === 'lost') return sum - b.stake;
+    if (b.status === 'cashout') return sum + ((b.actualReturn || 0) - b.stake);
     return sum;
   }, 0);
+
+  const totalSettledStaked = settledBets.reduce((sum, b) => sum + b.stake, 0);
+  const portfolioRoi = totalSettledStaked > 0 ? (currentTotalProfit / totalSettledStaked) * 100 : null;
+  const actualWinRate = settledBets.length > 0 ? settledWinsCount / settledBets.length : null;
+  const actualAvgOdds = settledBets.length > 0 ? settledBets.reduce((sum, b) => sum + b.totalOdds, 0) / settledBets.length : null;
+
   const milestoneProgress = Math.min(100, Math.max(0, (currentTotalProfit / targetMilestone) * 100));
 
-  // Sport ROI Breakdown
+  // Sport ROI Breakdown (Only settled bets)
   const sportStatsMap: Record<string, { staked: number; returned: number; wins: number; total: number }> = {};
   bets.forEach((bet) => {
-    if (bet.status !== 'won' && bet.status !== 'lost') return;
+    if (bet.status !== 'won' && bet.status !== 'lost' && bet.status !== 'cashout') return;
     const sport = bet.legs[0]?.sport || 'Football';
     if (!sportStatsMap[sport]) {
       sportStatsMap[sport] = { staked: 0, returned: 0, wins: 0, total: 0 };
     }
     sportStatsMap[sport].staked += bet.stake;
-    sportStatsMap[sport].returned += bet.actualReturn || 0;
+    if (bet.status === 'won') {
+      sportStatsMap[sport].returned += bet.actualReturn || bet.potentialPayout;
+      sportStatsMap[sport].wins += 1;
+    } else if (bet.status === 'cashout') {
+      sportStatsMap[sport].returned += bet.actualReturn || 0;
+    }
     sportStatsMap[sport].total += 1;
-    if (bet.status === 'won') sportStatsMap[sport].wins += 1;
   });
 
   const sportRoiData = Object.keys(sportStatsMap).map((sport) => {
@@ -126,7 +140,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
   let currentBalEvolution = 5000; // Base bankroll start
-  const dynamicBankrollEvolution = sortedBetsForEvolution.map((bet, index) => {
+  const bankrollEvolutionData = sortedBetsForEvolution.map((bet, index) => {
     let profit = 0;
     if (bet.status === 'won') {
       profit = (bet.actualReturn || bet.potentialPayout) - bet.stake;
@@ -142,24 +156,6 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
       balance: currentBalEvolution,
     };
   });
-
-  const mockBankrollEvolution = [
-    { date: 'Jul 01', balance: 5000 },
-    { date: 'Jul 05', balance: 5250 },
-    { date: 'Jul 10', balance: 5120 },
-    { date: 'Jul 15', balance: 5580 },
-    { date: 'Jul 20', balance: 5900 },
-    { date: 'Jul 25', balance: 5780 },
-    { date: 'Jul 30', balance: 6420 },
-  ];
-
-  const bankrollEvolutionData = dynamicBankrollEvolution.length >= 3
-    ? dynamicBankrollEvolution
-    : mockBankrollEvolution.map((item, idx) => ({
-        betIndex: `#${idx + 1}`,
-        date: item.date,
-        balance: item.balance,
-      }));
 
   // Dynamic ROI by Bookmaker calculation
   const bmRoiMap: Record<string, { staked: number; returned: number }> = {};
@@ -177,7 +173,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
     }
   });
 
-  const dynamicBmRoi = Object.keys(bmRoiMap).map((bmName) => {
+  const bookmakerRoiData = Object.keys(bmRoiMap).map((bmName) => {
     const data = bmRoiMap[bmName];
     const profit = data.returned - data.staked;
     const roi = data.staked > 0 ? (profit / data.staked) * 100 : 0;
@@ -186,16 +182,6 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
       roi: Number(roi.toFixed(1))
     };
   });
-
-  const fallbackBookmakerRoi = [
-    { name: 'Pinnacle', roi: 8.4 },
-    { name: 'Bet365', roi: 5.1 },
-    { name: 'DraftKings', roi: -2.3 },
-    { name: 'FanDuel', roi: 6.8 },
-    { name: 'Unibet', roi: 3.5 }
-  ];
-
-  const bookmakerRoiData = dynamicBmRoi.length > 0 ? dynamicBmRoi : fallbackBookmakerRoi;
 
   bets.forEach((b) => {
     if (b.stake >= 100) {
@@ -210,18 +196,17 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
     }
   });
 
-  const highPct = totalStakedAll > 0 ? ((highStakeAmt / totalStakedAll) * 100).toFixed(1) : '25.0';
-  const medPct = totalStakedAll > 0 ? ((medStakeAmt / totalStakedAll) * 100).toFixed(1) : '50.0';
-  const lowPct = totalStakedAll > 0 ? ((lowStakeAmt / totalStakedAll) * 100).toFixed(1) : '25.0';
+  const highPct = totalStakedAll > 0 ? ((highStakeAmt / totalStakedAll) * 100).toFixed(1) : '0.0';
+  const medPct = totalStakedAll > 0 ? ((medStakeAmt / totalStakedAll) * 100).toFixed(1) : '0.0';
+  const lowPct = totalStakedAll > 0 ? ((lowStakeAmt / totalStakedAll) * 100).toFixed(1) : '0.0';
 
   // Analytical Risk of Ruin Calculation
-  const totalSettledBets = bets.filter((b) => b.status === 'won' || b.status === 'lost');
-  const totalWinsCount = bets.filter((b) => b.status === 'won').length;
-  const actualWinRate = totalSettledBets.length > 0 ? totalWinsCount / totalSettledBets.length : 0.58;
-  const actualAvgOdds = bets.length > 0 ? bets.reduce((sum, b) => sum + b.totalOdds, 0) / bets.length : 1.92;
-  const netOdds = Math.max(0.1, actualAvgOdds - 1);
-  const evFraction = actualWinRate * netOdds - (1 - actualWinRate);
-  const analyticalRuinPct = evFraction <= 0 ? 99.9 : Math.max(0.1, Math.min(100, Math.exp(-2 * evFraction * 15) * 100)).toFixed(1);
+  let analyticalRuinPct: string | null = null;
+  if (settledBets.length > 0 && actualWinRate !== null && actualAvgOdds !== null) {
+    const netOdds = Math.max(0.1, actualAvgOdds - 1);
+    const evFraction = actualWinRate * netOdds - (1 - actualWinRate);
+    analyticalRuinPct = evFraction <= 0 ? '99.9' : Math.max(0.1, Math.min(100, Math.exp(-2 * evFraction * 15) * 100)).toFixed(1);
+  }
 
   // Kelly Calculation
   const p = kellyProbability / 100;
@@ -372,7 +357,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
         {/* Sub-tab switcher */}
         <div className="flex gap-2 mt-5 pt-3 border-t border-[#27314a] overflow-x-auto">
           {[
-            { id: 'overview', label: 'Overview & Market Hot Zones', icon: Grid },
+            { id: 'overview', label: 'Overview & Portfolio Analytics', icon: Grid },
             { id: 'heatmap_risk', label: 'Risk Heatmap & Ruin Metrics', icon: ShieldAlert },
             { id: 'margins', label: 'Bookmaker Margin & Vigorish Tracker', icon: Building2 },
             { id: 'monte_carlo', label: 'Monte Carlo Simulation Engine', icon: Activity },
@@ -397,7 +382,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
         </div>
       </div>
 
-      {/* SUB-TAB 1: Overview & Market Hot Zones */}
+      {/* SUB-TAB 1: Overview & Portfolio Analytics */}
       {activeSubTab === 'overview' && (
         <div className="space-y-6">
           {/* Top Hero Stats */}
@@ -405,40 +390,40 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
             <div className="bg-[#171f33] p-4 rounded-xl border border-[#27314a] space-y-1">
               <span className="text-xs text-[#8d90a0]">Net Portfolio Profit</span>
               <div className={`text-xl font-bold font-mono ${currentTotalProfit >= 0 ? 'text-[#4edea3]' : 'text-rose-400'}`}>
-                {currentTotalProfit >= 0 ? '+' : ''}{formatCurrency(currentTotalProfit)}
+                {currentTotalProfit >= 0 ? '+' : ''}{formatCurrency(currentTotalProfit, userCurrency)}
               </div>
               <div className="w-full bg-[#0b1326] h-1.5 rounded-full overflow-hidden mt-2">
-                <div className="bg-[#4edea3] h-full w-3/4"></div>
+                <div className="bg-[#4edea3] h-full" style={{ width: `${Math.min(100, Math.max(5, (currentTotalProfit > 0 ? 75 : 0)))}%` }}></div>
               </div>
             </div>
 
             <div className="bg-[#171f33] p-4 rounded-xl border border-[#27314a] space-y-1">
               <span className="text-xs text-[#8d90a0]">Portfolio Yield (ROI)</span>
               <div className="text-xl font-bold font-mono text-[#2563eb]">
-                {actualWinRate > 0 ? '+14.2%' : '0.0%'}
+                {portfolioRoi !== null ? `${portfolioRoi >= 0 ? '+' : ''}${portfolioRoi.toFixed(1)}%` : '--'}
               </div>
               <div className="w-full bg-[#0b1326] h-1.5 rounded-full overflow-hidden mt-2">
-                <div className="bg-[#2563eb] h-full w-1/2"></div>
+                <div className="bg-[#2563eb] h-full" style={{ width: portfolioRoi !== null ? `${Math.min(100, Math.max(10, Math.abs(portfolioRoi)))}%` : '0%' }}></div>
               </div>
             </div>
 
             <div className="bg-[#171f33] p-4 rounded-xl border border-[#27314a] space-y-1">
               <span className="text-xs text-[#8d90a0]">Settled Win Rate</span>
               <div className="text-xl font-bold font-mono text-white">
-                {(actualWinRate * 100).toFixed(1)}%
+                {actualWinRate !== null ? `${(actualWinRate * 100).toFixed(1)}%` : '--'}
               </div>
               <div className="w-full bg-[#0b1326] h-1.5 rounded-full overflow-hidden mt-2">
-                <div className="bg-[#b4c5ff] h-full" style={{ width: `${actualWinRate * 100}%` }}></div>
+                <div className="bg-[#b4c5ff] h-full" style={{ width: actualWinRate !== null ? `${actualWinRate * 100}%` : '0%' }}></div>
               </div>
             </div>
 
             <div className="bg-[#171f33] p-4 rounded-xl border border-[#27314a] space-y-1">
               <span className="text-xs text-[#8d90a0]">Average Decimal Odds</span>
               <div className="text-xl font-bold font-mono text-amber-400">
-                {actualAvgOdds.toFixed(2)}
+                {actualAvgOdds !== null ? actualAvgOdds.toFixed(2) : '--'}
               </div>
               <div className="w-full bg-[#0b1326] h-1.5 rounded-full overflow-hidden mt-2">
-                <div className="bg-amber-400 h-full w-2/5"></div>
+                <div className="bg-amber-400 h-full" style={{ width: actualAvgOdds !== null ? `${Math.min(100, (actualAvgOdds / 5) * 100)}%` : '0%' }}></div>
               </div>
             </div>
 
@@ -452,59 +437,20 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
             </div>
           </div>
 
-          {/* Market Hot Zone Cards & Sport Yield Bar Chart */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Market Hot Zones */}
-            <div className="lg:col-span-4 bg-[#171f33] p-5 rounded-xl border border-[#27314a] space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Grid size={16} className="text-[#2563eb]" />
-                  <span>MARKET HOT ZONES</span>
-                </h3>
-                <span className="text-[10px] font-mono bg-[#2563eb]/20 text-[#2563eb] px-2 py-0.5 rounded font-bold">
-                  Categorized
-                </span>
-              </div>
+          {/* Sport Yield Bar Chart (Full Width, Market Hot Zones Removed) */}
+          <div className="bg-[#171f33] p-5 rounded-xl border border-[#27314a] space-y-4">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <TrendingUp size={16} className="text-[#4edea3]" />
+              <span>Yield % (ROI) by Sport Category</span>
+            </h3>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-lg bg-[#4edea3]/10 border border-[#4edea3]/30 text-center">
-                  <span className="text-[10px] font-bold text-[#4edea3] uppercase block">NBA Basketball</span>
-                  <span className="text-xl font-bold font-mono text-[#4edea3]">68.4%</span>
-                  <p className="text-[9px] text-[#8d90a0] mt-0.5">+22.4% ROI</p>
+            <div className="h-56 w-full">
+              {sportRoiData.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-xs text-[#8d90a0] space-y-2">
+                  <Info size={24} className="text-[#27314a]" />
+                  <span>No settled bets available to compute yield per sport category.</span>
                 </div>
-
-                <div className="p-3 rounded-lg bg-[#4edea3]/10 border border-[#4edea3]/30 text-center">
-                  <span className="text-[10px] font-bold text-[#4edea3] uppercase block">MLB Baseball</span>
-                  <span className="text-xl font-bold font-mono text-[#4edea3]">61.2%</span>
-                  <p className="text-[9px] text-[#8d90a0] mt-0.5">+14.1% ROI</p>
-                </div>
-
-                <div className="p-3 rounded-lg bg-rose-950/30 border border-rose-800/40 text-center">
-                  <span className="text-[10px] font-bold text-rose-300 uppercase block">Soccer / Football</span>
-                  <span className="text-xl font-bold font-mono text-rose-400">42.0%</span>
-                  <p className="text-[9px] text-rose-300 mt-0.5">-3.8% ROI</p>
-                </div>
-
-                <div className="p-3 rounded-lg bg-[#2563eb]/10 border border-[#2563eb]/30 text-center">
-                  <span className="text-[10px] font-bold text-[#b4c5ff] uppercase block">Tennis Grand Slam</span>
-                  <span className="text-xl font-bold font-mono text-[#b4c5ff]">54.5%</span>
-                  <p className="text-[9px] text-[#8d90a0] mt-0.5">+8.6% ROI</p>
-                </div>
-              </div>
-
-              <p className="text-xs text-[#8d90a0] pt-1">
-                Hot zones evaluate historical win rates and market variance to highlight EV+ profitable categories.
-              </p>
-            </div>
-
-            {/* Sport Yield Bar Chart */}
-            <div className="lg:col-span-8 bg-[#171f33] p-5 rounded-xl border border-[#27314a] space-y-4">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <TrendingUp size={16} className="text-[#4edea3]" />
-                <span>Yield % (ROI) by Sport Category</span>
-              </h3>
-
-              <div className="h-56 w-full">
+              ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={sportRoiData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#27314a" vertical={false} />
@@ -521,25 +467,29 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
-              </div>
+              )}
             </div>
           </div>
 
-          {/* Bankroll Growth Projections & Cumulative Bankroll Evolution */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Dynamic Bankroll Evolution area chart */}
-            <div className="lg:col-span-8 bg-[#171f33] p-5 rounded-xl border border-[#27314a] space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <TrendingUp className="text-[#4edea3]" size={18} />
-                  <span>CUMULATIVE BANKROLL EVOLUTION</span>
-                </h3>
-                <span className="text-[10px] font-bold text-[#4edea3] px-2.5 py-1 bg-[#4edea3]/10 rounded border border-[#4edea3]/30">
-                  REAL-TIME GROWTH
-                </span>
-              </div>
+          {/* Cumulative Bankroll Evolution (Growth Projections Removed) */}
+          <div className="bg-[#171f33] p-5 rounded-xl border border-[#27314a] space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <TrendingUp className="text-[#4edea3]" size={18} />
+                <span>CUMULATIVE BANKROLL EVOLUTION</span>
+              </h3>
+              <span className="text-[10px] font-bold text-[#4edea3] px-2.5 py-1 bg-[#4edea3]/10 rounded border border-[#4edea3]/30">
+                SETTLED HISTORY
+              </span>
+            </div>
 
-              <div className="h-64 w-full">
+            <div className="h-64 w-full">
+              {bankrollEvolutionData.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-xs text-[#8d90a0] space-y-2">
+                  <Activity size={28} className="text-[#27314a]" />
+                  <span>No settled bet history yet. Settle wagers to view cumulative bankroll growth over time.</span>
+                </div>
+              ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={bankrollEvolutionData}>
                     <defs>
@@ -558,52 +508,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
                     <Area type="monotone" dataKey="balance" stroke="#4edea3" strokeWidth={2.5} fillOpacity={1} fill="url(#bankrollGrad)" />
                   </AreaChart>
                 </ResponsiveContainer>
-              </div>
-            </div>
-
-            {/* Projection model parameters on the right */}
-            <div className="lg:col-span-4 bg-[#171f33] p-5 rounded-xl border border-[#27314a] space-y-4 flex flex-col justify-between">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                    <TrendingUp className="text-[#2563eb]" size={18} />
-                    <span>GROWTH PROJECTIONS</span>
-                  </h3>
-                  <span className="text-[10px] font-bold text-[#2563eb] px-2.5 py-1 bg-[#2563eb]/10 rounded border border-[#2563eb]/30 font-mono">
-                    QUANT MODEL
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 gap-3">
-                  <div className="bg-[#0b1326] p-3 rounded-xl border border-[#27314a] flex justify-between items-center">
-                    <div>
-                      <p className="text-[9px] text-[#8d90a0] font-bold uppercase">3 Months Horizon</p>
-                      <p className="text-base font-bold font-mono text-[#4edea3]">+18,420 {getCurrencySymbol()}</p>
-                    </div>
-                    <span className="text-xs bg-[#4edea3]/10 text-[#4edea3] px-2 py-0.5 rounded font-bold font-mono">+48%</span>
-                  </div>
-
-                  <div className="bg-[#0b1326] p-3 rounded-xl border border-[#27314a] flex justify-between items-center">
-                    <div>
-                      <p className="text-[9px] text-[#8d90a0] font-bold uppercase">6 Months Horizon</p>
-                      <p className="text-base font-bold font-mono text-[#4edea3]">+42,150 {getCurrencySymbol()}</p>
-                    </div>
-                    <span className="text-xs bg-[#4edea3]/10 text-[#4edea3] px-2 py-0.5 rounded font-bold font-mono">+112%</span>
-                  </div>
-
-                  <div className="bg-[#0b1326] p-3 rounded-xl border border-[#2563eb]/40 bg-[#2563eb]/5 flex justify-between items-center">
-                    <div>
-                      <p className="text-[9px] text-[#2563eb] font-bold uppercase">12 Months Horizon</p>
-                      <p className="text-base font-bold font-mono text-[#2563eb]">+98,500 {getCurrencySymbol()}</p>
-                    </div>
-                    <span className="text-xs bg-[#2563eb]/10 text-[#2563eb] px-2 py-0.5 rounded font-bold font-mono">+245%</span>
-                  </div>
-                </div>
-              </div>
-
-              <p className="text-xs text-[#8d90a0] border-t border-[#27314a] pt-3">
-                Estimates based on active win rate ({(actualWinRate * 100).toFixed(1)}%), average odds ({actualAvgOdds.toFixed(2)}), and compounding reinvestment rate.
-              </p>
+              )}
             </div>
           </div>
 
@@ -717,73 +622,82 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center pt-2">
-                {/* Donut Chart Portion */}
-                <div className="md:col-span-5 h-40 flex items-center justify-center relative">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={[
-                          { name: 'Low Stake Tier', value: Number(lowStakeAmt) || 15, color: '#4edea3' },
-                          { name: 'Medium Stake Tier', value: Number(medStakeAmt) || 45, color: '#2563eb' },
-                          { name: 'High Stake Tier', value: Number(highStakeAmt) || 25, color: '#cf2c30' },
-                        ]}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={38}
-                        outerRadius={52}
-                        paddingAngle={3}
-                        dataKey="value"
-                      >
-                        <Cell fill="#4edea3" />
-                        <Cell fill="#2563eb" />
-                        <Cell fill="#cf2c30" />
-                      </Pie>
-                      <Tooltip
-                        contentStyle={{ backgroundColor: '#0b1326', borderColor: '#27314a', borderRadius: '8px', color: '#fff' }}
-                        formatter={(val: any) => [`${getCurrencySymbol(userCurrency)}${Number(val).toFixed(2)}`, 'Allocated']}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="absolute text-center pointer-events-none">
-                    <span className="text-xs font-semibold text-[#8d90a0]">Staked</span>
-                    <p className="text-sm font-bold font-mono text-white">
-                      {getCurrencySymbol(userCurrency)}{Math.round(totalStakedAll)}
-                    </p>
+                {totalStakedAll === 0 ? (
+                  <div className="md:col-span-12 py-8 text-center text-xs text-[#8d90a0] flex flex-col items-center justify-center gap-2">
+                    <ShieldAlert size={24} className="text-[#27314a]" />
+                    <span>No wager stakes logged yet to build risk heatmap exposure.</span>
                   </div>
-                </div>
+                ) : (
+                  <>
+                    {/* Donut Chart Portion */}
+                    <div className="md:col-span-5 h-40 flex items-center justify-center relative">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={[
+                              { name: 'Low Stake Tier', value: Number(lowStakeAmt), color: '#4edea3' },
+                              { name: 'Medium Stake Tier', value: Number(medStakeAmt), color: '#2563eb' },
+                              { name: 'High Stake Tier', value: Number(highStakeAmt), color: '#cf2c30' },
+                            ].filter(d => d.value > 0)}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={38}
+                            outerRadius={52}
+                            paddingAngle={3}
+                            dataKey="value"
+                          >
+                            <Cell fill="#4edea3" />
+                            <Cell fill="#2563eb" />
+                            <Cell fill="#cf2c30" />
+                          </Pie>
+                          <Tooltip
+                            contentStyle={{ backgroundColor: '#0b1326', borderColor: '#27314a', borderRadius: '8px', color: '#fff' }}
+                            formatter={(val: any) => [`${getCurrencySymbol(userCurrency)}${Number(val).toFixed(2)}`, 'Allocated']}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div className="absolute text-center pointer-events-none">
+                        <span className="text-xs font-semibold text-[#8d90a0]">Staked</span>
+                        <p className="text-sm font-bold font-mono text-white">
+                          {getCurrencySymbol(userCurrency)}{Math.round(totalStakedAll)}
+                        </p>
+                      </div>
+                    </div>
 
-                {/* Progress bars explanation legend */}
-                <div className="md:col-span-7 space-y-3">
-                  <div>
-                    <div className="flex justify-between items-center text-[11px] mb-1">
-                      <span className="text-[#8d90a0] font-medium">High Tier (&ge; {formatCurrency(100, userCurrency)})</span>
-                      <span className="font-mono font-bold text-rose-400">{highPct}% ({highStakeCount} bets)</span>
-                    </div>
-                    <div className="h-2 w-full bg-[#0b1326] rounded-full overflow-hidden">
-                      <div className="h-full bg-rose-500 rounded-full" style={{ width: `${highPct}%` }}></div>
-                    </div>
-                  </div>
+                    {/* Progress bars explanation legend */}
+                    <div className="md:col-span-7 space-y-3">
+                      <div>
+                        <div className="flex justify-between items-center text-[11px] mb-1">
+                          <span className="text-[#8d90a0] font-medium">High Tier (&ge; {formatCurrency(100, userCurrency)})</span>
+                          <span className="font-mono font-bold text-rose-400">{highPct}% ({highStakeCount} bets)</span>
+                        </div>
+                        <div className="h-2 w-full bg-[#0b1326] rounded-full overflow-hidden">
+                          <div className="h-full bg-rose-500 rounded-full" style={{ width: `${highPct}%` }}></div>
+                        </div>
+                      </div>
 
-                  <div>
-                    <div className="flex justify-between items-center text-[11px] mb-1">
-                      <span className="text-[#8d90a0] font-medium">Medium Tier ({formatCurrency(30, userCurrency)} - {formatCurrency(99, userCurrency)})</span>
-                      <span className="font-mono font-bold text-[#2563eb]">{medPct}% ({medStakeCount} bets)</span>
-                    </div>
-                    <div className="h-2 w-full bg-[#0b1326] rounded-full overflow-hidden">
-                      <div className="h-full bg-[#2563eb] rounded-full" style={{ width: `${medPct}%` }}></div>
-                    </div>
-                  </div>
+                      <div>
+                        <div className="flex justify-between items-center text-[11px] mb-1">
+                          <span className="text-[#8d90a0] font-medium">Medium Tier ({formatCurrency(30, userCurrency)} - {formatCurrency(99, userCurrency)})</span>
+                          <span className="font-mono font-bold text-[#2563eb]">{medPct}% ({medStakeCount} bets)</span>
+                        </div>
+                        <div className="h-2 w-full bg-[#0b1326] rounded-full overflow-hidden">
+                          <div className="h-full bg-[#2563eb] rounded-full" style={{ width: `${medPct}%` }}></div>
+                        </div>
+                      </div>
 
-                  <div>
-                    <div className="flex justify-between items-center text-[11px] mb-1">
-                      <span className="text-[#8d90a0] font-medium">Low Tier (&lt; {formatCurrency(30, userCurrency)})</span>
-                      <span className="font-mono font-bold text-[#4edea3]">{lowPct}% ({lowStakeCount} bets)</span>
+                      <div>
+                        <div className="flex justify-between items-center text-[11px] mb-1">
+                          <span className="text-[#8d90a0] font-medium">Low Tier (&lt; {formatCurrency(30, userCurrency)})</span>
+                          <span className="font-mono font-bold text-[#4edea3]">{lowPct}% ({lowStakeCount} bets)</span>
+                        </div>
+                        <div className="h-2 w-full bg-[#0b1326] rounded-full overflow-hidden">
+                          <div className="h-full bg-[#4edea3] rounded-full" style={{ width: `${lowPct}%` }}></div>
+                        </div>
+                      </div>
                     </div>
-                    <div className="h-2 w-full bg-[#0b1326] rounded-full overflow-hidden">
-                      <div className="h-full bg-[#4edea3] rounded-full" style={{ width: `${lowPct}%` }}></div>
-                    </div>
-                  </div>
-                </div>
+                  </>
+                )}
               </div>
 
               <div className="p-3.5 rounded-lg bg-[#0b1326] border border-[#27314a] text-xs text-[#8d90a0] flex items-start gap-2">
@@ -802,12 +716,20 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
                   <span>MATHEMATICAL RISK OF RUIN</span>
                 </h3>
                 <div className="flex items-center gap-4 bg-[#0b1326] p-4 rounded-xl border border-[#27314a]">
-                  <div className="text-3xl font-bold font-mono text-[#4edea3]">
-                    {analyticalRuinPct}%
-                  </div>
-                  <div className="text-xs text-[#8d90a0]">
-                    Based on your win rate ({(actualWinRate * 100).toFixed(1)}%) and average odds ({actualAvgOdds.toFixed(2)}), your probability of total bankroll exhaustion is extremely controlled.
-                  </div>
+                  {analyticalRuinPct !== null ? (
+                    <>
+                      <div className="text-3xl font-bold font-mono text-[#4edea3]">
+                        {analyticalRuinPct}%
+                      </div>
+                      <div className="text-xs text-[#8d90a0]">
+                        Based on your win rate ({actualWinRate !== null ? (actualWinRate * 100).toFixed(1) : 0}%) and average odds ({actualAvgOdds !== null ? actualAvgOdds.toFixed(2) : 0}), your probability of total bankroll exhaustion is calculated from real settled wagers.
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-xs text-[#8d90a0] py-1">
+                      Not enough settled bet data to calculate mathematical risk of ruin yet. Settle wagers to view risk metrics.
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -823,9 +745,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
                   <div className="h-full bg-[#2563eb]" style={{ width: `${milestoneProgress}%` }}></div>
                 </div>
                 <p className="text-xs text-[#8d90a0]">
-                  {formatCurrency(targetMilestone)} Target Milestone &mdash;{' '}
+                  {formatCurrency(targetMilestone, userCurrency)} Target Milestone &mdash;{' '}
                   <strong className="text-white">
-                    {formatCurrency(Math.max(0, targetMilestone - currentTotalProfit))} remaining
+                    {formatCurrency(Math.max(0, targetMilestone - currentTotalProfit), userCurrency)} remaining
                   </strong>
                 </p>
               </div>
@@ -869,7 +791,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
                     {bm.averageMargin}% <span className="text-xs text-[#8d90a0] font-normal">avg margin</span>
                   </div>
                   <div className="text-xs text-[#8d90a0]">
-                    Active Cash Balance: <strong className="text-white">{formatCurrency(bm.realBalance)}</strong>
+                    Active Cash Balance: <strong className="text-white">{formatCurrency(bm.realBalance, userCurrency)}</strong>
                   </div>
                 </div>
               ))}
@@ -878,28 +800,35 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
             {/* ROI / Yield % by Sportsbook BarChart */}
             <div className="mt-6 bg-[#0b1326] p-5 rounded-xl border border-[#27314a] space-y-4">
               <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold text-white uppercase tracking-wider">ROI & Yield Yield % by Active Sportsbook</h4>
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider">ROI & Yield % by Active Sportsbook</h4>
                 <span className="text-[10px] font-mono bg-[#4edea3]/20 text-[#4edea3] px-2 py-0.5 rounded font-bold">
                   Performance Efficiency
                 </span>
               </div>
               <div className="h-56 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={bookmakerRoiData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#27314a" vertical={false} />
-                    <XAxis dataKey="name" stroke="#8d90a0" tick={{ fontSize: 11 }} />
-                    <YAxis stroke="#8d90a0" tick={{ fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
-                    <Tooltip
-                      contentStyle={{ backgroundColor: '#0b1326', borderColor: '#27314a', borderRadius: '8px', color: '#fff' }}
-                      formatter={(val: any) => [`${val}%`, 'Bookmaker ROI']}
-                    />
-                    <Bar dataKey="roi" fill="#2563eb" radius={[4, 4, 0, 0]}>
-                      {bookmakerRoiData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.roi >= 0 ? '#4edea3' : '#cf2c30'} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                {bookmakerRoiData.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-xs text-[#8d90a0] space-y-2">
+                    <Building2 size={24} className="text-[#27314a]" />
+                    <span>No settled bets recorded per bookmaker yet.</span>
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={bookmakerRoiData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#27314a" vertical={false} />
+                      <XAxis dataKey="name" stroke="#8d90a0" tick={{ fontSize: 11 }} />
+                      <YAxis stroke="#8d90a0" tick={{ fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
+                      <Tooltip
+                        contentStyle={{ backgroundColor: '#0b1326', borderColor: '#27314a', borderRadius: '8px', color: '#fff' }}
+                        formatter={(val: any) => [`${val}%`, 'Bookmaker ROI']}
+                      />
+                      <Bar dataKey="roi" fill="#2563eb" radius={[4, 4, 0, 0]}>
+                        {bookmakerRoiData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.roi >= 0 ? '#4edea3' : '#cf2c30'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
               </div>
             </div>
           </div>
