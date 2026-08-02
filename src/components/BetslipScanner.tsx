@@ -30,34 +30,6 @@ interface BetslipScannerProps {
   onNavigate: (tab: string) => void;
 }
 
-const GEMINI_OCR_SYSTEM_INSTRUCTION = `You are an expert sports betting OCR parser. Your task is to extract structured data from the provided image of a betting slip and return ONLY valid JSON matching this schema:
-
-{
-  "bookmaker": "Name of the sportsbook (string or null)",
-  "sport": "Sport name (e.g. Football, Basketball) (string or null)",
-  "market_type": "Single, Multiple, Accumulator, or Bet Builder (string or null)",
-  "stake": 0.00,
-  "potential_return": 0.00,
-  "currency": "EUR, USD, GBP, etc. (string or null)",
-  "status": "open, won, lost, or void (string or null)",
-  "placed_at": "YYYY-MM-DD or DD/MM format if year is missing (string or null)",
-  "bet_id": "Bet identifier string or null",
-  "total_odds": 0.00,
-  "legs": [
-    {
-      "event": "Match/Fixture name (e.g., 'Real Madrid vs Barcelona') (string or null)",
-      "team": "Selected team or player (string or null)",
-      "market": "Market description (e.g., 'Over 2.5 Goals') (string or null)",
-      "odds_decimal": 0.00
-    }
-  ]
-}
-
-Rules:
-- Infer fields ONLY from what is explicitly shown on the slip.
-- Use decimal odds. For Bet Builders with only a combined total odd, set total_odds to that value and legs[].odds_decimal to null.
-- Output strictly JSON without markdown codeblock backticks or extra text outside the JSON.`;
-
 export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   bankrolls,
   bookmakers,
@@ -170,16 +142,8 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     setErrorMessage(null);
     setErrorDetails(null);
 
-    const rawApiKey =
-      (import.meta as any).env?.VITE_GEMINI_API_KEY ||
-      (window as any).process?.env?.GEMINI_API_KEY ||
-      (window as any).GEMINI_API_KEY ||
-      "";
-
-    const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim().replace(/^["']|["']$/g, '') : "";
-
-    if (!apiKey || isSample) {
-      // Simulation mode if key is missing or sample clicked
+    if (isSample) {
+      // Simulation mode if sample clicked
       setTimeout(() => {
         const sampleResult = sampleType === 'single'
           ? {
@@ -265,7 +229,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
       const finalErrorMessage = err.message || "Failed to scan and analyze betslip image.";
       setErrorMessage(finalErrorMessage);
       
-      const is403 = finalErrorMessage.includes('403') || finalErrorMessage.includes('Secrets') || finalErrorMessage.includes('API key');
+      const is403 = finalErrorMessage.includes('403') || finalErrorMessage.includes('API key');
       const isQuotaExceeded = finalErrorMessage.toLowerCase().includes('quota') || 
                                finalErrorMessage.toLowerCase().includes('exhausted') || 
                                finalErrorMessage.includes('429');
@@ -666,8 +630,8 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                 <li className="flex items-start gap-2.5">
                   <div className="w-5 h-5 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">1</div>
                   <div>
-                    <strong className="text-white block font-semibold">Environment Variable Validation</strong>
-                    <span>Ensure <code className="text-[#4edea3] bg-[#171f33] px-1.5 py-0.5 rounded font-mono">VITE_GEMINI_API_KEY</code> is configured in environment settings without whitespace, spaces, or extra quotes.</span>
+                    <strong className="text-white block font-semibold">Server-Side API Key Validation</strong>
+                    <span>Ensure <code className="text-[#4edea3] bg-[#171f33] px-1.5 py-0.5 rounded font-mono">GEMINI_API_KEY</code> is configured in your server environment variables without whitespace or extra quotes.</span>
                   </div>
                 </li>
                 <li className="flex items-start gap-2.5">
