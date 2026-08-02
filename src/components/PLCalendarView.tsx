@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Bet, Bankroll, Bookmaker, TagDefinition } from '../types';
 import { getCurrencySymbol, formatCurrency, formatOdds } from '../utils/storage';
+import { formatEventDate } from '../utils/dateUtils';
 import { BookmakerLogo } from './BookmakerLogo';
 import { 
   ChevronLeft, 
@@ -529,7 +530,12 @@ export const PLCalendarView: React.FC<PLCalendarViewProps> = ({
                       {bet.legs.map((leg, index) => (
                         <div key={leg.id || index} className="text-xs space-y-1">
                           <div className="flex justify-between items-start gap-2">
-                            <span className="font-bold text-[#dae2fd]">{leg.event}</span>
+                            <span className="font-bold text-[#dae2fd]">
+                              {leg.event}
+                              {formatEventDate(leg.eventDate) ? (
+                                <span className="text-[10px] font-normal text-[#8d90a0] ml-1.5">— {formatEventDate(leg.eventDate)}</span>
+                              ) : null}
+                            </span>
                             <span className="text-[#8d90a0] shrink-0 font-mono">@{leg.odds.toFixed(2)}</span>
                           </div>
                           <div className="flex items-center justify-between text-[11px] text-[#8d90a0]">

@@ -11,6 +11,7 @@ export interface BetLeg {
   selection: string;
   odds: number;
   status: BetStatus;
+  eventDate?: string;
 }
 
 export interface Bet {
@@ -81,8 +82,8 @@ export interface BankrollTransfer {
   date: string;
   fromBankrollId: string;
   toBankrollId: string;
-  fromBookmakerId: string;
-  toBookmakerId: string;
+  fromBookmakerId?: string;
+  toBookmakerId?: string;
   amount: number;
   isFreeBetCredit: boolean;
   conversionRate?: number;

@@ -160,6 +160,10 @@ Infer values strictly from the slip. Ensure decimal odds format is returned. Out
                       type: Type.NUMBER,
                       description: 'Decimal odds for this individual leg.',
                     },
+                    event_date: {
+                      type: Type.STRING,
+                      description: 'Kickoff or event date/time if visible on slip (ISO string YYYY-MM-DD or YYYY-MM-DDTHH:mm).',
+                    },
                   },
                   required: ['event'],
                 },

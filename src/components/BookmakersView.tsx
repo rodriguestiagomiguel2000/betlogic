@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bookmaker, Bet, Bankroll } from '../types';
 import { formatCurrency, formatOdds, getBookmakerBalanceForBankroll, parseCurrency, getCurrencySymbol } from '../utils/storage';
+import { formatEventDate } from '../utils/dateUtils';
 import { BookmakerLogo } from './BookmakerLogo';
 import {
   Building2,
@@ -656,7 +657,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                         <td className="p-3 max-w-xs truncate">
                           {bet.legs.map((l, i) => (
                             <div key={i} className="text-white font-medium truncate">
-                              {l.selection} <span className="text-[10px] text-[#8d90a0]">({l.event})</span>
+                              {l.selection} <span className="text-[10px] text-[#8d90a0]">({l.event}{formatEventDate(l.eventDate) ? ` — ${formatEventDate(l.eventDate)}` : ''})</span>
                             </div>
                           ))}
                         </td>

@@ -277,7 +277,7 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                   <div>
                     <label className="block text-[11px] text-[#8d90a0] mb-1">Sport</label>
                     <select
@@ -304,6 +304,16 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
                       onChange={(e) => handleUpdateLeg(leg.id, 'event', e.target.value)}
                       className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white"
                       required
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-[11px] text-[#8d90a0] mb-1">Event Date (Optional)</label>
+                    <input
+                      type="datetime-local"
+                      value={leg.eventDate || ''}
+                      onChange={(e) => handleUpdateLeg(leg.id, 'eventDate', e.target.value)}
+                      className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white"
                     />
                   </div>
 

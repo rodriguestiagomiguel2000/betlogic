@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bankroll, Bookmaker, BankrollTransfer, Bet, BankrollTransaction } from '../types';
 import { formatCurrency, formatOdds, getBookmakerBalanceForBankroll, getCurrencySymbol } from '../utils/storage';
+import { formatEventDate } from '../utils/dateUtils';
 import { bookmakersApi, bankrollsApi } from '../utils/api';
 import {
   Wallet,
@@ -328,7 +329,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
 
   const bookmakerBreakdown = useMemo(() => {
     if (!activeBankroll) return [];
-    const map = {};
+    const map: Record<string, any> = {};
 
     bookmakers.forEach((bm) => {
       const bal = getBookmakerBalanceForBankroll(bm, activeBankroll.id);
@@ -637,7 +638,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#27314a]">
-                    {bankrollAnalytics.bookmakerBreakdown.map((bm) => (
+                    {bankrollAnalytics.bookmakerBreakdown.map((bm: any) => (
                       <tr key={bm.id} className="hover:bg-[#131b2e] transition-colors">
                         <td className="p-3 font-bold text-white flex items-center gap-2">
                           <Building2 size={14} className="text-[#2563eb]" />
@@ -725,7 +726,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                             <td className="p-3 max-w-xs truncate">
                               {bet.legs.map((l, i) => (
                                 <div key={i} className="text-white font-medium truncate">
-                                  {l.selection} <span className="text-[10px] text-[#8d90a0]">({l.event})</span>
+                                  {l.selection} <span className="text-[10px] text-[#8d90a0]">({l.event}{formatEventDate(l.eventDate) ? ` — ${formatEventDate(l.eventDate)}` : ''})</span>
                                 </div>
                               ))}
                             </td>

@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bet, Bankroll, Bookmaker, BetStatus, SportType, BetType, TagDefinition } from '../types';
 import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
+import { formatEventDate, getRepresentativeEventDateTimestamp } from '../utils/dateUtils';
 import { BookmakerLogo } from './BookmakerLogo';
 import {
   Search,
@@ -77,7 +78,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
   const [liveFilter, setLiveFilter] = useState<string>('all');
   const [dateRange, setDateRange] = useState<string>('all');
   const [selectedTagsFilter, setSelectedTagsFilter] = useState<string[]>([]);
-  const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'stake-desc' | 'odds-desc' | 'profit-desc'>('date-desc');
+  const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'event-date-asc' | 'event-date-desc' | 'stake-desc' | 'odds-desc' | 'profit-desc'>('date-desc');
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
 
   useEffect(() => {
@@ -173,6 +174,8 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
     }).sort((a, b) => {
       if (sortBy === 'date-desc') return new Date(b.date).getTime() - new Date(a.date).getTime();
       if (sortBy === 'date-asc') return new Date(a.date).getTime() - new Date(b.date).getTime();
+      if (sortBy === 'event-date-asc') return getRepresentativeEventDateTimestamp(a) - getRepresentativeEventDateTimestamp(b);
+      if (sortBy === 'event-date-desc') return getRepresentativeEventDateTimestamp(b) - getRepresentativeEventDateTimestamp(a);
       if (sortBy === 'stake-desc') return b.stake - a.stake;
       if (sortBy === 'odds-desc') return b.totalOdds - a.totalOdds;
       if (sortBy === 'profit-desc') {
@@ -568,8 +571,10 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
               onChange={(e) => setSortBy(e.target.value as any)}
               className="w-full bg-[#0b1326] border border-[#27314a] rounded px-2.5 py-1.5 text-white"
             >
-              <option value="date-desc">Newest First</option>
-              <option value="date-asc">Oldest First</option>
+              <option value="date-desc">Newest Placement First</option>
+              <option value="date-asc">Oldest Placement First</option>
+              <option value="event-date-asc">Earliest Event First</option>
+              <option value="event-date-desc">Latest Event First</option>
               <option value="stake-desc">Highest Stake</option>
               <option value="odds-desc">Highest Odds</option>
               <option value="profit-desc">Highest Profit</option>
@@ -850,7 +855,12 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                                       <span>Leg #{idx + 1} • {leg.sport}</span>
                                       <span className="font-mono font-bold text-white">@{formatOdds(leg.odds)}</span>
                                     </div>
-                                    <div className="font-bold text-white text-xs truncate">{leg.event}</div>
+                                    <div className="font-bold text-white text-xs truncate">
+                                      {leg.event}
+                                      {formatEventDate(leg.eventDate) ? (
+                                        <span className="text-[10px] font-normal text-[#8d90a0] ml-1.5">— {formatEventDate(leg.eventDate)}</span>
+                                      ) : null}
+                                    </div>
                                     <div className="text-[#2563eb] font-semibold text-[11px] truncate">
                                       {leg.selection} <span className="text-[#8d90a0]">({leg.market})</span>
                                     </div>
@@ -976,7 +986,10 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                       <div key={leg.id || idx} className="bg-[#0b1326] p-2 rounded border border-[#27314a] text-xs flex items-center justify-between gap-2">
                         <div className="truncate">
                           <span className="font-bold text-white text-[11px]">{leg.selection}</span>
-                          <span className="text-[#8d90a0] text-[10px] block truncate">{leg.event} (@{formatOdds(leg.odds)})</span>
+                          <span className="text-[#8d90a0] text-[10px] block truncate">
+                            {leg.event}
+                            {formatEventDate(leg.eventDate) ? ` — ${formatEventDate(leg.eventDate)}` : ''} (@{formatOdds(leg.odds)})
+                          </span>
                         </div>
                         <select
                           value={leg.status || 'pending'}
@@ -1160,7 +1173,12 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                             <span className="font-bold text-white">Leg #{idx + 1} • {leg.sport}</span>
                             <span className="font-mono font-bold text-[#2563eb]">@{formatOdds(leg.odds)}</span>
                           </div>
-                          <div className="text-white font-semibold">{leg.event}</div>
+                          <div className="text-white font-semibold">
+                            {leg.event}
+                            {formatEventDate(leg.eventDate) ? (
+                              <span className="text-xs font-normal text-[#8d90a0] ml-1.5">— {formatEventDate(leg.eventDate)}</span>
+                            ) : null}
+                          </div>
                           <div className="text-[#b4c5ff] text-[11px]">{leg.selection} ({leg.market})</div>
 
                           <div className="pt-1.5 flex items-center justify-between border-t border-[#1f283d]">

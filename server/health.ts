@@ -27,6 +27,7 @@ export async function verifyDatabaseSchema() {
 
   try {
     await query('ALTER TABLE bankrolls ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0');
+    await query('ALTER TABLE bet_legs ADD COLUMN IF NOT EXISTS event_date TIMESTAMP WITH TIME ZONE');
     await query(`
       CREATE TABLE IF NOT EXISTS bankroll_transactions (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

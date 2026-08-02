@@ -155,7 +155,7 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
     // Fetch all legs for these bets in one query to optimize performance
     const betIds = bets.map((b) => b.id);
     const legsResult = await query(
-      `SELECT id, bet_id as "betId", sport, league, event, market, selection, odds, status 
+      `SELECT id, bet_id as "betId", sport, league, event, market, selection, odds, status, event_date as "eventDate"
        FROM bet_legs 
        WHERE bet_id = ANY($1)`,
       [betIds]
@@ -176,6 +176,7 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
         selection: leg.selection,
         odds: parseFloat(leg.odds),
         status: leg.status,
+        eventDate: leg.eventDate,
       });
     });
 
@@ -266,8 +267,8 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
     // 2. Insert Bet Legs
     for (const leg of legs) {
       await client.query(
-        `INSERT INTO bet_legs (bet_id, sport, league, event, market, selection, odds, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        `INSERT INTO bet_legs (bet_id, sport, league, event, market, selection, odds, status, event_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           betId,
           leg.sport,
@@ -277,6 +278,7 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
           leg.selection,
           leg.odds || 1.0,
           leg.status || status || 'pending',
+          leg.eventDate ? new Date(leg.eventDate).toISOString() : null,
         ]
       );
     }
@@ -398,8 +400,8 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
     await client.query('DELETE FROM bet_legs WHERE bet_id = $1', [betId]);
     for (const leg of legs) {
       await client.query(
-        `INSERT INTO bet_legs (bet_id, sport, league, event, market, selection, odds, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        `INSERT INTO bet_legs (bet_id, sport, league, event, market, selection, odds, status, event_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           betId,
           leg.sport,
@@ -409,6 +411,7 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
           leg.selection,
           leg.odds || 1.0,
           leg.status || status || 'pending',
+          leg.eventDate ? new Date(leg.eventDate).toISOString() : null,
         ]
       );
     }

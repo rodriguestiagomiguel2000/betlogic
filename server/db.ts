@@ -557,6 +557,7 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
         selection: leg.selection,
         odds: leg.odds,
         status: leg.status,
+        eventDate: leg.event_date,
       })),
       rowCount: found.length,
     };
@@ -609,7 +610,7 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
   }
 
   if (/INSERT INTO bet_legs/i.test(sql)) {
-    const [betId, sport, league, event, market, selection, odds, status] = params;
+    const [betId, sport, league, event, market, selection, odds, status, eventDate] = params;
     const newLeg = {
       id: generateId('leg'),
       bet_id: betId,
@@ -620,6 +621,7 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
       selection,
       odds: parseFloat(odds || 1.0),
       status: status || 'pending',
+      event_date: eventDate || null,
     };
     memoryStore.betLegs.push(newLeg);
     return { rows: [{ id: newLeg.id }], rowCount: 1 };

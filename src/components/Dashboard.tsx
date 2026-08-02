@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Bet, Bankroll, Bookmaker, BetStatus } from '../types';
 import { formatCurrency, formatOdds, calculateWinStreak, getBookmakerBalanceForBankroll, getCurrencySymbol } from '../utils/storage';
+import { formatEventDate, getRepresentativeEventDateTimestamp } from '../utils/dateUtils';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { TrendingUp, Flame, ShieldAlert, Zap, Filter, CheckCircle2, XCircle, Clock, Plus, ScanLine, ArrowUpRight, Camera } from 'lucide-react';
 import { BookmakerLogo } from './BookmakerLogo';
@@ -75,7 +76,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const wonCount = settledBets.filter((b) => b.status === 'won').length;
   const winRate = settledBets.length > 0 ? (wonCount / settledBets.length) * 100 : 0;
   
-  const pendingBets = filteredBets.filter((b) => b.status === 'pending');
+  const pendingBets = filteredBets
+    .filter((b) => b.status === 'pending')
+    .sort((a, b) => getRepresentativeEventDateTimestamp(a) - getRepresentativeEventDateTimestamp(b));
   const winStreak = calculateWinStreak(bets);
 
   // Profit Chart Data generator
@@ -422,7 +425,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <div key={leg.id || idx} className="text-xs bg-[#171f33] p-2 rounded border border-[#27314a] flex flex-wrap items-center justify-between gap-2">
                         <div className="truncate">
                           <span className="font-semibold text-white">{leg.selection}</span>
-                          <span className="text-[#8d90a0] ml-1.5">({leg.event} • {leg.market})</span>
+                          <span className="text-[#8d90a0] ml-1.5">
+                            ({leg.event}{formatEventDate(leg.eventDate) ? ` — ${formatEventDate(leg.eventDate)}` : ''} • {leg.market})
+                          </span>
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="font-mono font-bold text-[#b4c5ff] bg-[#0b1326] px-1.5 py-0.5 rounded">
@@ -542,7 +547,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             <span className="font-bold text-white">Leg #{idx + 1} • {leg.sport}</span>
                             <span className="font-mono font-bold text-[#2563eb]">@{formatOdds(leg.odds)}</span>
                           </div>
-                          <div className="text-white font-semibold">{leg.event}</div>
+                          <div className="text-white font-semibold">
+                            {leg.event}
+                            {formatEventDate(leg.eventDate) ? (
+                              <span className="text-xs font-normal text-[#8d90a0] ml-1.5">— {formatEventDate(leg.eventDate)}</span>
+                            ) : null}
+                          </div>
                           <div className="text-[#b4c5ff] text-[11px]">{leg.selection} ({leg.market})</div>
 
                           <div className="pt-1.5 flex items-center justify-between border-t border-[#1f283d]">

@@ -299,15 +299,16 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
           else if (sLower.includes('golf')) sport = 'Golf';
         }
 
-        return {
-          id: `scanned-leg-${Date.now()}-${idx}`,
-          sport,
-          event: leg.event || leg.team || 'Match Event',
-          market: leg.market || 'Match Odds',
-          selection: leg.team ? `${leg.team} (${leg.market || 'Pick'})` : (leg.market || 'Selection'),
-          odds: leg.odds_decimal ? Number(leg.odds_decimal) : (parsed.total_odds || 1.85),
-          status: status === 'won' ? 'won' : status === 'lost' ? 'lost' : status === 'void' ? 'void' : 'pending'
-        };
+          return {
+            id: `scanned-leg-${Date.now()}-${idx}`,
+            sport,
+            event: leg.event || leg.team || 'Match Event',
+            market: leg.market || 'Match Odds',
+            selection: leg.team ? `${leg.team} (${leg.market || 'Pick'})` : (leg.market || 'Selection'),
+            odds: leg.odds_decimal ? Number(leg.odds_decimal) : (parsed.total_odds || 1.85),
+            status: status === 'won' ? 'won' : status === 'lost' ? 'lost' : status === 'void' ? 'void' : 'pending',
+            eventDate: leg.event_date || leg.eventDate || undefined,
+          };
       });
       setLegs(extractedLegs);
     }
@@ -979,12 +980,18 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                           </button>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
                           <input
                             type="text"
                             placeholder="Event (e.g. Real Madrid vs Barcelona)"
                             value={leg.event}
                             onChange={(e) => handleUpdateLeg(leg.id, 'event', e.target.value)}
+                            className="bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white"
+                          />
+                          <input
+                            type="datetime-local"
+                            value={leg.eventDate || ''}
+                            onChange={(e) => handleUpdateLeg(leg.id, 'eventDate', e.target.value)}
                             className="bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white"
                           />
                           <input
