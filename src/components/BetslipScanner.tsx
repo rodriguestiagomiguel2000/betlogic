@@ -245,6 +245,18 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   };
 
   const applyParsedData = (parsed: any) => {
+    // Live detection
+    const isLiveDetected = Boolean(
+      parsed.is_live === true ||
+      (typeof parsed.is_live === 'string' && parsed.is_live.toLowerCase() === 'true') ||
+      (parsed.market_type || '').toLowerCase().includes('live') ||
+      (parsed.market_type || '').toLowerCase().includes('in-play') ||
+      (parsed.market || '').toLowerCase().includes('live') ||
+      (parsed.notes || '').toLowerCase().includes('halftime') ||
+      JSON.stringify(parsed).toLowerCase().includes('halftime')
+    );
+    setIsLive(isLiveDetected);
+
     // Bet classification
     let type: BetType = 'single';
     const mType = (parsed.market_type || '').toLowerCase();
@@ -257,11 +269,13 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     }
     setBetType(type);
 
-    // Bookmaker
+    // Bookmaker matching
     if (parsed.bookmaker) {
-      const matched = bookmakers.find(
-        (bm) => bm.name.toLowerCase().includes(parsed.bookmaker.toLowerCase()) || parsed.bookmaker.toLowerCase().includes(bm.name.toLowerCase())
-      );
+      const targetBmStr = parsed.bookmaker.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const matched = bookmakers.find((bm) => {
+        const bmStr = bm.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return bmStr.includes(targetBmStr) || targetBmStr.includes(bmStr);
+      });
       if (matched) setSelectedBookmaker(matched.id);
     }
 
@@ -284,33 +298,52 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     const idStr = parsed.bet_id ? ` [Ref: ${parsed.bet_id}]` : '';
     setNotes(`Scanned via Gemini 3.1 Flash Lite on ${dateStr}${idStr}`);
 
+    // Detect Sport
+    let sport: SportType = 'Football';
+    const sportSource = parsed.sport || (parsed.legs && parsed.legs[0] && parsed.legs[0].sport) || '';
+    if (sportSource) {
+      const sLower = sportSource.toLowerCase();
+      if (sLower.includes('basket')) sport = 'Basketball';
+      else if (sLower.includes('tennis')) sport = 'Tennis';
+      else if (sLower.includes('baseball')) sport = 'Baseball';
+      else if (sLower.includes('hockey')) sport = 'Ice Hockey';
+      else if (sLower.includes('esport')) sport = 'Esports';
+      else if (sLower.includes('mma') || sLower.includes('ufc')) sport = 'MMA';
+      else if (sLower.includes('golf')) sport = 'Golf';
+    }
+
     // Legs
     if (Array.isArray(parsed.legs) && parsed.legs.length > 0) {
       const extractedLegs: BetLeg[] = parsed.legs.map((leg: any, idx: number) => {
-        let sport: SportType = 'Football';
-        if (parsed.sport) {
-          const sLower = parsed.sport.toLowerCase();
-          if (sLower.includes('basket')) sport = 'Basketball';
-          else if (sLower.includes('tennis')) sport = 'Tennis';
-          else if (sLower.includes('baseball')) sport = 'Baseball';
-          else if (sLower.includes('hockey')) sport = 'Ice Hockey';
-          else if (sLower.includes('esport')) sport = 'Esports';
-          else if (sLower.includes('mma') || sLower.includes('ufc')) sport = 'MMA';
-          else if (sLower.includes('golf')) sport = 'Golf';
-        }
+        const legSelection = leg.selection || leg.team || parsed.selection || leg.market || 'Selection';
+        const legMarket = leg.market || parsed.market || 'Match Odds';
+        const legEvent = leg.event || parsed.event || leg.team || 'Match Event';
 
-          return {
-            id: `scanned-leg-${Date.now()}-${idx}`,
-            sport,
-            event: leg.event || leg.team || 'Match Event',
-            market: leg.market || 'Match Odds',
-            selection: leg.team ? `${leg.team} (${leg.market || 'Pick'})` : (leg.market || 'Selection'),
-            odds: leg.odds_decimal ? Number(leg.odds_decimal) : (parsed.total_odds || 1.85),
-            status: status === 'won' ? 'won' : status === 'lost' ? 'lost' : status === 'void' ? 'void' : 'pending',
-            eventDate: leg.event_date || leg.eventDate || undefined,
-          };
+        return {
+          id: `scanned-leg-${Date.now()}-${idx}`,
+          sport,
+          event: legEvent,
+          market: legMarket,
+          selection: legSelection,
+          odds: leg.odds_decimal ? Number(leg.odds_decimal) : (leg.odds ? Number(leg.odds) : (parsed.total_odds || parsed.odds || 1.85)),
+          status: status === 'won' ? 'won' : status === 'lost' ? 'lost' : status === 'void' ? 'void' : 'pending',
+          eventDate: leg.event_date || leg.eventDate || parsed.placed_at || undefined,
+        };
       });
       setLegs(extractedLegs);
+    } else if (parsed.event || parsed.selection || parsed.odds || parsed.market) {
+      // Fallback: If legs array was omitted or empty, build a single leg from top-level fields
+      const singleLeg: BetLeg = {
+        id: `scanned-leg-${Date.now()}-0`,
+        sport,
+        event: parsed.event || 'Match Event',
+        market: parsed.market || 'Match Odds',
+        selection: parsed.selection || parsed.team || parsed.event || 'Selection',
+        odds: parsed.odds ? Number(parsed.odds) : (parsed.total_odds ? Number(parsed.total_odds) : 1.85),
+        status: status === 'won' ? 'won' : status === 'lost' ? 'lost' : status === 'void' ? 'void' : 'pending',
+        eventDate: parsed.event_date || parsed.placed_at || undefined,
+      };
+      setLegs([singleLeg]);
     }
   };
 

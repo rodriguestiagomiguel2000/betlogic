@@ -73,7 +73,13 @@ async function startServer() {
       }
 
       const prompt = `Analyze this sports betting slip image and extract all structured fields matching the schema exactly.
-Infer values strictly from the slip. Ensure decimal odds format is returned. Output clean, valid JSON only.`;
+Infer values strictly from the slip. Ensure decimal odds format is returned. Output clean, valid JSON only.
+
+Special parsing rules:
+1. LIVE / IN-PLAY BETS: Check for live indicators like "Halftime", red broadcast icons/dots ((•)), "Live", "In-Play", or active match scores (e.g., "0:0", "1:2"). Set is_live: true if any of these are present.
+2. CONDENSED MARKET & SELECTION LINES: On slips showing condensed lines like "1x2 Ferencvaros 0:0", parse "1x2" as the market, "Ferencvaros" (or the chosen team/outcome) as the selection/team, and separate out live match scores or status.
+3. FIXTURE / EVENT NAME: Extract full fixture names (e.g., "Ferencvaros vs Vasas FC").
+4. LEGS ARRAY: Always populate the legs array with at least 1 leg item even for single bets. Include event name, market, selection pick, decimal odds, and event kickoff date/time if visible.`;
 
       // Enforce JSON Schema structured outputs using Gemini 3.1 Flash Lite
       const response = await ai.models.generateContent({
@@ -96,15 +102,23 @@ Infer values strictly from the slip. Ensure decimal odds format is returned. Out
             properties: {
               bookmaker: {
                 type: Type.STRING,
-                description: 'Name of the sportsbook/bookmaker.',
+                description: 'Name of the sportsbook/bookmaker (e.g. BC.GAME, Bet365, Pinnacle).',
               },
               event: {
                 type: Type.STRING,
-                description: 'Main match/fixture name (e.g. Liverpool vs Manchester City).',
+                description: 'Main match/fixture name (e.g. Ferencvaros vs Vasas FC or Liverpool vs Manchester City).',
               },
               market: {
                 type: Type.STRING,
-                description: 'Main betting market name (e.g. Both Teams To Score).',
+                description: 'Main betting market name (e.g. 1x2, Match Result, Both Teams To Score).',
+              },
+              selection: {
+                type: Type.STRING,
+                description: 'Selected outcome or team (e.g., Ferencvaros, Over 2.5, Real Madrid Win).',
+              },
+              sport: {
+                type: Type.STRING,
+                description: 'Sport category (e.g. Football, Basketball, Tennis, Esports, MMA).',
               },
               odds: {
                 type: Type.NUMBER,
@@ -120,7 +134,11 @@ Infer values strictly from the slip. Ensure decimal odds format is returned. Out
               },
               status: {
                 type: Type.STRING,
-                description: 'Current wager status: pending, won, lost, or void.',
+                description: 'Current wager status: pending, won, lost, void, or cashout.',
+              },
+              is_live: {
+                type: Type.BOOLEAN,
+                description: 'True if the wager is an in-play/live bet or taken during halftime/in-game, indicated by live icons, red dots, "Halftime", "Live", or live score displays.',
               },
               market_type: {
                 type: Type.STRING,
@@ -128,7 +146,7 @@ Infer values strictly from the slip. Ensure decimal odds format is returned. Out
               },
               placed_at: {
                 type: Type.STRING,
-                description: 'Date or timestamp when the bet was placed (format: YYYY-MM-DD).',
+                description: 'Date or timestamp when the bet was placed (format: YYYY-MM-DD or ISO string).',
               },
               bet_id: {
                 type: Type.STRING,
@@ -140,13 +158,17 @@ Infer values strictly from the slip. Ensure decimal odds format is returned. Out
               },
               legs: {
                 type: Type.ARRAY,
-                description: 'Array of separate selections or legs parsed from the slip.',
+                description: 'Array of separate selections or legs parsed from the slip. ALWAYS populate at least one leg even for single bets.',
                 items: {
                   type: Type.OBJECT,
                   properties: {
                     event: {
                       type: Type.STRING,
-                      description: 'Match fixture or event name.',
+                      description: 'Match fixture or event name (e.g. Ferencvaros vs Vasas FC).',
+                    },
+                    selection: {
+                      type: Type.STRING,
+                      description: 'The specific pick or team outcome (e.g. Ferencvaros, Over 2.5 Goals).',
                     },
                     team: {
                       type: Type.STRING,
@@ -154,7 +176,7 @@ Infer values strictly from the slip. Ensure decimal odds format is returned. Out
                     },
                     market: {
                       type: Type.STRING,
-                      description: 'Wager market details.',
+                      description: 'Wager market details (e.g. 1x2, Match Result).',
                     },
                     odds_decimal: {
                       type: Type.NUMBER,
@@ -162,7 +184,7 @@ Infer values strictly from the slip. Ensure decimal odds format is returned. Out
                     },
                     event_date: {
                       type: Type.STRING,
-                      description: 'Kickoff or event date/time if visible on slip (ISO string YYYY-MM-DD or YYYY-MM-DDTHH:mm).',
+                      description: 'Kickoff or event date/time if visible on slip (ISO string YYYY-MM-DD or YYYY-MM-DDTHH:mm or Aug 2, 2026 at 17:30).',
                     },
                   },
                   required: ['event'],
@@ -179,8 +201,11 @@ Infer values strictly from the slip. Ensure decimal odds format is returned. Out
         throw new Error('Gemini OCR returned an empty text response.');
       }
 
-      // Safe parse to verify structure
+      // Safe parse to verify structure and log raw extraction
       const parsedData = JSON.parse(rawText.trim());
+      console.log('\n=================== [RAW GEMINI OCR RESPONSE FROM SERVER] ===================');
+      console.log(JSON.stringify(parsedData, null, 2));
+      console.log('=============================================================================\n');
       return res.json(parsedData);
     } catch (err: any) {
       console.error('Betslip scanner error on backend:', err);
