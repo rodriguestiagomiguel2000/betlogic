@@ -306,7 +306,10 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
             className="fixed inset-0 touch-none" 
             onClick={() => setShowMoreDrawer(false)} 
           />
-          <div className="relative bg-[#0b1326] border-t border-[#1f283d] rounded-t-2xl p-3.5 pb-16 shadow-2xl space-y-2.5 z-10">
+          <div 
+            className="relative bg-[#0b1326] border-t border-[#1f283d] rounded-t-2xl p-3.5 shadow-2xl space-y-2.5 z-10"
+            style={{ paddingBottom: 'calc(4.25rem + env(safe-area-inset-bottom, 0px))' }}
+          >
             <div className="flex items-center justify-between border-b border-[#1f283d] pb-2">
               <div className="flex items-center gap-2">
                 <MoreHorizontal size={18} className="text-[#2563eb]" />
