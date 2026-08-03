@@ -101,8 +101,14 @@ Special parsing & Extraction Rules:
 4. BOOKMAKER:
    - Identify sportsbook name (e.g., ReloadBet, Bet365, Pinnacle, BC.GAME). Return clean name.
 
-5. LEGS ARRAY & CONDENSED MARKET HEADERS (CRITICAL):
-   - 'legs' array MUST NOT be empty. EVERY leg must contain non-empty 'event', 'selection', 'market', and individual 'odds_decimal'.
+5. LEGS ARRAY, BET BUILDERS & CONDENSED MARKETS (CRITICAL):
+   - 'legs' array MUST NOT be empty. EVERY sub-selection MUST be extracted as a leg.
+   - BET BUILDER HANDLING: On slips containing a Bet Builder (e.g., "Bet Builder 3/10", "Criar Aposta", "Same Game Parlay"), sub-selections inside the Bet Builder DO NOT have individual odds. Instead, the entire Bet Builder block has a single combined odds (e.g. 4.50 or 2.05).
+     * Set 'builder_id' (e.g. "builder_1", "builder_2") for all legs belonging to the same Bet Builder group.
+     * Set 'builder_odds' to the combined odds of that Bet Builder block (e.g. 4.50).
+     * Set 'odds_decimal' to the builder_odds for legs in that group.
+   - MULTIPLE BET BUILDERS & MIXED COMBOS: A ticket can contain MULTIPLE Bet Builders (e.g., Bet Builder 1 @ 4.50, Bet Builder 2 @ 2.83) OR a mix of Bet Builders and Single bets (e.g., Bet Builder 1 @ 4.50 + Single @ 1.47 + Single @ 2.66).
+     * Ensure total_odds equals the product of each independent single leg odds AND each Bet Builder group's builder_odds (multiplying each Bet Builder odds ONCE, not per sub-selection).
    - On Portuguese / European slips showing market descriptor lines above or next to match names (e.g., "[Team] para marcar em ambas as partes", "Ambas as equipas marcam", "Total de Golos", "[Team] a marcar"):
      * Map the market description text into 'market' (e.g. "Sirius para marcar em ambas as partes" or "Ambas Marcam (BTTS)").
      * Map the pick answer into 'selection' (e.g. "Sim", "Não", "Over 2.5").
@@ -207,14 +213,22 @@ Special parsing & Extraction Rules:
                     },
                     odds_decimal: {
                       type: Type.NUMBER,
-                      description: 'Decimal odds for this individual leg ONLY (e.g. 1.95 or 1.43). NEVER put total parlay odds here.',
+                      description: 'Decimal odds for this individual leg ONLY (e.g. 1.95 or 1.43). For Bet Builders, use group odds or builder_odds.',
+                    },
+                    builder_id: {
+                      type: Type.STRING,
+                      description: 'Identifier grouping sub-selections that belong to the same Bet Builder (e.g. builder_1, builder_2). Leave empty for single independent legs.',
+                    },
+                    builder_odds: {
+                      type: Type.NUMBER,
+                      description: 'Combined decimal odds for the entire Bet Builder block (e.g. 4.50 or 2.83). Only populated if part of a Bet Builder.',
                     },
                     event_date: {
                       type: Type.STRING,
                       description: `Kickoff date/time if visible on slip (e.g. ${currentYear}-08-02T20:00:00). ALWAYS use current year ${currentYear} if no year is shown.`,
                     },
                   },
-                  required: ['event', 'selection', 'odds_decimal'],
+                  required: ['event', 'selection'],
                 },
               },
             },

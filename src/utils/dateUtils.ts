@@ -1,4 +1,4 @@
-import { Bet } from '../types';
+import { Bet, BetLeg } from '../types';
 
 /**
  * Safely formats an event date string (e.g. "2026-08-15T20:00:00Z") into locale format "Aug 15, 20:00".
@@ -75,4 +75,61 @@ export function formatLegSelection(selection?: string, market?: string): string 
   }
 
   return sel;
+}
+
+/**
+ * Calculates raw and effective total odds for a list of bet legs.
+ * Correctly accounts for Bet Builder groups where multiple sub-selections share a single builder odds value.
+ */
+export function calculateLegsOdds(legs: BetLeg[]): { rawTotalOdds: number; effectiveTotalOdds: number } {
+  if (!legs || legs.length === 0) {
+    return { rawTotalOdds: 1.0, effectiveTotalOdds: 1.0 };
+  }
+
+  const builderGroups: Record<string, { legs: BetLeg[]; odds: number }> = {};
+  const singleLegs: BetLeg[] = [];
+
+  for (const leg of legs) {
+    if (leg.builderId && leg.builderId.trim()) {
+      const bId = leg.builderId.trim();
+      if (!builderGroups[bId]) {
+        const groupOdds = leg.builderOdds && leg.builderOdds > 0 ? leg.builderOdds : (leg.odds && leg.odds > 0 ? leg.odds : 1.0);
+        builderGroups[bId] = { legs: [], odds: groupOdds };
+      }
+      builderGroups[bId].legs.push(leg);
+    } else {
+      singleLegs.push(leg);
+    }
+  }
+
+  let rawTotal = 1.0;
+  for (const leg of singleLegs) {
+    rawTotal *= (leg.odds && leg.odds > 0 ? leg.odds : 1.0);
+  }
+  for (const bId in builderGroups) {
+    rawTotal *= builderGroups[bId].odds;
+  }
+
+  let effectiveTotal = 1.0;
+  for (const leg of singleLegs) {
+    if (leg.status === 'void') {
+      effectiveTotal *= 1.0;
+    } else {
+      effectiveTotal *= (leg.odds && leg.odds > 0 ? leg.odds : 1.0);
+    }
+  }
+  for (const bId in builderGroups) {
+    const group = builderGroups[bId];
+    const allVoid = group.legs.every((l) => l.status === 'void');
+    if (allVoid) {
+      effectiveTotal *= 1.0;
+    } else {
+      effectiveTotal *= group.odds;
+    }
+  }
+
+  return {
+    rawTotalOdds: Number(rawTotal.toFixed(3)),
+    effectiveTotalOdds: Number(effectiveTotal.toFixed(3)),
+  };
 }

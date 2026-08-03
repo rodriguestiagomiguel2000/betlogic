@@ -20,7 +20,7 @@ import {
   Key
 } from 'lucide-react';
 import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
-import { formatLegSelection } from '../utils/dateUtils';
+import { formatLegSelection, calculateLegsOdds } from '../utils/dateUtils';
 
 interface BetslipScannerProps {
   bankrolls: Bankroll[];
@@ -90,8 +90,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     }
   ]);
 
-  const rawTotalOdds = legs.reduce((acc, leg) => acc * (leg.odds || 1), 1);
-  const effectiveTotalOdds = legs.reduce((acc, leg) => acc * (leg.status === 'void' ? 1.0 : (leg.odds || 1)), 1);
+  const { rawTotalOdds, effectiveTotalOdds } = calculateLegsOdds(legs);
   const totalOdds = effectiveTotalOdds;
   const potentialPayout = stake * effectiveTotalOdds;
   const hasVoidLegs = legs.some((l) => l.status === 'void');
@@ -338,13 +337,25 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     // Legs
     if (Array.isArray(parsed.legs) && parsed.legs.length > 0) {
       const isMultiLeg = parsed.legs.length > 1;
+      const isBetBuilderSlip = mType.includes('builder') || mType.includes('criar aposta');
+
       const extractedLegs: BetLeg[] = parsed.legs.map((leg: any, idx: number) => {
         const legSelection = leg.selection || leg.team || (!isMultiLeg ? parsed.selection : '') || leg.market || 'Selection';
         const legMarket = leg.market || (!isMultiLeg ? parsed.market : '') || 'Match Odds';
         const legEvent = leg.event || (!isMultiLeg ? parsed.event : '') || leg.team || 'Match Event';
 
+        let bId = leg.builder_id ? String(leg.builder_id).trim() : undefined;
+        let bOdds = leg.builder_odds ? Number(leg.builder_odds) : undefined;
+
+        if (isBetBuilderSlip && !bId) {
+          bId = `builder-${legEvent.toLowerCase().replace(/[^a-z0-9]/g, '') || '1'}`;
+          bOdds = Number(parsed.total_odds || parsed.odds || 2.05);
+        }
+
         let legOdds = leg.odds_decimal ? Number(leg.odds_decimal) : (leg.odds ? Number(leg.odds) : NaN);
-        if (isNaN(legOdds) || legOdds <= 0) {
+        if (bOdds && bOdds > 0) {
+          legOdds = bOdds;
+        } else if (isNaN(legOdds) || legOdds <= 0) {
           legOdds = !isMultiLeg ? Number(parsed.odds || parsed.total_odds || 1.85) : 1.85;
         }
 
@@ -357,10 +368,30 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
           market: legMarket,
           selection: legSelection,
           odds: legOdds,
+          builderId: bId,
+          builderOdds: bOdds,
           status: status === 'won' ? 'won' : status === 'lost' ? 'lost' : status === 'void' ? 'void' : 'pending',
           eventDate: normalizeScannedDate(rawLegDate),
         };
       });
+
+      // Refine Bet Classification based on distinct items
+      const bSet = new Set<string>();
+      let singleCount = 0;
+      for (const leg of extractedLegs) {
+        if (leg.builderId) bSet.add(leg.builderId);
+        else singleCount++;
+      }
+      const totalGroups = bSet.size + singleCount;
+      if (totalGroups > 1) {
+        type = 'parlay';
+      } else if (bSet.size === 1) {
+        type = 'bet_builder';
+      } else {
+        type = 'single';
+      }
+      setBetType(type);
+
       setLegs(extractedLegs);
     } else if (parsed.event || parsed.selection || parsed.odds || parsed.market) {
       // Fallback: If legs array was omitted or empty, build a single leg from top-level fields
@@ -389,6 +420,68 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
       status: betStatus
     };
     setLegs([...legs, newLeg]);
+    if (legs.length > 0) setBetType('parlay');
+  };
+
+  const handleAddBetBuilderGroup = () => {
+    const bId = `builder-${Date.now()}`;
+    const defaultEvent = 'Halmstad vs. Sirius';
+    const newLegs: BetLeg[] = [
+      {
+        id: `scanned-leg-${Date.now()}-1`,
+        sport: 'Football',
+        event: defaultEvent,
+        market: '1x2',
+        selection: 'Sirius',
+        odds: 3.50,
+        builderId: bId,
+        builderOdds: 3.50,
+        status: betStatus,
+      },
+      {
+        id: `scanned-leg-${Date.now()}-2`,
+        sport: 'Football',
+        event: defaultEvent,
+        market: 'Total Goals',
+        selection: 'Over 2.5',
+        odds: 3.50,
+        builderId: bId,
+        builderOdds: 3.50,
+        status: betStatus,
+      },
+    ];
+    setLegs([...legs, ...newLegs]);
+    if (legs.length > 0) setBetType('parlay');
+    else setBetType('bet_builder');
+  };
+
+  const handleAddLegToBuilder = (bId: string, eventName: string) => {
+    const existing = legs.find((l) => l.builderId === bId);
+    const bOdds = existing?.builderOdds || existing?.odds || 3.50;
+    const newLeg: BetLeg = {
+      id: `scanned-leg-${Date.now()}`,
+      sport: existing?.sport || 'Football',
+      event: eventName || existing?.event || 'Match Event',
+      market: 'Market Selection',
+      selection: 'Pick Answer',
+      odds: bOdds,
+      builderId: bId,
+      builderOdds: bOdds,
+      status: betStatus,
+    };
+    setLegs([...legs, newLeg]);
+  };
+
+  const handleUpdateBuilderOdds = (bId: string, newOdds: number) => {
+    setLegs(legs.map((l) => (l.builderId === bId ? { ...l, builderOdds: newOdds, odds: newOdds } : l)));
+  };
+
+  const handleUpdateBuilderEvent = (bId: string, newEvent: string) => {
+    setLegs(legs.map((l) => (l.builderId === bId ? { ...l, event: newEvent } : l)));
+  };
+
+  const handleRemoveBuilderGroup = (bId: string) => {
+    setLegs(legs.filter((l) => l.builderId !== bId));
   };
 
   const handleRemoveLeg = (id: string) => {
@@ -1015,27 +1108,157 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                 </div>
 
                 {/* Legs Table / Editor */}
-                <div className="space-y-3 pt-4 border-t border-[#27314a]">
-                  <div className="flex items-center justify-between">
+                <div className="space-y-4 pt-4 border-t border-[#27314a]">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-[#8d90a0]">
-                      Extracted Selections ({legs.length} Legs)
+                      Extracted Selections ({legs.length} Sub-selections)
                     </h4>
-                    <button
-                      onClick={handleAddLeg}
-                      className="text-xs text-[#2563eb] hover:text-[#b4c5ff] font-semibold flex items-center gap-1 cursor-pointer"
-                    >
-                      <Plus size={14} /> Add Leg
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleAddLeg}
+                        className="text-xs bg-[#171f33] hover:bg-[#222a3d] border border-[#27314a] text-white px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                      >
+                        <Plus size={14} className="text-[#2563eb]" /> Add Single Leg
+                      </button>
+                      <button
+                        onClick={handleAddBetBuilderGroup}
+                        className="text-xs bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/40 text-indigo-300 px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                      >
+                        <Sparkles size={14} className="text-indigo-400" /> Add Bet Builder
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="space-y-2">
-                    {legs.map((leg, idx) => (
+                  <div className="space-y-4">
+                    {/* Render Bet Builder Groups */}
+                    {Object.values(
+                      legs.reduce((acc, leg) => {
+                        if (leg.builderId) {
+                          if (!acc[leg.builderId]) {
+                            acc[leg.builderId] = {
+                              builderId: leg.builderId,
+                              event: leg.event || 'Bet Builder Event',
+                              builderOdds: leg.builderOdds && leg.builderOdds > 0 ? leg.builderOdds : (leg.odds || 2.05),
+                              legs: [],
+                            };
+                          }
+                          acc[leg.builderId].legs.push(leg);
+                        }
+                        return acc;
+                      }, {} as Record<string, { builderId: string; event: string; builderOdds: number; legs: BetLeg[] }>)
+                    ).map((group) => (
+                      <div
+                        key={group.builderId}
+                        className="bg-[#0b1326] p-3.5 rounded-xl border border-indigo-500/40 space-y-3"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 bg-[#172036] p-2.5 rounded-lg border border-indigo-500/30">
+                          <div className="flex items-center gap-2 flex-1 min-w-[220px]">
+                            <span className="bg-indigo-600/30 text-indigo-300 border border-indigo-500/50 text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 shrink-0">
+                              <Sparkles size={12} /> Bet Builder
+                            </span>
+                            <input
+                              type="text"
+                              placeholder="Match Event (e.g. Halmstad vs. Sirius)"
+                              value={group.event}
+                              onChange={(e) => handleUpdateBuilderEvent(group.builderId, e.target.value)}
+                              className="bg-[#0b1326] border border-[#27314a] rounded px-2.5 py-1 text-xs text-white font-bold w-full"
+                            />
+                          </div>
+
+                          <div className="flex items-center gap-3 shrink-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[11px] text-indigo-200 font-medium">Combined Odds:</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                placeholder="4.50"
+                                value={group.builderOdds}
+                                onChange={(e) => handleUpdateBuilderOdds(group.builderId, Number(e.target.value))}
+                                className="bg-[#0b1326] border border-indigo-500/60 rounded px-2 py-1 text-xs text-indigo-300 font-mono font-bold w-20 text-center"
+                              />
+                            </div>
+
+                            <button
+                              onClick={() => handleRemoveBuilderGroup(group.builderId)}
+                              className="text-xs text-rose-400 hover:text-rose-300 p-1 flex items-center gap-1"
+                              title="Delete Bet Builder block"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Sub-legs in this Bet Builder */}
+                        <div className="space-y-2 pl-2 border-l-2 border-indigo-500/30">
+                          {group.legs.map((leg) => (
+                            <div key={leg.id} className="bg-[#121b2e] p-2.5 rounded-lg border border-[#27314a] grid grid-cols-1 sm:grid-cols-5 gap-2 items-center">
+                              <input
+                                type="text"
+                                placeholder="Market (e.g. 1x2, Total Goals)"
+                                value={leg.market || ''}
+                                onChange={(e) => handleUpdateLeg(leg.id, 'market', e.target.value)}
+                                className="bg-[#171f33] border border-[#27314a] rounded px-2 py-1 text-xs text-white"
+                              />
+                              <input
+                                type="text"
+                                placeholder="Selection (e.g. Sirius, Over 2.5)"
+                                value={leg.selection}
+                                onChange={(e) => handleUpdateLeg(leg.id, 'selection', e.target.value)}
+                                className="bg-[#171f33] border border-[#27314a] rounded px-2 py-1 text-xs text-white font-semibold"
+                              />
+                              <input
+                                type="datetime-local"
+                                value={leg.eventDate || ''}
+                                onChange={(e) => handleUpdateLeg(leg.id, 'eventDate', e.target.value)}
+                                className="bg-[#171f33] border border-[#27314a] rounded px-2 py-1 text-xs text-white"
+                              />
+                              <select
+                                value={leg.status || 'pending'}
+                                onChange={(e) => handleUpdateLeg(leg.id, 'status', e.target.value as BetStatus)}
+                                className={`border rounded px-2 py-1 text-xs font-bold uppercase tracking-wide cursor-pointer ${
+                                  leg.status === 'won'
+                                    ? 'bg-[#005236] text-[#4edea3] border-[#008f5d]'
+                                    : leg.status === 'lost'
+                                    ? 'bg-[#601410] text-[#ffb3ad] border-[#93231e]'
+                                    : leg.status === 'void'
+                                    ? 'bg-gray-800 text-gray-300 border-gray-600'
+                                    : 'bg-[#171f33] text-amber-400 border-[#27314a]'
+                                }`}
+                              >
+                                <option value="pending">⌛ Pending</option>
+                                <option value="won">✓ Won</option>
+                                <option value="lost">✗ Lost</option>
+                                <option value="void">⊘ Void</option>
+                              </select>
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  onClick={() => handleRemoveLeg(leg.id)}
+                                  className="text-xs text-rose-400 hover:text-rose-300 p-1"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+
+                          <button
+                            onClick={() => handleAddLegToBuilder(group.builderId, group.event)}
+                            className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1 pt-1 cursor-pointer"
+                          >
+                            <Plus size={13} /> Add Selection to this Bet Builder
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+
+                    {/* Render Single Independent Legs */}
+                    {legs.filter((l) => !l.builderId).map((leg, idx) => (
                       <div
                         key={leg.id}
                         className="bg-[#0b1326] p-3 rounded-lg border border-[#27314a] space-y-2"
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-mono text-[#2563eb] font-bold">Leg #{idx + 1}</span>
+                          <span className="text-xs font-mono text-[#2563eb] font-bold">Single Leg #{idx + 1}</span>
                           <button
                             onClick={() => handleRemoveLeg(leg.id)}
                             className="text-xs text-rose-400 hover:text-rose-300 p-1"

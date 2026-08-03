@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Bet, BetLeg, Bankroll, Bookmaker, BetType, SportType, TagDefinition } from '../types';
 import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
-import { PlusCircle, Trash2, CheckCircle2, ArrowLeft, Zap, Sparkles } from 'lucide-react';
+import { calculateLegsOdds } from '../utils/dateUtils';
+import { PlusCircle, Trash2, CheckCircle2, ArrowLeft, Zap, Sparkles, Plus } from 'lucide-react';
 
 interface ManualBetEntryProps {
   bankrolls: Bankroll[];
@@ -52,7 +53,8 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
     }
   ]);
 
-  const totalOdds = legs.reduce((acc, leg) => acc * (leg.odds || 1), 1);
+  const { rawTotalOdds, effectiveTotalOdds } = calculateLegsOdds(legs);
+  const totalOdds = effectiveTotalOdds;
   const potentialPayout = parseFloat(stake) * totalOdds;
 
   const handleAddLeg = () => {
@@ -70,6 +72,67 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
       }
     ]);
     if (betType === 'single') setBetType('parlay');
+  };
+
+  const handleAddBetBuilderGroup = () => {
+    const bId = `builder-${Date.now()}`;
+    const defaultEvent = 'Halmstad vs. Sirius';
+    const newLegs: BetLeg[] = [
+      {
+        id: `leg-${Date.now()}-1`,
+        sport: 'Football',
+        event: defaultEvent,
+        market: '1x2',
+        selection: 'Sirius',
+        odds: 3.50,
+        builderId: bId,
+        builderOdds: 3.50,
+        status: 'pending'
+      },
+      {
+        id: `leg-${Date.now()}-2`,
+        sport: 'Football',
+        event: defaultEvent,
+        market: 'Total Goals',
+        selection: 'Over 2.5',
+        odds: 3.50,
+        builderId: bId,
+        builderOdds: 3.50,
+        status: 'pending'
+      }
+    ];
+    setLegs([...legs, ...newLegs]);
+    if (legs.length > 0) setBetType('parlay');
+    else setBetType('bet_builder');
+  };
+
+  const handleAddLegToBuilder = (bId: string, eventName: string) => {
+    const existing = legs.find((l) => l.builderId === bId);
+    const bOdds = existing?.builderOdds || existing?.odds || 3.50;
+    const newLeg: BetLeg = {
+      id: `leg-${Date.now()}`,
+      sport: existing?.sport || 'Football',
+      event: eventName || existing?.event || 'Match Event',
+      market: 'Market Selection',
+      selection: 'Pick Answer',
+      odds: bOdds,
+      builderId: bId,
+      builderOdds: bOdds,
+      status: 'pending'
+    };
+    setLegs([...legs, newLeg]);
+  };
+
+  const handleUpdateBuilderOdds = (bId: string, newOdds: number) => {
+    setLegs(legs.map((l) => (l.builderId === bId ? { ...l, builderOdds: newOdds, odds: newOdds } : l)));
+  };
+
+  const handleUpdateBuilderEvent = (bId: string, newEvent: string) => {
+    setLegs(legs.map((l) => (l.builderId === bId ? { ...l, event: newEvent } : l)));
+  };
+
+  const handleRemoveBuilderGroup = (bId: string) => {
+    setLegs(legs.filter((l) => l.builderId !== bId));
   };
 
   const handleRemoveLeg = (id: string) => {
@@ -238,34 +301,150 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
 
         {/* Legs Editor Section */}
         <div className="space-y-4 pt-4 border-t border-[#27314a]">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center justify-between w-full sm:w-auto">
-              <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2.5">
-                <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-[#2563eb]/20 text-[#2563eb] text-xs font-black">
-                  {legs.length}
-                </div>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-[#2563eb]/20 text-[#2563eb] text-xs font-black">
+                {legs.length}
+              </div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">
                 Bet Selections / Legs
               </h3>
             </div>
 
-            <button
-              type="button"
-              onClick={handleAddLeg}
-              className="w-full sm:w-auto h-12 sm:h-9 px-6 bg-[#2563eb] hover:bg-[#1d4ed8] text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-900/20 transition-all active:scale-[0.98]"
-            >
-              <PlusCircle size={18} /> 
-              <span>Add Another Leg</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleAddLeg}
+                className="h-9 px-4 bg-[#171f33] hover:bg-[#222a3d] border border-[#27314a] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"
+              >
+                <PlusCircle size={15} className="text-[#2563eb]" /> 
+                <span>Add Single Leg</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleAddBetBuilderGroup}
+                className="h-9 px-4 bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/40 text-indigo-300 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"
+              >
+                <Sparkles size={15} className="text-indigo-400" /> 
+                <span>Add Bet Builder</span>
+              </button>
+            </div>
           </div>
 
-          <div className="space-y-3">
-            {legs.map((leg, index) => (
+          <div className="space-y-4">
+            {/* Render Bet Builder Groups */}
+            {Object.values(
+              legs.reduce((acc, leg) => {
+                if (leg.builderId) {
+                  if (!acc[leg.builderId]) {
+                    acc[leg.builderId] = {
+                      builderId: leg.builderId,
+                      event: leg.event || 'Bet Builder Event',
+                      builderOdds: leg.builderOdds && leg.builderOdds > 0 ? leg.builderOdds : (leg.odds || 2.05),
+                      legs: [],
+                    };
+                  }
+                  acc[leg.builderId].legs.push(leg);
+                }
+                return acc;
+              }, {} as Record<string, { builderId: string; event: string; builderOdds: number; legs: BetLeg[] }>)
+            ).map((group) => (
+              <div
+                key={group.builderId}
+                className="bg-[#0b1326] p-4 rounded-xl border border-indigo-500/40 space-y-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-[#172036] p-2.5 rounded-lg border border-indigo-500/30">
+                  <div className="flex items-center gap-2 flex-1 min-w-[220px]">
+                    <span className="bg-indigo-600/30 text-indigo-300 border border-indigo-500/50 text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 shrink-0">
+                      <Sparkles size={12} /> Bet Builder
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="Match / Event (e.g. Halmstad vs. Sirius)"
+                      value={group.event}
+                      onChange={(e) => handleUpdateBuilderEvent(group.builderId, e.target.value)}
+                      className="bg-[#0b1326] border border-[#27314a] rounded px-2.5 py-1 text-xs text-white font-bold w-full"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-indigo-200 font-medium">Combined Odds:</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="4.50"
+                        value={group.builderOdds}
+                        onChange={(e) => handleUpdateBuilderOdds(group.builderId, Number(e.target.value))}
+                        className="bg-[#0b1326] border border-indigo-500/60 rounded px-2 py-1 text-xs text-indigo-300 font-mono font-bold w-20 text-center"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveBuilderGroup(group.builderId)}
+                      className="text-xs text-rose-400 hover:text-rose-300 p-1 flex items-center gap-1"
+                      title="Delete Bet Builder block"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-2 pl-2 border-l-2 border-indigo-500/30">
+                  {group.legs.map((leg) => (
+                    <div key={leg.id} className="bg-[#121b2e] p-2.5 rounded-lg border border-[#27314a] grid grid-cols-1 sm:grid-cols-4 gap-2 items-center">
+                      <input
+                        type="text"
+                        placeholder="Market (e.g. 1x2, Total Goals)"
+                        value={leg.market || ''}
+                        onChange={(e) => handleUpdateLeg(leg.id, 'market', e.target.value)}
+                        className="bg-[#171f33] border border-[#27314a] rounded px-2 py-1 text-xs text-white"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Selection (e.g. Sirius, Over 2.5)"
+                        value={leg.selection}
+                        onChange={(e) => handleUpdateLeg(leg.id, 'selection', e.target.value)}
+                        className="bg-[#171f33] border border-[#27314a] rounded px-2 py-1 text-xs text-white font-semibold"
+                      />
+                      <input
+                        type="datetime-local"
+                        value={leg.eventDate || ''}
+                        onChange={(e) => handleUpdateLeg(leg.id, 'eventDate', e.target.value)}
+                        className="bg-[#171f33] border border-[#27314a] rounded px-2 py-1 text-xs text-white"
+                      />
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveLeg(leg.id)}
+                          className="text-xs text-rose-400 hover:text-rose-300 p-1"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+
+                  <button
+                    type="button"
+                    onClick={() => handleAddLegToBuilder(group.builderId, group.event)}
+                    className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1 pt-1 cursor-pointer"
+                  >
+                    <Plus size={13} /> Add Selection to this Bet Builder
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {/* Render Single Independent Legs */}
+            {legs.filter((l) => !l.builderId).map((leg, index) => (
               <div
                 key={leg.id}
                 className="bg-[#0b1326] p-4 rounded-xl border border-[#27314a] space-y-3"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-mono font-bold text-[#b4c5ff]">Selection #{index + 1}</span>
+                  <span className="text-xs font-mono font-bold text-[#b4c5ff]">Single Selection #{index + 1}</span>
                   {legs.length > 1 && (
                     <button
                       type="button"

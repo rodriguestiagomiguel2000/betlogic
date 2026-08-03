@@ -11,6 +11,7 @@ import {
   tagsApi
 } from './utils/api';
 import { calculateWinStreak } from './utils/storage';
+import { calculateLegsOdds } from './utils/dateUtils';
 import { AuthScreen } from './components/AuthScreen';
 
 import { Navbar } from './components/Navbar';
@@ -193,7 +194,7 @@ export function App() {
       const existing = bets.find(b => b.id === betId);
       if (!existing) return;
       const updatedLegs = existing.legs.map(l => l.id === legId ? { ...l, status: newLegStatus } : l);
-      const effectiveOdds = updatedLegs.reduce((acc, leg) => leg.status === 'void' ? acc : acc * (leg.odds || 1), 1);
+      const effectiveOdds = calculateLegsOdds(updatedLegs).effectiveTotalOdds;
       const anyLost = updatedLegs.some(l => l.status === 'lost');
       const allWon = updatedLegs.every(l => l.status === 'won');
       const allVoid = updatedLegs.every(l => l.status === 'void');

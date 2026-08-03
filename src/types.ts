@@ -12,6 +12,8 @@ export interface BetLeg {
   odds: number;
   status: BetStatus;
   eventDate?: string;
+  builderId?: string;
+  builderOdds?: number;
 }
 
 export interface Bet {
