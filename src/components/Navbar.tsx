@@ -70,13 +70,20 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
 
   useEffect(() => {
     if (showMoreDrawer) {
+      const scrollY = window.scrollY;
+      document.body.style.position = 'fixed';
+      document.body.style.top = `-${scrollY}px`;
+      document.body.style.width = '100%';
       document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
+
+      return () => {
+        document.body.style.position = '';
+        document.body.style.top = '';
+        document.body.style.width = '';
+        document.body.style.overflow = '';
+        window.scrollTo(0, scrollY);
+      };
     }
-    return () => {
-      document.body.style.overflow = '';
-    };
   }, [showMoreDrawer]);
 
   const navSections = [
@@ -296,7 +303,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
       {showMoreDrawer && (
         <div className="md:hidden fixed inset-0 z-50 flex flex-col justify-end bg-black/70 backdrop-blur-xs">
           <div 
-            className="fixed inset-0" 
+            className="fixed inset-0 touch-none" 
             onClick={() => setShowMoreDrawer(false)} 
           />
           <div className="relative bg-[#0b1326] border-t border-[#1f283d] rounded-t-2xl p-4 pb-20 shadow-2xl space-y-3 z-10 max-h-[80vh] flex flex-col">
@@ -313,7 +320,10 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-2 pt-1 overflow-y-auto max-h-[calc(80vh-100px)] overscroll-contain pr-1">
+            <div 
+              className="grid grid-cols-1 gap-2 pt-1 overflow-y-auto overscroll-contain pr-1 flex-1 min-h-0"
+              style={{ WebkitOverflowScrolling: 'touch' }}
+            >
               {moreMenuItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = activeTab === item.id;
