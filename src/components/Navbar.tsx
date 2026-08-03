@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import {
   LayoutDashboard,
@@ -18,7 +18,9 @@ import {
   ShieldCheck,
   User,
   Calendar,
-  LogOut
+  LogOut,
+  MoreHorizontal,
+  X
 } from 'lucide-react';
 import { APP_LOGO_BASE64 } from '../assets/logoData';
 
@@ -30,7 +32,7 @@ interface NavbarProps {
 }
 
 const BrandLogo: React.FC<{ size: 'desktop' | 'mobile' }> = ({ size }) => {
-  const [hasError, setHasError] = React.useState(false);
+  const [hasError, setHasError] = useState(false);
 
   if (!hasError) {
     return (
@@ -64,6 +66,8 @@ const BrandLogo: React.FC<{ size: 'desktop' | 'mobile' }> = ({ size }) => {
 };
 
 export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStreak, onLogout }) => {
+  const [showMoreDrawer, setShowMoreDrawer] = useState(false);
+
   const navSections = [
     {
       title: 'OVERVIEW',
@@ -97,16 +101,25 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
     }
   ];
 
-  // Flat items for mobile bottom bar navigation
-  const mobileNavItems = [
+  // 5 Primary visible items for mobile bottom bar navigation
+  const mobilePrimaryNavItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'calendar', label: 'Calendar', icon: Calendar },
     { id: 'history', label: 'History', icon: History },
     { id: 'bankrolls', label: 'Bankrolls', icon: Wallet },
     { id: 'bookmakers', label: 'Books', icon: Building2 },
-    { id: 'entry', label: 'Log Bet', icon: PlusCircle },
-    { id: 'profile', label: 'Settings', icon: Settings }
+    { id: 'entry', label: 'Log Bet', icon: PlusCircle }
   ];
+
+  // Secondary items accessible via the "More" drawer
+  const moreMenuItems = [
+    { id: 'calendar', label: 'P&L Calendar', icon: Calendar },
+    { id: 'analytics', label: 'Analytics & ROI', icon: PieChart },
+    { id: 'scanner', label: 'Betslip OCR Scan', icon: ScanLine },
+    { id: 'csv', label: 'CSV Export/Import', icon: FileSpreadsheet },
+    { id: 'profile', label: 'Settings & Security', icon: Settings }
+  ];
+
+  const isMoreActive = moreMenuItems.some((item) => item.id === activeTab);
 
   return (
     <>
@@ -268,17 +281,68 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
         </div>
       </header>
 
+      {/* Mobile More Sheet / Drawer */}
+      {showMoreDrawer && (
+        <div className="md:hidden fixed inset-0 z-50 flex flex-col justify-end bg-black/70 backdrop-blur-xs">
+          <div 
+            className="fixed inset-0" 
+            onClick={() => setShowMoreDrawer(false)} 
+          />
+          <div className="relative bg-[#0b1326] border-t border-[#1f283d] rounded-t-2xl p-4 pb-20 shadow-2xl space-y-3 z-10">
+            <div className="flex items-center justify-between border-b border-[#1f283d] pb-2">
+              <div className="flex items-center gap-2">
+                <MoreHorizontal size={18} className="text-[#2563eb]" />
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">More Navigation & Settings</h3>
+              </div>
+              <button
+                onClick={() => setShowMoreDrawer(false)}
+                className="p-1.5 rounded-lg bg-[#171f33] text-[#8d90a0] hover:text-white"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2 pt-1">
+              {moreMenuItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActiveTab(item.id);
+                      setShowMoreDrawer(false);
+                    }}
+                    className={`flex items-center gap-3 p-3 rounded-xl border text-xs font-semibold transition-all ${
+                      isActive
+                        ? 'bg-[#171f33] border-[#2563eb] text-white shadow'
+                        : 'bg-[#060e20] border-[#1f283d] text-[#8d90a0] hover:text-white hover:bg-[#171f33]'
+                    }`}
+                  >
+                    <Icon size={18} className={isActive ? 'text-[#2563eb]' : 'text-[#8d90a0]'} />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Mobile Bottom Floating Nav Bar */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#060e20] border-t border-[#1f283d] px-1 pb-safe shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
-        <div className="flex items-center justify-between overflow-x-auto no-scrollbar snap-x py-1 px-1 gap-0.5">
-          {mobileNavItems.map((item) => {
+        <div className="grid grid-cols-6 items-center py-1 gap-0.5 w-full max-w-md mx-auto">
+          {mobilePrimaryNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
             return (
               <button
                 key={item.id}
-                onClick={() => setActiveTab(item.id)}
-                className={`flex flex-col items-center justify-center gap-1 py-1.5 rounded-xl transition-all min-w-[46px] flex-1 snap-center shrink-0 relative ${
+                onClick={() => {
+                  setActiveTab(item.id);
+                  setShowMoreDrawer(false);
+                }}
+                className={`flex flex-col items-center justify-center gap-1 py-1.5 rounded-xl transition-all relative ${
                   isActive 
                     ? 'text-[#2563eb]' 
                     : 'text-[#8d90a0] hover:text-[#dae2fd]'
@@ -286,9 +350,9 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
                 style={{ minHeight: '52px' }}
               >
                 <div className={`p-1.5 rounded-lg transition-colors ${isActive ? 'bg-[#2563eb]/10' : ''}`}>
-                  <Icon size={isActive ? 22 : 20} className={isActive ? 'animate-pulse-subtle' : ''} />
+                  <Icon size={isActive ? 22 : 20} />
                 </div>
-                <span className={`text-[9px] font-bold uppercase tracking-tighter text-center whitespace-nowrap px-1 ${isActive ? 'opacity-100' : 'opacity-70'}`}>
+                <span className={`text-[9px] font-bold uppercase tracking-tighter text-center whitespace-nowrap px-0.5 ${isActive ? 'opacity-100' : 'opacity-70'}`}>
                   {item.label}
                 </span>
                 {isActive && (
@@ -300,8 +364,33 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
               </button>
             );
           })}
+
+          {/* More Tab Button */}
+          <button
+            onClick={() => setShowMoreDrawer(!showMoreDrawer)}
+            className={`flex flex-col items-center justify-center gap-1 py-1.5 rounded-xl transition-all relative ${
+              isMoreActive || showMoreDrawer
+                ? 'text-[#2563eb]' 
+                : 'text-[#8d90a0] hover:text-[#dae2fd]'
+            }`}
+            style={{ minHeight: '52px' }}
+          >
+            <div className={`p-1.5 rounded-lg transition-colors ${isMoreActive || showMoreDrawer ? 'bg-[#2563eb]/10' : ''}`}>
+              <MoreHorizontal size={isMoreActive || showMoreDrawer ? 22 : 20} />
+            </div>
+            <span className={`text-[9px] font-bold uppercase tracking-tighter text-center whitespace-nowrap px-0.5 ${isMoreActive || showMoreDrawer ? 'opacity-100' : 'opacity-70'}`}>
+              More
+            </span>
+            {isMoreActive && (
+              <motion.div 
+                layoutId="activeTabIndicator"
+                className="absolute bottom-0 w-8 h-0.5 rounded-full bg-[#2563eb]"
+              />
+            )}
+          </button>
         </div>
       </nav>
     </>
   );
 };
+

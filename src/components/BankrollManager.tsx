@@ -875,7 +875,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           <button
             onClick={() => {
               const firstBr = bankrolls[0];
@@ -886,21 +886,21 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
               setDwError(null);
               setShowDepositWithdrawModal(true);
             }}
-            className="flex items-center gap-2 px-4 py-2 bg-[#10b981] hover:bg-[#059669] text-white text-xs font-semibold rounded-lg shadow transition-colors cursor-pointer"
+            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 bg-[#10b981] hover:bg-[#059669] text-white text-xs font-semibold rounded-lg shadow transition-colors cursor-pointer whitespace-nowrap min-w-[125px]"
           >
-            <ArrowUpRight size={16} /> Deposit / Withdraw
+            <ArrowUpRight size={15} /> Deposit / Withdraw
           </button>
           <button
             onClick={() => setShowTransferModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-[#2563eb] hover:bg-[#1d4ed8] text-white text-xs font-semibold rounded-lg shadow transition-colors cursor-pointer"
+            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 bg-[#2563eb] hover:bg-[#1d4ed8] text-white text-xs font-semibold rounded-lg shadow transition-colors cursor-pointer whitespace-nowrap min-w-[115px]"
           >
-            <ArrowLeftRight size={16} /> Transfer Funds
+            <ArrowLeftRight size={15} /> Transfer Funds
           </button>
           <button
             onClick={() => setShowAddBankrollModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-[#171f33] hover:bg-[#222a3d] border border-[#27314a] text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+            className="w-full sm:w-auto flex items-center justify-center gap-1.5 px-3 py-2 bg-[#171f33] hover:bg-[#222a3d] border border-[#27314a] text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap"
           >
-            <Plus size={16} /> New Bankroll
+            <Plus size={15} /> New Bankroll
           </button>
         </div>
       </div>
