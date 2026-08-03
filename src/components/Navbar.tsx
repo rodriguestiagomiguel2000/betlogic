@@ -306,8 +306,8 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
             className="fixed inset-0 touch-none" 
             onClick={() => setShowMoreDrawer(false)} 
           />
-          <div className="relative bg-[#0b1326] border-t border-[#1f283d] rounded-t-2xl p-3.5 pb-16 shadow-2xl space-y-2.5 z-10 max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between border-b border-[#1f283d] pb-2 shrink-0">
+          <div className="relative bg-[#0b1326] border-t border-[#1f283d] rounded-t-2xl p-3.5 pb-16 shadow-2xl space-y-2.5 z-10">
+            <div className="flex items-center justify-between border-b border-[#1f283d] pb-2">
               <div className="flex items-center gap-2">
                 <MoreHorizontal size={18} className="text-[#2563eb]" />
                 <h3 className="text-xs font-bold text-white uppercase tracking-wider">More Navigation & Settings</h3>
@@ -320,10 +320,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
               </button>
             </div>
 
-            <div 
-              className="grid grid-cols-1 gap-1.5 pt-0.5 overflow-y-auto overscroll-contain pr-1 flex-1 min-h-0"
-              style={{ WebkitOverflowScrolling: 'touch' }}
-            >
+            <div className="grid grid-cols-1 gap-1.5 pt-0.5">
               {moreMenuItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = activeTab === item.id;
