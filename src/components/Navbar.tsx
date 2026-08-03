@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import {
   LayoutDashboard,
@@ -67,6 +67,17 @@ const BrandLogo: React.FC<{ size: 'desktop' | 'mobile' }> = ({ size }) => {
 
 export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStreak, onLogout }) => {
   const [showMoreDrawer, setShowMoreDrawer] = useState(false);
+
+  useEffect(() => {
+    if (showMoreDrawer) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [showMoreDrawer]);
 
   const navSections = [
     {
@@ -288,8 +299,8 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
             className="fixed inset-0" 
             onClick={() => setShowMoreDrawer(false)} 
           />
-          <div className="relative bg-[#0b1326] border-t border-[#1f283d] rounded-t-2xl p-4 pb-20 shadow-2xl space-y-3 z-10">
-            <div className="flex items-center justify-between border-b border-[#1f283d] pb-2">
+          <div className="relative bg-[#0b1326] border-t border-[#1f283d] rounded-t-2xl p-4 pb-20 shadow-2xl space-y-3 z-10 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-[#1f283d] pb-2 shrink-0">
               <div className="flex items-center gap-2">
                 <MoreHorizontal size={18} className="text-[#2563eb]" />
                 <h3 className="text-xs font-bold text-white uppercase tracking-wider">More Navigation & Settings</h3>
@@ -302,7 +313,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-2 pt-1">
+            <div className="grid grid-cols-1 gap-2 pt-1 overflow-y-auto max-h-[calc(80vh-100px)] overscroll-contain pr-1">
               {moreMenuItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = activeTab === item.id;
