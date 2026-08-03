@@ -101,8 +101,12 @@ Special parsing & Extraction Rules:
 4. BOOKMAKER:
    - Identify sportsbook name (e.g., ReloadBet, Bet365, Pinnacle, BC.GAME). Return clean name.
 
-5. LEGS ARRAY:
-   - 'legs' array MUST NOT be empty. EVERY leg must contain non-empty 'event', 'selection', 'market', and individual 'odds_decimal'.`;
+5. LEGS ARRAY & CONDENSED MARKET HEADERS (CRITICAL):
+   - 'legs' array MUST NOT be empty. EVERY leg must contain non-empty 'event', 'selection', 'market', and individual 'odds_decimal'.
+   - On Portuguese / European slips showing market descriptor lines above or next to match names (e.g., "[Team] para marcar em ambas as partes", "Ambas as equipas marcam", "Total de Golos", "[Team] a marcar"):
+     * Map the market description text into 'market' (e.g. "Sirius para marcar em ambas as partes" or "Ambas Marcam (BTTS)").
+     * Map the pick answer into 'selection' (e.g. "Sim", "Não", "Over 2.5").
+     * NEVER omit 'market' or leave it empty when a market descriptor header is visible on the slip.`;
 
       // Enforce JSON Schema structured outputs using Gemini 3.1 Flash Lite
       const response = await ai.models.generateContent({
@@ -199,7 +203,7 @@ Special parsing & Extraction Rules:
                     },
                     market: {
                       type: Type.STRING,
-                      description: 'Wager market details (e.g. 1x2, Match Result).',
+                      description: 'Wager market details (e.g. 1x2, Ambas Marcam, Match Result, [Team] para marcar em ambas as partes). MUST be extracted if visible.',
                     },
                     odds_decimal: {
                       type: Type.NUMBER,

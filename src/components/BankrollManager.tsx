@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bankroll, Bookmaker, BankrollTransfer, Bet, BankrollTransaction } from '../types';
 import { formatCurrency, formatOdds, getBookmakerBalanceForBankroll, getCurrencySymbol } from '../utils/storage';
-import { formatEventDate } from '../utils/dateUtils';
+import { formatEventDate, formatLegSelection } from '../utils/dateUtils';
 import { bookmakersApi, bankrollsApi } from '../utils/api';
 import {
   Wallet,
@@ -726,7 +726,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                             <td className="p-3 max-w-xs truncate">
                               {bet.legs.map((l, i) => (
                                 <div key={i} className="text-white font-medium truncate">
-                                  {l.selection} <span className="text-[10px] text-[#8d90a0]">({l.event}{formatEventDate(l.eventDate) ? ` — ${formatEventDate(l.eventDate)}` : ''})</span>
+                                  {formatLegSelection(l.selection, l.market)} <span className="text-[10px] text-[#8d90a0]">({l.event}{formatEventDate(l.eventDate) ? ` — ${formatEventDate(l.eventDate)}` : ''})</span>
                                 </div>
                               ))}
                             </td>

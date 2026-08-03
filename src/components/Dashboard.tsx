@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Bet, Bankroll, Bookmaker, BetStatus } from '../types';
 import { formatCurrency, formatOdds, calculateWinStreak, getBookmakerBalanceForBankroll, getCurrencySymbol } from '../utils/storage';
-import { formatEventDate, getRepresentativeEventDateTimestamp } from '../utils/dateUtils';
+import { formatEventDate, getRepresentativeEventDateTimestamp, formatLegSelection } from '../utils/dateUtils';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { TrendingUp, Flame, ShieldAlert, Zap, Filter, CheckCircle2, XCircle, Clock, Plus, ScanLine, ArrowUpRight, Camera } from 'lucide-react';
 import { BookmakerLogo } from './BookmakerLogo';
@@ -424,7 +424,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     {bet.legs.map((leg, idx) => (
                       <div key={leg.id || idx} className="text-xs bg-[#171f33] p-2 rounded border border-[#27314a] flex flex-wrap items-center justify-between gap-2">
                         <div className="truncate">
-                          <span className="font-semibold text-white">{leg.selection}</span>
+                          <span className="font-semibold text-white">{formatLegSelection(leg.selection, leg.market)}</span>
                           <span className="text-[#8d90a0] ml-1.5">
                             ({leg.event}{formatEventDate(leg.eventDate) ? ` — ${formatEventDate(leg.eventDate)}` : ''} • {leg.market})
                           </span>
@@ -553,7 +553,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               <span className="text-xs font-normal text-[#8d90a0] ml-1.5">— {formatEventDate(leg.eventDate)}</span>
                             ) : null}
                           </div>
-                          <div className="text-[#b4c5ff] text-[11px]">{leg.selection} ({leg.market})</div>
+                          <div className="text-[#b4c5ff] text-[11px]">{formatLegSelection(leg.selection, leg.market)} ({leg.market})</div>
 
                           <div className="pt-1.5 flex items-center justify-between border-t border-[#1f283d]">
                             <span className="text-[10px] text-[#8d90a0]">Status:</span>

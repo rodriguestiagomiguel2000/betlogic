@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bookmaker, Bet, Bankroll } from '../types';
 import { formatCurrency, formatOdds, getBookmakerBalanceForBankroll, parseCurrency, getCurrencySymbol } from '../utils/storage';
-import { formatEventDate } from '../utils/dateUtils';
+import { formatEventDate, formatLegSelection } from '../utils/dateUtils';
 import { BookmakerLogo } from './BookmakerLogo';
 import {
   Building2,
@@ -657,7 +657,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                         <td className="p-3 max-w-xs truncate">
                           {bet.legs.map((l, i) => (
                             <div key={i} className="text-white font-medium truncate">
-                              {l.selection} <span className="text-[10px] text-[#8d90a0]">({l.event}{formatEventDate(l.eventDate) ? ` — ${formatEventDate(l.eventDate)}` : ''})</span>
+                              {formatLegSelection(l.selection, l.market)} <span className="text-[10px] text-[#8d90a0]">({l.event}{formatEventDate(l.eventDate) ? ` — ${formatEventDate(l.eventDate)}` : ''})</span>
                             </div>
                           ))}
                         </td>
@@ -950,7 +950,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                         }
                         return (
                           <div key={rb.id} className="text-[10px] flex items-center justify-between text-[#dae2fd]">
-                            <span className="truncate max-w-[170px]">{rb.legs[0]?.selection || 'Bet'}</span>
+                            <span className="truncate max-w-[170px]">{formatLegSelection(rb.legs[0]?.selection, rb.legs[0]?.market) || 'Bet'}</span>
                             <span className={`font-mono font-bold ${rb.status === 'won' ? 'text-[#4edea3]' : rb.status === 'lost' ? 'text-[#ffb3ad]' : 'text-amber-400'}`}>
                               {impactTxt}
                             </span>

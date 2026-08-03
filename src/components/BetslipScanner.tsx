@@ -20,6 +20,7 @@ import {
   Key
 } from 'lucide-react';
 import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
+import { formatLegSelection } from '../utils/dateUtils';
 
 interface BetslipScannerProps {
   bankrolls: Bankroll[];
@@ -1043,7 +1044,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                           </button>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-6 gap-2">
                           <input
                             type="text"
                             placeholder="Event (e.g. Real Madrid vs Barcelona)"
@@ -1059,7 +1060,14 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                           />
                           <input
                             type="text"
-                            placeholder="Selection (e.g. Over 2.5 Goals)"
+                            placeholder="Market (e.g. BTTS, 1x2)"
+                            value={leg.market || ''}
+                            onChange={(e) => handleUpdateLeg(leg.id, 'market', e.target.value)}
+                            className="bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Selection (e.g. Over 2.5 Goals, Sim)"
                             value={leg.selection}
                             onChange={(e) => handleUpdateLeg(leg.id, 'selection', e.target.value)}
                             className="bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white"

@@ -30,3 +30,49 @@ export function getRepresentativeEventDateTimestamp(bet: Bet): number {
   }
   return new Date(bet.date).getTime();
 }
+
+/**
+ * Formats a leg selection string for display, ensuring binary or bare selections
+ * (such as "Sim", "Não", "Yes", "No", "Over", "Under") or selections without market context
+ * are displayed together with their market context (e.g. "Ambas Marcam (BTTS): Sim").
+ */
+export function formatLegSelection(selection?: string, market?: string): string {
+  const sel = (selection || '').trim();
+  const mkt = (market || '').trim();
+
+  if (!sel) return mkt || 'Selection';
+  if (!mkt || mkt === 'Match Odds' || mkt === 'Match Result' || mkt === 'Moneyline' || mkt === 'Winner') {
+    return sel;
+  }
+
+  const selLower = sel.toLowerCase();
+  const mktLower = mkt.toLowerCase();
+
+  // If selection is already formatted with colon (e.g. "BTTS: Sim") or starts with market name, return as is
+  if (sel.includes(':') || selLower.startsWith(mktLower)) {
+    return sel;
+  }
+
+  // Common generic / binary choices in sports betting (Portuguese, English, etc.)
+  const isGenericOrBinary =
+    selLower === 'sim' ||
+    selLower === 'não' ||
+    selLower === 'nao' ||
+    selLower === 'yes' ||
+    selLower === 'no' ||
+    selLower === 'over' ||
+    selLower === 'under' ||
+    selLower === 'draw' ||
+    selLower === 'empate' ||
+    selLower === 'true' ||
+    selLower === 'false' ||
+    selLower === '1' ||
+    selLower === '2' ||
+    selLower === 'x';
+
+  if (isGenericOrBinary) {
+    return `${mkt}: ${sel}`;
+  }
+
+  return sel;
+}

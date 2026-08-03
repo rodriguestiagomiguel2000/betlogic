@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bet, Bankroll, Bookmaker, BetStatus, SportType, BetType, TagDefinition } from '../types';
 import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
-import { formatEventDate, getRepresentativeEventDateTimestamp } from '../utils/dateUtils';
+import { formatEventDate, getRepresentativeEventDateTimestamp, formatLegSelection } from '../utils/dateUtils';
 import { BookmakerLogo } from './BookmakerLogo';
 import {
   Search,
@@ -722,7 +722,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                             <div>
                               <div className="font-bold text-white truncate">{mainLeg?.event}</div>
                               <div className="text-[#8d90a0] text-[11px] truncate">
-                                <span className="text-[#2563eb] font-semibold">{mainLeg?.selection}</span> • {mainLeg?.market}
+                                <span className="text-[#2563eb] font-semibold">{formatLegSelection(mainLeg?.selection, mainLeg?.market)}</span> • {mainLeg?.market}
                               </div>
                             </div>
                           ) : (
@@ -732,7 +732,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                                 <span className="text-[10px] text-[#8d90a0]">({mainLeg?.sport})</span>
                               </div>
                               <div className="text-[#8d90a0] text-[11px] truncate">
-                                First leg: {mainLeg?.selection} ({mainLeg?.event})
+                                First leg: {formatLegSelection(mainLeg?.selection, mainLeg?.market)} ({mainLeg?.event})
                               </div>
                             </div>
                           )}
@@ -862,7 +862,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                                       ) : null}
                                     </div>
                                     <div className="text-[#2563eb] font-semibold text-[11px] truncate">
-                                      {leg.selection} <span className="text-[#8d90a0]">({leg.market})</span>
+                                      {formatLegSelection(leg.selection, leg.market)} <span className="text-[#8d90a0]">({leg.market})</span>
                                     </div>
                                     <div className="flex items-center justify-between border-t border-[#27314a] pt-1.5 mt-1 text-[10px]">
                                       <span className="text-[#8d90a0]">Leg Status:</span>
@@ -959,7 +959,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                     </div>
                     <h4 className="text-sm font-bold text-white mt-0.5">{mainLeg?.event}</h4>
                     <p className="text-xs text-[#8d90a0] mt-0.5">
-                      <span className="text-white font-semibold">{mainLeg?.selection}</span> ({mainLeg?.market})
+                      <span className="text-white font-semibold">{formatLegSelection(mainLeg?.selection, mainLeg?.market)}</span> ({mainLeg?.market})
                     </p>
                     {bet.tags && bet.tags.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1.5">
@@ -985,7 +985,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                     {bet.legs.map((leg, idx) => (
                       <div key={leg.id || idx} className="bg-[#0b1326] p-2 rounded border border-[#27314a] text-xs flex items-center justify-between gap-2">
                         <div className="truncate">
-                          <span className="font-bold text-white text-[11px]">{leg.selection}</span>
+                          <span className="font-bold text-white text-[11px]">{formatLegSelection(leg.selection, leg.market)}</span>
                           <span className="text-[#8d90a0] text-[10px] block truncate">
                             {leg.event}
                             {formatEventDate(leg.eventDate) ? ` — ${formatEventDate(leg.eventDate)}` : ''} (@{formatOdds(leg.odds)})
@@ -1179,7 +1179,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                               <span className="text-xs font-normal text-[#8d90a0] ml-1.5">— {formatEventDate(leg.eventDate)}</span>
                             ) : null}
                           </div>
-                          <div className="text-[#b4c5ff] text-[11px]">{leg.selection} ({leg.market})</div>
+                          <div className="text-[#b4c5ff] text-[11px]">{formatLegSelection(leg.selection, leg.market)} ({leg.market})</div>
 
                           <div className="pt-1.5 flex items-center justify-between border-t border-[#1f283d]">
                             <span className="text-[10px] text-[#8d90a0]">Status:</span>
