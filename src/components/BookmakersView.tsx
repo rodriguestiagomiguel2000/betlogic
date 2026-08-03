@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bookmaker, Bet, Bankroll } from '../types';
 import { formatCurrency, formatOdds, getBookmakerBalanceForBankroll, parseCurrency, getCurrencySymbol } from '../utils/storage';
-import { formatEventDate, formatLegSelection } from '../utils/dateUtils';
+import { formatEventDate, formatLegSelection, formatBetDateTime } from '../utils/dateUtils';
 import { BookmakerLogo } from './BookmakerLogo';
 import {
   Building2,
@@ -651,7 +651,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                     return (
                       <tr key={bet.id} className="hover:bg-[#131b2e] transition-colors">
                         <td className="p-3 text-[#8d90a0] whitespace-nowrap">
-                          {new Date(bet.date).toLocaleDateString()}
+                          {formatBetDateTime(bet)}
                         </td>
                         <td className="p-3 font-bold text-[#b4c5ff] whitespace-nowrap">{bankName}</td>
                         <td className="p-3 max-w-xs truncate">

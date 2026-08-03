@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bankroll, Bookmaker, BankrollTransfer, Bet, BankrollTransaction } from '../types';
 import { formatCurrency, formatOdds, getBookmakerBalanceForBankroll, getCurrencySymbol } from '../utils/storage';
-import { formatEventDate, formatLegSelection } from '../utils/dateUtils';
+import { formatEventDate, formatLegSelection, formatBetDateTime, getBetLatestEventDate } from '../utils/dateUtils';
 import { bookmakersApi, bankrollsApi } from '../utils/api';
 import {
   Wallet,
@@ -319,7 +319,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
       }
       if (bet.status !== 'pending') {
         data.push({
-          date: new Date(bet.date).toLocaleDateString([], { month: 'short', day: 'numeric' }),
+          date: getBetLatestEventDate(bet).toLocaleDateString([], { month: 'short', day: 'numeric' }),
           profit: Number(cumulativeProfit.toFixed(2))
         });
       }
@@ -720,7 +720,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                         return (
                           <tr key={bet.id} className="hover:bg-[#131b2e] transition-colors">
                             <td className="p-3 text-[#8d90a0] whitespace-nowrap">
-                              {new Date(bet.date).toLocaleDateString()}
+                              {formatBetDateTime(bet)}
                             </td>
                             <td className="p-3 font-bold text-white whitespace-nowrap">{bm}</td>
                             <td className="p-3 max-w-xs truncate">

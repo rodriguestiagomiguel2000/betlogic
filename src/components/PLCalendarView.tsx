@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Bet, Bankroll, Bookmaker, TagDefinition } from '../types';
 import { getCurrencySymbol, formatCurrency, formatOdds } from '../utils/storage';
-import { formatEventDate, formatLegSelection } from '../utils/dateUtils';
+import { formatEventDate, formatLegSelection, getBetLatestEventDate } from '../utils/dateUtils';
 import { BookmakerLogo } from './BookmakerLogo';
 import { 
   ChevronLeft, 
@@ -76,7 +76,7 @@ export const PLCalendarView: React.FC<PLCalendarViewProps> = ({
   const monthBetsData = useMemo(() => {
     const dayBetsMap: Record<number, Bet[]> = {};
     const settledMonthBets = bets.filter((b) => {
-      const d = new Date(b.date);
+      const d = getBetLatestEventDate(b);
       return (
         !isNaN(d.getTime()) &&
         d.getFullYear() === currentYear &&
@@ -85,7 +85,7 @@ export const PLCalendarView: React.FC<PLCalendarViewProps> = ({
     });
 
     settledMonthBets.forEach((bet) => {
-      const day = new Date(bet.date).getDate();
+      const day = getBetLatestEventDate(bet).getDate();
       if (!dayBetsMap[day]) {
         dayBetsMap[day] = [];
       }

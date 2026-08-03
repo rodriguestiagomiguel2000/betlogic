@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bet, Bankroll, Bookmaker, BetStatus, SportType, BetType, TagDefinition } from '../types';
 import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
-import { formatEventDate, getRepresentativeEventDateTimestamp, formatLegSelection } from '../utils/dateUtils';
+import { formatEventDate, getRepresentativeEventDateTimestamp, formatLegSelection, formatBetDateTime } from '../utils/dateUtils';
 import { BookmakerLogo } from './BookmakerLogo';
 import {
   Search,
@@ -150,7 +150,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
 
       // Date range filter
       if (dateRange !== 'all') {
-        const betDate = new Date(bet.date).getTime();
+        const betDate = getRepresentativeEventDateTimestamp(bet);
         const now = Date.now();
         const dayMs = 24 * 60 * 60 * 1000;
 
@@ -172,8 +172,8 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
 
       return true;
     }).sort((a, b) => {
-      if (sortBy === 'date-desc') return new Date(b.date).getTime() - new Date(a.date).getTime();
-      if (sortBy === 'date-asc') return new Date(a.date).getTime() - new Date(b.date).getTime();
+      if (sortBy === 'date-desc') return getRepresentativeEventDateTimestamp(b) - getRepresentativeEventDateTimestamp(a);
+      if (sortBy === 'date-asc') return getRepresentativeEventDateTimestamp(a) - getRepresentativeEventDateTimestamp(b);
       if (sortBy === 'event-date-asc') return getRepresentativeEventDateTimestamp(a) - getRepresentativeEventDateTimestamp(b);
       if (sortBy === 'event-date-desc') return getRepresentativeEventDateTimestamp(b) - getRepresentativeEventDateTimestamp(a);
       if (sortBy === 'stake-desc') return b.stake - a.stake;
@@ -262,7 +262,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
       const bmName = bookmakers.find((bm) => bm.id === b.bookmakerId)?.name || 'Unknown';
       const eventDesc = b.legs.map((l) => `${l.event} (${l.selection} @ ${l.odds})`).join(' | ');
       return [
-        new Date(b.date).toLocaleDateString(),
+        formatBetDateTime(b),
         b.type.toUpperCase(),
         b.legs[0]?.sport || 'Other',
         `"${eventDesc.replace(/"/g, '""')}"`,
@@ -697,7 +697,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                         {/* Date & Type */}
                         <td className="p-3">
                           <div className="font-semibold text-white">
-                            {new Date(bet.date).toLocaleDateString()}
+                            {formatBetDateTime(bet)}
                           </div>
                           <div className="flex items-center gap-1 mt-0.5">
                             <span className="text-[10px] uppercase font-bold text-[#b4c5ff] bg-[#0b1326] px-1.5 py-0.5 rounded border border-[#27314a]">
@@ -921,7 +921,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-[#8d90a0] font-medium flex items-center gap-1.5">
-                      {new Date(bet.date).toLocaleDateString()}
+                      {formatBetDateTime(bet)}
                       <span>•</span>
                       {bm && <BookmakerLogo bookmaker={bm} size="sm" />}
                       <span>{bm?.name}</span>
@@ -1155,7 +1155,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                 <div className="space-y-3">
                   <div className="bg-[#0b1326] p-3.5 rounded-xl border border-[#27314a] space-y-1.5">
                     <div className="text-xs text-[#8d90a0] flex justify-between">
-                      <span>Date: {new Date(lightboxBet.date).toLocaleDateString()}</span>
+                      <span>Date: {formatBetDateTime(lightboxBet)}</span>
                       <span className="font-mono text-white">Stake: {formatCurrency(lightboxBet.stake, userCurrency)}</span>
                     </div>
                     <div className="text-xs text-[#8d90a0] flex justify-between">

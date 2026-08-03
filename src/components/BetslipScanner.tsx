@@ -20,7 +20,7 @@ import {
   Key
 } from 'lucide-react';
 import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
-import { formatLegSelection, calculateLegsOdds } from '../utils/dateUtils';
+import { formatLegSelection, calculateLegsOdds, parseDateString } from '../utils/dateUtils';
 
 interface BetslipScannerProps {
   bankrolls: Bankroll[];
@@ -527,8 +527,15 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
       ? 0
       : undefined;
 
+    const latestLegTimes = legs && legs.length > 0
+      ? legs.map((l) => (l.eventDate ? parseDateString(l.eventDate)?.getTime() || NaN : NaN)).filter((t) => !isNaN(t))
+      : [];
+    const calculatedBetDate = latestLegTimes.length > 0
+      ? new Date(Math.max(...latestLegTimes)).toISOString()
+      : new Date().toISOString();
+
     onAddBet({
-      date: new Date().toISOString(),
+      date: calculatedBetDate,
       type: betType,
       legs,
       totalOdds: Number(effectiveTotalOdds.toFixed(3)),

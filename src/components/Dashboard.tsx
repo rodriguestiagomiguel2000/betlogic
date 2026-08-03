@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Bet, Bankroll, Bookmaker, BetStatus } from '../types';
 import { formatCurrency, formatOdds, calculateWinStreak, getBookmakerBalanceForBankroll, getCurrencySymbol } from '../utils/storage';
-import { formatEventDate, getRepresentativeEventDateTimestamp, formatLegSelection } from '../utils/dateUtils';
+import { formatEventDate, getRepresentativeEventDateTimestamp, formatLegSelection, formatBetDateTime, getBetLatestEventDate } from '../utils/dateUtils';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { TrendingUp, Flame, ShieldAlert, Zap, Filter, CheckCircle2, XCircle, Clock, Plus, ScanLine, ArrowUpRight, Camera } from 'lucide-react';
 import { BookmakerLogo } from './BookmakerLogo';
@@ -82,14 +82,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const winStreak = calculateWinStreak(bets);
 
   // Profit Chart Data generator
-  const sortedSettled = [...settledBets].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const sortedSettled = [...settledBets].sort((a, b) => getRepresentativeEventDateTimestamp(a) - getRepresentativeEventDateTimestamp(b));
   let runningProfit = 0;
   const chartData = sortedSettled.map((bet, index) => {
     const profit = (bet.actualReturn || 0) - bet.stake;
     runningProfit += profit;
     return {
       index: `#${index + 1}`,
-      date: new Date(bet.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+      date: getBetLatestEventDate(bet).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
       profit: runningProfit,
     };
   });
@@ -376,7 +376,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         </button>
                       )}
                       <span className="text-xs text-[#8d90a0]">
-                        {new Date(bet.date).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                        {formatBetDateTime(bet)}
                       </span>
                     </div>
 

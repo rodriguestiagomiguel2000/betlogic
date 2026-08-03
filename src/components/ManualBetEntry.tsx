@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Bet, BetLeg, Bankroll, Bookmaker, BetType, SportType, TagDefinition } from '../types';
 import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
-import { calculateLegsOdds } from '../utils/dateUtils';
+import { calculateLegsOdds, parseDateString } from '../utils/dateUtils';
 import { PlusCircle, Trash2, CheckCircle2, ArrowLeft, Zap, Sparkles, Plus } from 'lucide-react';
 
 interface ManualBetEntryProps {
@@ -149,8 +149,15 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
     const stakeAmount = parseFloat(stake);
     if (legs.length === 0 || stakeAmount <= 0) return;
 
+    const latestLegTimes = legs && legs.length > 0
+      ? legs.map((l) => (l.eventDate ? parseDateString(l.eventDate)?.getTime() || NaN : NaN)).filter((t) => !isNaN(t))
+      : [];
+    const calculatedBetDate = latestLegTimes.length > 0
+      ? new Date(Math.max(...latestLegTimes)).toISOString()
+      : new Date().toISOString();
+
     onAddBet({
-      date: new Date().toISOString(),
+      date: calculatedBetDate,
       type: betType,
       legs,
       totalOdds: Number(totalOdds.toFixed(3)),

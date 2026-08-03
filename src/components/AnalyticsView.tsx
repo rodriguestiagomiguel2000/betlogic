@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Bet, Bookmaker, BankrollTransaction } from '../types';
 import { formatCurrency, calculateWinStreak, getCurrencySymbol } from '../utils/storage';
+import { getBetLatestEventDate } from '../utils/dateUtils';
 import {
   ResponsiveContainer,
   BarChart,
@@ -176,7 +177,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
     .filter((b) => b.status === 'won' || b.status === 'lost' || b.status === 'cashout');
 
   sortedBetsForEvolution.forEach((bet) => {
-    const d = new Date(bet.date);
+    const d = getBetLatestEventDate(bet);
     if (isNaN(d.getTime())) return;
     const rawDate = d.toISOString().slice(0, 10);
 
