@@ -306,7 +306,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
             className="fixed inset-0 touch-none" 
             onClick={() => setShowMoreDrawer(false)} 
           />
-          <div className="relative bg-[#0b1326] border-t border-[#1f283d] rounded-t-2xl p-4 pb-20 shadow-2xl space-y-3 z-10 max-h-[80vh] flex flex-col">
+          <div className="relative bg-[#0b1326] border-t border-[#1f283d] rounded-t-2xl p-3.5 pb-16 shadow-2xl space-y-2.5 z-10 max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between border-b border-[#1f283d] pb-2 shrink-0">
               <div className="flex items-center gap-2">
                 <MoreHorizontal size={18} className="text-[#2563eb]" />
@@ -321,7 +321,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
             </div>
 
             <div 
-              className="grid grid-cols-1 gap-2 pt-1 overflow-y-auto overscroll-contain pr-1 flex-1 min-h-0"
+              className="grid grid-cols-1 gap-1.5 pt-0.5 overflow-y-auto overscroll-contain pr-1 flex-1 min-h-0"
               style={{ WebkitOverflowScrolling: 'touch' }}
             >
               {moreMenuItems.map((item) => {
@@ -334,7 +334,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
                       setActiveTab(item.id);
                       setShowMoreDrawer(false);
                     }}
-                    className={`flex items-center gap-3 p-3 rounded-xl border text-xs font-semibold transition-all ${
+                    className={`flex items-center gap-3 p-2.5 rounded-xl border text-xs font-semibold transition-all ${
                       isActive
                         ? 'bg-[#171f33] border-[#2563eb] text-white shadow'
                         : 'bg-[#060e20] border-[#1f283d] text-[#8d90a0] hover:text-white hover:bg-[#171f33]'
