@@ -480,6 +480,7 @@ export function App() {
           <BetslipScanner
             bankrolls={bankrolls}
             bookmakers={bookmakers}
+            bets={bets}
             activeBankrollId={userPrefs.activeBankrollId}
             userCurrency={userPrefs.currency}
             onAddBet={handleAddBet}
