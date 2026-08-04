@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Bet, BetLeg, Bankroll, Bookmaker, BetType, SportType, BetStatus } from '../types';
+import { Bet, BetLeg, Bankroll, Bookmaker, BetType, SportType, BetStatus, TagDefinition } from '../types';
 import {
   ScanLine,
   Upload,
@@ -29,6 +29,8 @@ interface BetslipScannerProps {
   userCurrency?: string;
   onAddBet: (bet: Omit<Bet, 'id'>) => void;
   onNavigate: (tab: string) => void;
+  tagDefinitions: TagDefinition[];
+  onAddTagDefinition?: (tag: TagDefinition) => void;
 }
 
 export const BetslipScanner: React.FC<BetslipScannerProps> = ({
@@ -37,7 +39,9 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   activeBankrollId,
   userCurrency,
   onAddBet,
-  onNavigate
+  onNavigate,
+  tagDefinitions = [],
+  onAddTagDefinition
 }) => {
   const [selectedBankroll, setSelectedBankroll] = useState<string>(
     activeBankrollId && bankrolls.some((b) => b.id === activeBankrollId)
@@ -65,6 +69,8 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   const [isFreeBet, setIsFreeBet] = useState<boolean>(false);
   const [freeBetDestination, setFreeBetDestination] = useState<'cash' | 'free_bet'>('cash');
   const [notes, setNotes] = useState<string>('Scanned via Gemini 3.1 Flash Lite OCR engine');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [customTagInput, setCustomTagInput] = useState<string>('');
 
   // Extracted Legs
   const [legs, setLegs] = useState<BetLeg[]>([
@@ -558,7 +564,8 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
       freeBetDestination: isFreeBet ? freeBetDestination : 'cash',
       notes,
       scannedSlipUrl: uploadedImage || undefined,
-      imageUrl: uploadedImage || undefined
+      imageUrl: uploadedImage || undefined,
+      tags: selectedTags
     });
 
     onNavigate('dashboard');
@@ -1122,6 +1129,180 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                   )}
                 </div>
 
+                {/* Strategy Tags Section */}
+                <div className="pt-4 border-t border-[#27314a] space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-white mb-1">
+                      Strategy Tags
+                    </label>
+                    <p className="text-[11px] text-[#8d90a0] mb-2.5">
+                      Categorise this scanned wager with strategies or system tags for deep performance analysis.
+                    </p>
+                    
+                    {/* Current Selected Tags Chips */}
+                    <div className="flex flex-wrap gap-2 min-h-[40px] p-2 bg-[#0b1326] border border-[#27314a] rounded-lg mb-3">
+                      {selectedTags.length === 0 ? (
+                        <span className="text-xs text-[#525866] italic self-center px-1">No tags attached. Select from popular tags below or type a custom one.</span>
+                      ) : (
+                        selectedTags.map((tagName) => {
+                          const def = tagDefinitions.find(t => t.name.toLowerCase() === tagName.toLowerCase());
+                          const color = def ? def.color : '#2563eb';
+                          return (
+                            <span
+                              key={tagName}
+                              style={{ backgroundColor: `${color}15`, borderColor: `${color}40`, color: color }}
+                              className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide px-2.5 py-1 rounded border whitespace-nowrap"
+                            >
+                              <span>{tagName}</span>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedTags(prev => prev.filter(t => t !== tagName))}
+                                className="hover:bg-white/10 rounded-full p-0.5 text-[#8d90a0] hover:text-white"
+                              >
+                                <Trash2 size={10} className="w-2.5 h-2.5" />
+                              </button>
+                            </span>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Quick Popular Tags Selector */}
+                    <div className="space-y-2 mb-3">
+                      <span className="text-[10px] text-[#8d90a0] font-bold uppercase tracking-wider block">Quick Add Popular Tags:</span>
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          { name: 'Pre-Match', hashtag: '#PreMatch', color: '#2563eb' },
+                          { name: 'Live', hashtag: '#Live', color: '#ef4444' },
+                          { name: 'Value Bet', hashtag: '#ValueBet', color: '#10b981' },
+                          { name: 'Cashout', hashtag: '#Cashout', color: '#f59e0b' }
+                        ].map((pop) => {
+                          const isAttached = selectedTags.some(t => t.toLowerCase() === pop.name.toLowerCase());
+                          return (
+                            <button
+                              type="button"
+                              key={pop.hashtag}
+                              onClick={() => {
+                                if (isAttached) {
+                                  setSelectedTags(prev => prev.filter(t => t.toLowerCase() !== pop.name.toLowerCase()));
+                                } else {
+                                  const exists = tagDefinitions.some(t => t.name.toLowerCase() === pop.name.toLowerCase());
+                                  if (!exists && onAddTagDefinition) {
+                                    onAddTagDefinition({
+                                      id: `tag-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                                      name: pop.name,
+                                      color: pop.color
+                                    });
+                                  }
+                                  setSelectedTags(prev => [...prev, pop.name]);
+                                }
+                              }}
+                              style={{
+                                borderColor: isAttached ? pop.color : '#27314a',
+                                backgroundColor: isAttached ? `${pop.color}20` : '#0b1326',
+                                color: isAttached ? '#ffffff' : '#8d90a0'
+                              }}
+                              className="text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all cursor-pointer hover:text-white"
+                            >
+                              {pop.hashtag}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Custom Tag Input & Available Definitions Dropdown */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Dropdown of available tag definitions */}
+                      <div>
+                        <label className="block text-[10px] text-[#8d90a0] mb-1">Attach Existing Strategy</label>
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val && !selectedTags.includes(val)) {
+                              setSelectedTags(prev => [...prev, val]);
+                            }
+                          }}
+                          className="w-full bg-[#0b1326] border border-[#27314a] rounded-lg px-3 py-2 text-xs text-white"
+                        >
+                          <option value="" disabled>-- Select a strategy tag --</option>
+                          {tagDefinitions
+                            .filter((t) => !selectedTags.some(sel => sel.toLowerCase() === t.name.toLowerCase()))
+                            .map((t) => (
+                              <option key={t.id} value={t.name}>
+                                {t.name}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+
+                      {/* Add Custom Tag text field */}
+                      <div>
+                        <label className="block text-[10px] text-[#8d90a0] mb-1">Create New Custom Tag</label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            placeholder="e.g. System, Parlay-Hedging"
+                            value={customTagInput}
+                            onChange={(e) => setCustomTagInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                const name = customTagInput.trim();
+                                if (name) {
+                                  const lowerName = name.toLowerCase();
+                                  if (!selectedTags.some(t => t.toLowerCase() === lowerName)) {
+                                    const exists = tagDefinitions.find(t => t.name.toLowerCase() === lowerName);
+                                    if (!exists && onAddTagDefinition) {
+                                      const colors = ['#3b82f6', '#ef4444', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899', '#06b6d4', '#14b8a6'];
+                                      const randomColor = colors[Math.floor(Math.random() * colors.length)];
+                                      onAddTagDefinition({
+                                        id: `tag-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                                        name,
+                                        color: randomColor
+                                      });
+                                    }
+                                    setSelectedTags(prev => [...prev, name]);
+                                  }
+                                  setCustomTagInput('');
+                                }
+                              }
+                            }}
+                            className="flex-1 bg-[#0b1326] border border-[#27314a] rounded-lg px-3 py-2 text-xs text-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const name = customTagInput.trim();
+                              if (name) {
+                                const lowerName = name.toLowerCase();
+                                if (!selectedTags.some(t => t.toLowerCase() === lowerName)) {
+                                  const exists = tagDefinitions.find(t => t.name.toLowerCase() === lowerName);
+                                  if (!exists && onAddTagDefinition) {
+                                    const colors = ['#3b82f6', '#ef4444', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899', '#06b6d4', '#14b8a6'];
+                                    const randomColor = colors[Math.floor(Math.random() * colors.length)];
+                                    onAddTagDefinition({
+                                      id: `tag-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                                      name,
+                                      color: randomColor
+                                    });
+                                  }
+                                  setSelectedTags(prev => [...prev, name]);
+                                }
+                                setCustomTagInput('');
+                              }
+                            }}
+                            className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg shadow-sm transition-colors"
+                          >
+                            Add
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Legs Table / Editor */}
                 <div className="space-y-4 pt-4 border-t border-[#27314a]">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1166,21 +1347,34 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                         key={group.builderId}
                         className="bg-[#0b1326] p-5 rounded-xl border border-indigo-500/40 space-y-4 shadow-lg"
                       >
-                        <div className="flex flex-wrap items-center justify-between gap-3 bg-[#172036] p-3 rounded-lg border border-indigo-500/30">
-                          <div className="flex items-center gap-2 flex-1 min-w-[220px]">
-                            <span className="bg-indigo-600/30 text-indigo-300 border border-indigo-500/50 text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 shrink-0">
-                              <Sparkles size={12} /> Bet Builder
-                            </span>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#172036] p-3 rounded-lg border border-indigo-500/30">
+                          {/* Match Event Name row / full width input */}
+                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1 w-full">
+                            <div className="flex items-center justify-between w-full sm:w-auto">
+                              <span className="bg-indigo-600/30 text-indigo-300 border border-indigo-500/50 text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 shrink-0">
+                                <Sparkles size={12} /> Bet Builder
+                              </span>
+                              
+                              {/* Mobile Delete Button */}
+                              <button
+                                onClick={() => handleRemoveBuilderGroup(group.builderId)}
+                                className="sm:hidden text-xs text-rose-400 hover:text-rose-300 p-1"
+                                title="Delete Bet Builder block"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
                             <input
                               type="text"
                               placeholder="Match Event (e.g. Halmstad vs. Sirius)"
                               value={group.event}
                               onChange={(e) => handleUpdateBuilderEvent(group.builderId, e.target.value)}
-                              className="bg-[#0b1326] border border-[#27314a] rounded px-2.5 py-1 text-xs text-white font-bold w-full"
+                              className="bg-[#0b1326] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white font-bold w-full"
                             />
                           </div>
 
-                          <div className="flex items-center gap-3 shrink-0">
+                          {/* Combined Odds & Desktop Delete Button */}
+                          <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 w-full sm:w-auto pt-1.5 sm:pt-0 border-t border-indigo-500/10 sm:border-t-0">
                             <div className="flex items-center gap-1.5">
                               <span className="text-[11px] text-indigo-200 font-medium">Combined Odds:</span>
                               <input
@@ -1195,7 +1389,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
 
                             <button
                               onClick={() => handleRemoveBuilderGroup(group.builderId)}
-                              className="text-xs text-rose-400 hover:text-rose-300 p-1 flex items-center gap-1"
+                              className="hidden sm:block text-xs text-rose-400 hover:text-rose-300 p-1"
                               title="Delete Bet Builder block"
                             >
                               <Trash2 size={14} />
@@ -1206,7 +1400,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                         {/* Sub-legs in this Bet Builder */}
                         <div className="space-y-4 pl-3 border-l-2 border-indigo-500/30">
                           {group.legs.map((leg, sIdx) => (
-                            <div key={leg.id} className="bg-[#121b2e] p-5 rounded-xl border border-[#27314a]/80 shadow-md space-y-3.5 hover:border-indigo-500/30 transition-colors">
+                            <div key={leg.id} className="bg-[#121b2e] p-3.5 sm:p-5 rounded-xl border border-[#27314a]/80 shadow-md space-y-3.5 hover:border-indigo-500/30 transition-colors">
                               {/* Mini-Card Header */}
                               <div className="flex items-center justify-between border-b border-[#27314a]/40 pb-2">
                                 <span className="text-[10px] font-mono text-indigo-300 font-semibold uppercase tracking-wider">
@@ -1223,9 +1417,9 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                                 </button>
                               </div>
 
-                              {/* Row 1: Primary Info (Market & Selection) */}
+                              {/* Row 1: Market (Full Width on mobile, half on desktop) */}
                               <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                                <div className="md:col-span-6">
+                                <div className="col-span-12 md:col-span-6">
                                   <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
                                     Market
                                   </label>
@@ -1237,7 +1431,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                                     className="w-full bg-[#171f33] border border-[#27314a] text-white rounded-lg px-3.5 py-2 text-xs font-medium placeholder-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all"
                                   />
                                 </div>
-                                <div className="md:col-span-6">
+                                <div className="hidden md:block md:col-span-6">
                                   <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
                                     Selection Pick
                                   </label>
@@ -1251,9 +1445,38 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                                 </div>
                               </div>
 
-                              {/* Row 2: Metadata & Controls (Date, Sport, Status) */}
-                              <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-1">
-                                <div className="md:col-span-5">
+                              {/* Row 2: Selection Pick & Decimal Odds side-by-side on mobile */}
+                              <div className="grid grid-cols-2 md:hidden gap-4">
+                                <div className="col-span-1">
+                                  <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
+                                    Selection Pick
+                                  </label>
+                                  <input
+                                    type="text"
+                                    placeholder="Selection (e.g. Over 2.5)"
+                                    value={leg.selection}
+                                    onChange={(e) => handleUpdateLeg(leg.id, 'selection', e.target.value)}
+                                    className="w-full bg-[#171f33] border border-[#27314a] text-white rounded-lg px-3.5 py-2 text-xs font-bold placeholder-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all"
+                                  />
+                                </div>
+                                <div className="col-span-1">
+                                  <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
+                                    Decimal Odds
+                                  </label>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    placeholder="1.50"
+                                    value={leg.odds || ''}
+                                    onChange={(e) => handleUpdateLeg(leg.id, 'odds', Number(e.target.value))}
+                                    className="w-full bg-[#171f33] border border-[#27314a] text-white rounded-lg px-3.5 py-2 text-xs font-mono focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Row 3: Metadata & Controls (Date, Sport, Status) */}
+                              <div className="grid grid-cols-2 md:grid-cols-12 gap-4 pt-1">
+                                <div className="col-span-2 md:col-span-5">
                                   <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
                                     Event Date & Time
                                   </label>
@@ -1264,7 +1487,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                                     className="w-full bg-[#171f33] border border-[#27314a] text-white rounded-lg px-3.5 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all"
                                   />
                                 </div>
-                                <div className="md:col-span-3">
+                                <div className="col-span-1 md:col-span-3">
                                   <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
                                     Sport
                                   </label>
@@ -1284,7 +1507,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                                     <option value="Golf">⛳ Golf</option>
                                   </select>
                                 </div>
-                                <div className="md:col-span-4">
+                                <div className="col-span-1 md:col-span-4">
                                   <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
                                     Status
                                   </label>

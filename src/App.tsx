@@ -484,6 +484,8 @@ export function App() {
             userCurrency={userPrefs.currency}
             onAddBet={handleAddBet}
             onNavigate={setActiveTab}
+            tagDefinitions={tagDefinitions}
+            onAddTagDefinition={handleAddTagDefinition}
           />
         );
       case 'entry':
