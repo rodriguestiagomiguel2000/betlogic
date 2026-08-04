@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Bet, BetLeg, Bankroll, Bookmaker, BetType, SportType, TagDefinition } from '../types';
 import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
-import { calculateLegsOdds, parseDateString } from '../utils/dateUtils';
+import { calculateLegsOdds, parseDateString, formatToLocalISOString, formatForDateTimeLocal } from '../utils/dateUtils';
 import { PlusCircle, Trash2, CheckCircle2, ArrowLeft, Zap, Sparkles, Plus } from 'lucide-react';
 
 interface ManualBetEntryProps {
@@ -53,7 +53,7 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
     }
   ]);
 
-  const { rawTotalOdds, effectiveTotalOdds } = calculateLegsOdds(legs);
+  const { rawTotalOdds, effectiveTotalOdds } = calculateLegsOdds(legs, betType);
   const totalOdds = effectiveTotalOdds;
   const potentialPayout = parseFloat(stake) * totalOdds;
 
@@ -153,8 +153,8 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
       ? legs.map((l) => (l.eventDate ? parseDateString(l.eventDate)?.getTime() || NaN : NaN)).filter((t) => !isNaN(t))
       : [];
     const calculatedBetDate = latestLegTimes.length > 0
-      ? new Date(Math.max(...latestLegTimes)).toISOString()
-      : new Date().toISOString();
+      ? formatToLocalISOString(new Date(Math.max(...latestLegTimes)))
+      : formatToLocalISOString(new Date());
 
     onAddBet({
       date: calculatedBetDate,
@@ -400,35 +400,121 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
 
                 <div className="space-y-2 pl-2 border-l-2 border-indigo-500/30">
                   {group.legs.map((leg) => (
-                    <div key={leg.id} className="bg-[#121b2e] p-2.5 rounded-lg border border-[#27314a] grid grid-cols-1 sm:grid-cols-4 gap-2 items-center">
-                      <input
-                        type="text"
-                        placeholder="Market (e.g. 1x2, Total Goals)"
-                        value={leg.market || ''}
-                        onChange={(e) => handleUpdateLeg(leg.id, 'market', e.target.value)}
-                        className="bg-[#171f33] border border-[#27314a] rounded px-2 py-1 text-xs text-white"
-                      />
-                      <input
-                        type="text"
-                        placeholder="Selection (e.g. Sirius, Over 2.5)"
-                        value={leg.selection}
-                        onChange={(e) => handleUpdateLeg(leg.id, 'selection', e.target.value)}
-                        className="bg-[#171f33] border border-[#27314a] rounded px-2 py-1 text-xs text-white font-semibold"
-                      />
-                      <input
-                        type="datetime-local"
-                        value={leg.eventDate || ''}
-                        onChange={(e) => handleUpdateLeg(leg.id, 'eventDate', e.target.value)}
-                        className="bg-[#171f33] border border-[#27314a] rounded px-2 py-1 text-xs text-white"
-                      />
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveLeg(leg.id)}
-                          className="text-xs text-rose-400 hover:text-rose-300 p-1"
+                    <div key={leg.id}>
+                      {/* Desktop view for builder sub-legs */}
+                      <div className="hidden lg:block overflow-x-auto w-full">
+                        <div
+                          className="bg-[#121b2e] p-3 rounded-lg border border-[#27314a] grid gap-4 items-end pb-1"
+                          style={{
+                            gridTemplateColumns: 'minmax(140px, 2fr) minmax(150px, 1.5fr) minmax(100px, 1.2fr) auto'
+                          }}
                         >
-                          <Trash2 size={13} />
-                        </button>
+                          <div>
+                            <label className="block text-[11px] text-[#8d90a0] mb-1 whitespace-nowrap">Selection</label>
+                            <input
+                              type="text"
+                              placeholder="Selection"
+                              value={leg.selection}
+                              onChange={(e) => handleUpdateLeg(leg.id, 'selection', e.target.value)}
+                              className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white font-semibold focus:outline-none focus:border-indigo-500"
+                              style={{ minWidth: '140px' }}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] text-[#8d90a0] mb-1 whitespace-nowrap">Event Date</label>
+                            <input
+                              type="datetime-local"
+                              value={formatForDateTimeLocal(leg.eventDate)}
+                              onChange={(e) => handleUpdateLeg(leg.id, 'eventDate', e.target.value)}
+                              className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                              style={{ minWidth: '150px' }}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] text-[#8d90a0] mb-1 whitespace-nowrap">Sport</label>
+                            <select
+                              value={leg.sport || ''}
+                              onChange={(e) => handleUpdateLeg(leg.id, 'sport', e.target.value as SportType | '')}
+                              className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                              style={{ minWidth: '100px' }}
+                            >
+                              <option value="">No Sport</option>
+                              <option value="Football">⚽ Football</option>
+                              <option value="Basketball">🏀 Basketball</option>
+                              <option value="Tennis">🎾 Tennis</option>
+                              <option value="Baseball">⚾ Baseball</option>
+                              <option value="Ice Hockey">🏒 Ice Hockey</option>
+                              <option value="Esports">🎮 Esports</option>
+                              <option value="MMA">🥊 MMA</option>
+                              <option value="Golf">⛳ Golf</option>
+                            </select>
+                          </div>
+                          <div className="flex items-center justify-center pb-1">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveLeg(leg.id)}
+                              className="text-xs text-rose-400 hover:text-rose-300 p-2 bg-rose-950/20 hover:bg-rose-950/40 border border-rose-900/40 rounded transition-colors"
+                              title="Remove leg"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Mobile view for builder sub-legs */}
+                      <div className="lg:hidden bg-[#121b2e] p-3 rounded-lg border border-[#27314a] flex flex-col gap-2.5">
+                        <div className="grid grid-cols-1 gap-3">
+                          <div>
+                            <label className="block text-[11px] text-[#8d90a0] mb-1">Selection</label>
+                            <input
+                              type="text"
+                              placeholder="Selection"
+                              value={leg.selection}
+                              onChange={(e) => handleUpdateLeg(leg.id, 'selection', e.target.value)}
+                              className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white font-semibold focus:outline-none"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 items-end">
+                          <div>
+                            <label className="block text-[11px] text-[#8d90a0] mb-1">Event Date</label>
+                            <input
+                              type="datetime-local"
+                              value={formatForDateTimeLocal(leg.eventDate)}
+                              onChange={(e) => handleUpdateLeg(leg.id, 'eventDate', e.target.value)}
+                              className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] text-[#8d90a0] mb-1">Sport</label>
+                            <select
+                              value={leg.sport || ''}
+                              onChange={(e) => handleUpdateLeg(leg.id, 'sport', e.target.value as SportType | '')}
+                              className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white focus:outline-none"
+                            >
+                              <option value="">No Sport</option>
+                              <option value="Football">⚽ Football</option>
+                              <option value="Basketball">🏀 Basketball</option>
+                              <option value="Tennis">🎾 Tennis</option>
+                              <option value="Baseball">⚾ Baseball</option>
+                              <option value="Ice Hockey">🏒 Ice Hockey</option>
+                              <option value="Esports">🎮 Esports</option>
+                              <option value="MMA">🥊 MMA</option>
+                              <option value="Golf">⛳ Golf</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="flex justify-end pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveLeg(leg.id)}
+                            className="text-xs text-rose-400 hover:text-rose-300 p-2 bg-rose-950/20 hover:bg-rose-950/40 border border-rose-900/40 rounded transition-colors"
+                            title="Remove leg"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -450,7 +536,7 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
                 key={leg.id}
                 className="bg-[#0b1326] p-4 rounded-xl border border-[#27314a] space-y-3"
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between border-b border-[#1b253b] pb-2">
                   <span className="text-xs font-mono font-bold text-[#b4c5ff]">Single Selection #{index + 1}</span>
                   {legs.length > 1 && (
                     <button
@@ -463,71 +549,81 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-                  <div>
-                    <label className="block text-[11px] text-[#8d90a0] mb-1">Sport</label>
-                    <select
-                      value={leg.sport}
-                      onChange={(e) => handleUpdateLeg(leg.id, 'sport', e.target.value as SportType)}
-                      className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white"
-                    >
-                      <option value="Football">Football</option>
-                      <option value="Basketball">Basketball</option>
-                      <option value="Tennis">Tennis</option>
-                      <option value="Baseball">Baseball</option>
-                      <option value="Ice Hockey">Ice Hockey</option>
-                      <option value="Esports">Esports</option>
-                      <option value="MMA">MMA</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] text-[#8d90a0] mb-1">Match / Event</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Arsenal vs Chelsea"
-                      value={leg.event}
-                      onChange={(e) => handleUpdateLeg(leg.id, 'event', e.target.value)}
-                      className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white"
-                      required
-                    />
-                  </div>
+                <div className="flex flex-col gap-3 lg:grid lg:grid-cols-[1.4fr_2.5fr_1.8fr_1.8fr_1fr] lg:gap-3 lg:items-end">
                   
-                  <div>
-                    <label className="block text-[11px] text-[#8d90a0] mb-1">Event Date (Optional)</label>
-                    <input
-                      type="datetime-local"
-                      value={leg.eventDate || ''}
-                      onChange={(e) => handleUpdateLeg(leg.id, 'eventDate', e.target.value)}
-                      className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white"
-                    />
+                  {/* Row 1 on narrow viewports */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 lg:contents">
+                    <div>
+                      <label className="block text-[11px] text-[#8d90a0] mb-1">Sport</label>
+                      <select
+                        value={leg.sport || ''}
+                        onChange={(e) => handleUpdateLeg(leg.id, 'sport', e.target.value as SportType | '')}
+                        className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                      >
+                        <option value="">No Sport</option>
+                        <option value="Football">⚽ Football</option>
+                        <option value="Basketball">🏀 Basketball</option>
+                        <option value="Tennis">🎾 Tennis</option>
+                        <option value="Baseball">⚾ Baseball</option>
+                        <option value="Ice Hockey">🏒 Ice Hockey</option>
+                        <option value="Esports">🎮 Esports</option>
+                        <option value="MMA">🥊 MMA</option>
+                        <option value="Golf">⛳ Golf</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] text-[#8d90a0] mb-1">Match / Event</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Arsenal vs Chelsea"
+                        value={leg.event}
+                        onChange={(e) => handleUpdateLeg(leg.id, 'event', e.target.value)}
+                        className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                        required
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="block text-[11px] text-[#8d90a0] mb-1">Event Date (Optional)</label>
+                      <input
+                        type="datetime-local"
+                        value={formatForDateTimeLocal(leg.eventDate)}
+                        onChange={(e) => handleUpdateLeg(leg.id, 'eventDate', e.target.value)}
+                        className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block text-[11px] text-[#8d90a0] mb-1">Market & Selection</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Over 2.5 Goals"
-                      value={leg.selection}
-                      onChange={(e) => handleUpdateLeg(leg.id, 'selection', e.target.value)}
-                      className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white"
-                      required
-                    />
+                  {/* Row 2 on narrow viewports */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:contents gap-3">
+                    <div>
+                      <label className="block text-[11px] text-[#8d90a0] mb-1">Market & Selection</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Over 2.5 Goals"
+                        value={leg.selection}
+                        onChange={(e) => handleUpdateLeg(leg.id, 'selection', e.target.value)}
+                        className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] text-[#8d90a0] mb-1">Decimal Odds</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="1.01"
+                        placeholder="e.g. 1.85"
+                        value={leg.odds}
+                        onChange={(e) => handleUpdateLeg(leg.id, 'odds', Number(e.target.value))}
+                        className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
+                        required
+                      />
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block text-[11px] text-[#8d90a0] mb-1">Decimal Odds</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="1.01"
-                      placeholder="e.g. 1.85"
-                      value={leg.odds}
-                      onChange={(e) => handleUpdateLeg(leg.id, 'odds', Number(e.target.value))}
-                      className="w-full bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white font-mono"
-                      required
-                    />
-                  </div>
                 </div>
               </div>
             ))}

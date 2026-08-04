@@ -194,7 +194,7 @@ export function App() {
       const existing = bets.find(b => b.id === betId);
       if (!existing) return;
       const updatedLegs = existing.legs.map(l => l.id === legId ? { ...l, status: newLegStatus } : l);
-      const effectiveOdds = calculateLegsOdds(updatedLegs).effectiveTotalOdds;
+      const effectiveOdds = calculateLegsOdds(updatedLegs, existing.type).effectiveTotalOdds;
       const anyLost = updatedLegs.some(l => l.status === 'lost');
       const allWon = updatedLegs.every(l => l.status === 'won');
       const allVoid = updatedLegs.every(l => l.status === 'void');

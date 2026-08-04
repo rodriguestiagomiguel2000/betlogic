@@ -50,7 +50,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     if (selectedBankroll !== 'all' && b.bankrollId !== selectedBankroll) return false;
     if (selectedStatus !== 'all' && b.status !== selectedStatus) return false;
     if (selectedSport !== 'all') {
-      const hasSport = b.legs.some((leg) => leg.sport.toLowerCase() === selectedSport.toLowerCase());
+      const hasSport = b.legs.some((leg) => leg.sport && leg.sport.toLowerCase() === selectedSport.toLowerCase());
       if (!hasSport) return false;
     }
     return true;

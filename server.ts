@@ -76,6 +76,17 @@ async function startServer() {
       const prompt = `Analyze this sports betting slip image and extract all structured fields matching the schema exactly.
 Infer values strictly from the slip. Ensure decimal odds format is returned. Output clean, valid JSON only.
 
+SPORT INFERENCE & RECOGNITION (CRITICAL):
+- You MUST infer the sport category for each selection and the overall bet using your trained knowledge of team names, player names, league names, and competitions visible on the slip.
+- Constrain the sport value to EXACTLY one of: "Football", "Basketball", "Tennis", "Baseball", "Ice Hockey", "Esports", "MMA", "Golf". Do NOT invent free-text sport names.
+- Examples of trained knowledge sport inference:
+  * Recognizing "Ferencvaros" or "Vasas FC" as Hungarian football clubs -> "Football"
+  * Recognizing "Deportivo Madryn", "Ciudad de Bolivar", "All Boys", "Mitre" as football clubs -> "Football"
+  * Recognizing "Warriors", "Bucks", "Lakers" as NBA basketball teams -> "Basketball"
+  * Recognizing "Federer", "Nadal", "Alcaraz", "Swiatek" as tennis players -> "Tennis"
+- For genuinely ambiguous, unknown, or lower-league team names that you do not recognize, you MUST NOT guess randomly. Only set it to "Football" if there is a clear visual indicator suggesting it (like a football/soccer ball icon next to the match, or a "1x2" or "Draw" market which is highly football-specific). Otherwise, leave the sport field null or omitted.
+- For multi-leg parlays where legs may span different sports, set the sport field on each leg in the 'legs' array individually using this inference. Set the top-level 'sport' to the sport of the first leg or the predominant sport on the slip.
+
 Special parsing & Extraction Rules:
 1. MULTI-LEG / PARLAY / MULTIPLE SLIPS (CRITICAL):
    - If the slip header says "Multiple", "Parlay", "Accumulator", "Combo", "Bet Builder", OR shows 2 or more distinct selection cards/rows:
@@ -151,7 +162,8 @@ Special parsing & Extraction Rules:
               },
               sport: {
                 type: Type.STRING,
-                description: 'Sport category (e.g. Football, Basketball, Tennis, Esports, MMA).',
+                enum: ['Football', 'Basketball', 'Tennis', 'Baseball', 'Ice Hockey', 'Esports', 'MMA', 'Golf'],
+                description: 'Sport category. MUST be exactly one of the specified enum values, or omit/leave null if unrecognizable.',
               },
               odds: {
                 type: Type.NUMBER,
@@ -210,6 +222,11 @@ Special parsing & Extraction Rules:
                     market: {
                       type: Type.STRING,
                       description: 'Wager market details (e.g. 1x2, Ambas Marcam, Match Result, [Team] para marcar em ambas as partes). MUST be extracted if visible.',
+                    },
+                    sport: {
+                      type: Type.STRING,
+                      enum: ['Football', 'Basketball', 'Tennis', 'Baseball', 'Ice Hockey', 'Esports', 'MMA', 'Golf'],
+                      description: 'Sport category for this specific leg. MUST be exactly one of the specified enum values, or omit/leave null if unrecognizable.',
                     },
                     odds_decimal: {
                       type: Type.NUMBER,

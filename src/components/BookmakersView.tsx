@@ -654,9 +654,9 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                           {formatBetDateTime(bet)}
                         </td>
                         <td className="p-3 font-bold text-[#b4c5ff] whitespace-nowrap">{bankName}</td>
-                        <td className="p-3 max-w-xs truncate">
+                        <td className="p-3 max-w-sm md:max-w-md">
                           {bet.legs.map((l, i) => (
-                            <div key={i} className="text-white font-medium truncate">
+                            <div key={i} className="text-white font-medium whitespace-normal break-words">
                               {formatLegSelection(l.selection, l.market)} <span className="text-[10px] text-[#8d90a0]">({l.event}{formatEventDate(l.eventDate) ? ` — ${formatEventDate(l.eventDate)}` : ''})</span>
                             </div>
                           ))}
@@ -942,16 +942,26 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                         let impactTxt = '';
                         if (rb.status === 'won') {
                           const profit = (rb.actualReturn ?? rb.potentialPayout) - rb.stake;
-                          impactTxt = `+${formatCurrency(profit, cardCur)} on ${bm.name} (Won Wager)`;
+                          impactTxt = `+${formatCurrency(profit, cardCur)} (Won)`;
                         } else if (rb.status === 'lost') {
-                          impactTxt = `-${formatCurrency(rb.stake, cardCur)} on ${bm.name} (Lost Wager)`;
+                          impactTxt = `-${formatCurrency(rb.stake, cardCur)} (Lost)`;
                         } else {
-                          impactTxt = `${rb.status.toUpperCase()} Wager (${formatCurrency(rb.stake, cardCur)})`;
+                          impactTxt = `${rb.status.toUpperCase()}`;
                         }
+                        const firstLeg = rb.legs[0];
                         return (
-                          <div key={rb.id} className="text-[10px] flex items-center justify-between text-[#dae2fd]">
-                            <span className="truncate max-w-[170px]">{formatLegSelection(rb.legs[0]?.selection, rb.legs[0]?.market) || 'Bet'}</span>
-                            <span className={`font-mono font-bold ${rb.status === 'won' ? 'text-[#4edea3]' : rb.status === 'lost' ? 'text-[#ffb3ad]' : 'text-amber-400'}`}>
+                          <div key={rb.id} className="text-[10px] flex items-start justify-between gap-3 text-[#dae2fd] border-b border-[#27314a]/30 pb-2 pt-1.5 last:border-0 last:pb-0 last:pt-0">
+                            <div className="min-w-0 flex-1">
+                              {firstLeg && (
+                                <span className="text-[#8d90a0] text-[9px] block whitespace-normal break-words leading-tight">
+                                  {firstLeg.event} {firstLeg.market ? `• ${firstLeg.market}` : ''}
+                                </span>
+                              )}
+                              <span className="text-white font-bold block whitespace-normal break-words text-[11px] mt-0.5">
+                                Selection: <span className="text-[#2563eb]">{firstLeg ? formatLegSelection(firstLeg.selection, firstLeg.market) : 'Bet'}</span>
+                              </span>
+                            </div>
+                            <span className={`font-mono font-bold shrink-0 text-right text-[11px] mt-0.5 ${rb.status === 'won' ? 'text-[#4edea3]' : rb.status === 'lost' ? 'text-[#ffb3ad]' : 'text-amber-400'}`}>
                               {impactTxt}
                             </span>
                           </div>

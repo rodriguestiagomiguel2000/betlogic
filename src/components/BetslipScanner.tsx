@@ -20,7 +20,7 @@ import {
   Key
 } from 'lucide-react';
 import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
-import { formatLegSelection, calculateLegsOdds, parseDateString } from '../utils/dateUtils';
+import { formatLegSelection, calculateLegsOdds, parseDateString, formatToLocalISOString, formatForDateTimeLocal } from '../utils/dateUtils';
 
 interface BetslipScannerProps {
   bankrolls: Bankroll[];
@@ -90,7 +90,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     }
   ]);
 
-  const { rawTotalOdds, effectiveTotalOdds } = calculateLegsOdds(legs);
+  const { rawTotalOdds, effectiveTotalOdds } = calculateLegsOdds(legs, betType);
   const totalOdds = effectiveTotalOdds;
   const potentialPayout = stake * effectiveTotalOdds;
   const hasVoidLegs = legs.some((l) => l.status === 'void');
@@ -320,19 +320,26 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     const idStr = parsed.bet_id ? ` [Ref: ${parsed.bet_id}]` : '';
     setNotes(`Scanned via Gemini 3.1 Flash Lite on ${dateStr}${idStr}`);
 
-    // Detect Sport
-    let sport: SportType = 'Football';
-    const sportSource = parsed.sport || (parsed.legs && parsed.legs[0] && parsed.legs[0].sport) || '';
-    if (sportSource) {
-      const sLower = sportSource.toLowerCase();
-      if (sLower.includes('basket')) sport = 'Basketball';
-      else if (sLower.includes('tennis')) sport = 'Tennis';
-      else if (sLower.includes('baseball')) sport = 'Baseball';
-      else if (sLower.includes('hockey')) sport = 'Ice Hockey';
-      else if (sLower.includes('esport')) sport = 'Esports';
-      else if (sLower.includes('mma') || sLower.includes('ufc')) sport = 'MMA';
-      else if (sLower.includes('golf')) sport = 'Golf';
-    }
+    // Detect Sport Helper
+    const parseSportStr = (src: any): SportType | '' => {
+      if (!src) return '';
+      const sLower = String(src).toLowerCase();
+      if (sLower.includes('basket')) return 'Basketball';
+      if (sLower.includes('tennis')) return 'Tennis';
+      if (sLower.includes('baseball')) return 'Baseball';
+      if (sLower.includes('hockey')) return 'Ice Hockey';
+      if (sLower.includes('esport')) return 'Esports';
+      if (sLower.includes('mma') || sLower.includes('ufc')) return 'MMA';
+      if (sLower.includes('golf')) return 'Golf';
+      if (sLower.includes('foot') || sLower.includes('soccer')) return 'Football';
+      
+      const exactList: SportType[] = ['Football', 'Basketball', 'Tennis', 'Baseball', 'Ice Hockey', 'Esports', 'MMA', 'Golf'];
+      const exactMatch = exactList.find((m) => m.toLowerCase() === sLower);
+      if (exactMatch) return exactMatch;
+      return '';
+    };
+
+    const overallSport = parseSportStr(parsed.sport || '');
 
     // Legs
     if (Array.isArray(parsed.legs) && parsed.legs.length > 0) {
@@ -360,10 +367,11 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
         }
 
         const rawLegDate = leg.event_date || leg.eventDate || parsed.placed_at || undefined;
+        const legSport = parseSportStr(leg.sport) || overallSport || '';
 
         return {
           id: `scanned-leg-${Date.now()}-${idx}`,
-          sport,
+          sport: legSport,
           event: legEvent,
           market: legMarket,
           selection: legSelection,
@@ -397,7 +405,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
       // Fallback: If legs array was omitted or empty, build a single leg from top-level fields
       const singleLeg: BetLeg = {
         id: `scanned-leg-${Date.now()}-0`,
-        sport,
+        sport: overallSport,
         event: parsed.event || 'Match Event',
         market: parsed.market || 'Match Odds',
         selection: parsed.selection || parsed.team || parsed.event || 'Selection',
@@ -531,8 +539,8 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
       ? legs.map((l) => (l.eventDate ? parseDateString(l.eventDate)?.getTime() || NaN : NaN)).filter((t) => !isNaN(t))
       : [];
     const calculatedBetDate = latestLegTimes.length > 0
-      ? new Date(Math.max(...latestLegTimes)).toISOString()
-      : new Date().toISOString();
+      ? formatToLocalISOString(new Date(Math.max(...latestLegTimes)))
+      : formatToLocalISOString(new Date());
 
     onAddBet({
       date: calculatedBetDate,
@@ -559,7 +567,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   const activeBankroll = bankrolls.find((b) => b.id === selectedBankroll);
 
   return (
-    <div className="p-4 md:p-6 space-y-6 max-w-5xl mx-auto pb-24 md:pb-12">
+    <div className="p-6 md:p-8 space-y-8 max-w-7xl mx-auto pb-24 md:pb-12">
       {/* Header */}
       <div className="bg-[#171f33] p-5 rounded-xl border border-[#27314a]">
         <div className="flex items-center justify-between flex-wrap gap-2">
@@ -882,9 +890,9 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
 
       {/* Scanned Results & Verification Editor */}
       {scanningState === 'scanned' && (
-        <div className="space-y-6">
+        <div className="space-y-8">
           {/* Success Notification Banner */}
-          <div className="bg-[#00a572]/10 border border-[#00a572]/30 p-4 rounded-xl flex items-center justify-between flex-wrap gap-2 text-xs">
+          <div className="bg-[#00a572]/10 border border-[#00a572]/30 p-5 rounded-xl flex items-center justify-between flex-wrap gap-3 text-xs">
             <div className="flex items-center gap-2.5 text-[#4edea3] font-semibold">
               <CheckCircle2 size={18} />
               <span>Gemini OCR Extracted Successfully! Review & edit extracted wagers below.</span>
@@ -894,10 +902,10 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
             </span>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Left Column: Image & Confidence */}
-            <div className="space-y-4">
-              <div className="bg-[#171f33] p-4 rounded-xl border border-[#27314a] space-y-3">
+            <div className="space-y-5">
+              <div className="bg-[#171f33] p-6 rounded-xl border border-[#27314a] space-y-4">
                 <div className="flex items-center justify-between text-xs text-[#8d90a0]">
                   <span className="font-semibold text-white">Scanned Image</span>
                   <span className="text-[#4edea3] flex items-center gap-1 font-medium">
@@ -959,14 +967,14 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
             </div>
 
             {/* Right Column: Editable Metadata & Legs */}
-            <div className="lg:col-span-2 space-y-5">
-              <div className="bg-[#171f33] p-5 rounded-xl border border-[#27314a] space-y-4">
-                <h3 className="text-base font-bold text-white border-b border-[#27314a] pb-3 flex items-center justify-between">
+            <div className="lg:col-span-2 space-y-8">
+              <div className="bg-[#171f33] p-8 rounded-xl border border-[#27314a] space-y-6">
+                <h3 className="text-base font-bold text-white border-b border-[#27314a] pb-4 flex items-center justify-between">
                   <span>Extracted Betslip Parameters</span>
                   <span className="text-xs font-normal text-[#8d90a0]">Edit any field before saving</span>
                 </h3>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                   <div>
                     <label className="block text-xs text-[#8d90a0] font-medium mb-1">Bet Classification</label>
                     <select
@@ -1156,9 +1164,9 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                     ).map((group) => (
                       <div
                         key={group.builderId}
-                        className="bg-[#0b1326] p-3.5 rounded-xl border border-indigo-500/40 space-y-3"
+                        className="bg-[#0b1326] p-5 rounded-xl border border-indigo-500/40 space-y-4 shadow-lg"
                       >
-                        <div className="flex flex-wrap items-center justify-between gap-2 bg-[#172036] p-2.5 rounded-lg border border-indigo-500/30">
+                        <div className="flex flex-wrap items-center justify-between gap-3 bg-[#172036] p-3 rounded-lg border border-indigo-500/30">
                           <div className="flex items-center gap-2 flex-1 min-w-[220px]">
                             <span className="bg-indigo-600/30 text-indigo-300 border border-indigo-500/50 text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 shrink-0">
                               <Sparkles size={12} /> Bet Builder
@@ -1196,54 +1204,109 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                         </div>
 
                         {/* Sub-legs in this Bet Builder */}
-                        <div className="space-y-2 pl-2 border-l-2 border-indigo-500/30">
-                          {group.legs.map((leg) => (
-                            <div key={leg.id} className="bg-[#121b2e] p-2.5 rounded-lg border border-[#27314a] grid grid-cols-1 sm:grid-cols-5 gap-2 items-center">
-                              <input
-                                type="text"
-                                placeholder="Market (e.g. 1x2, Total Goals)"
-                                value={leg.market || ''}
-                                onChange={(e) => handleUpdateLeg(leg.id, 'market', e.target.value)}
-                                className="bg-[#171f33] border border-[#27314a] rounded px-2 py-1 text-xs text-white"
-                              />
-                              <input
-                                type="text"
-                                placeholder="Selection (e.g. Sirius, Over 2.5)"
-                                value={leg.selection}
-                                onChange={(e) => handleUpdateLeg(leg.id, 'selection', e.target.value)}
-                                className="bg-[#171f33] border border-[#27314a] rounded px-2 py-1 text-xs text-white font-semibold"
-                              />
-                              <input
-                                type="datetime-local"
-                                value={leg.eventDate || ''}
-                                onChange={(e) => handleUpdateLeg(leg.id, 'eventDate', e.target.value)}
-                                className="bg-[#171f33] border border-[#27314a] rounded px-2 py-1 text-xs text-white"
-                              />
-                              <select
-                                value={leg.status || 'pending'}
-                                onChange={(e) => handleUpdateLeg(leg.id, 'status', e.target.value as BetStatus)}
-                                className={`border rounded px-2 py-1 text-xs font-bold uppercase tracking-wide cursor-pointer ${
-                                  leg.status === 'won'
-                                    ? 'bg-[#005236] text-[#4edea3] border-[#008f5d]'
-                                    : leg.status === 'lost'
-                                    ? 'bg-[#601410] text-[#ffb3ad] border-[#93231e]'
-                                    : leg.status === 'void'
-                                    ? 'bg-gray-800 text-gray-300 border-gray-600'
-                                    : 'bg-[#171f33] text-amber-400 border-[#27314a]'
-                                }`}
-                              >
-                                <option value="pending">⌛ Pending</option>
-                                <option value="won">✓ Won</option>
-                                <option value="lost">✗ Lost</option>
-                                <option value="void">⊘ Void</option>
-                              </select>
-                              <div className="flex items-center justify-end gap-1">
+                        <div className="space-y-4 pl-3 border-l-2 border-indigo-500/30">
+                          {group.legs.map((leg, sIdx) => (
+                            <div key={leg.id} className="bg-[#121b2e] p-5 rounded-xl border border-[#27314a]/80 shadow-md space-y-3.5 hover:border-indigo-500/30 transition-colors">
+                              {/* Mini-Card Header */}
+                              <div className="flex items-center justify-between border-b border-[#27314a]/40 pb-2">
+                                <span className="text-[10px] font-mono text-indigo-300 font-semibold uppercase tracking-wider">
+                                  Selection #{sIdx + 1}
+                                </span>
                                 <button
+                                  type="button"
                                   onClick={() => handleRemoveLeg(leg.id)}
-                                  className="text-xs text-rose-400 hover:text-rose-300 p-1"
+                                  className="text-xs text-rose-400 hover:text-rose-300 p-1.5 bg-rose-950/10 hover:bg-rose-950/30 border border-rose-900/20 rounded transition-all cursor-pointer flex items-center gap-1 font-semibold"
+                                  title="Remove selection"
                                 >
-                                  <Trash2 size={13} />
+                                  <Trash2 size={12} />
+                                  <span className="text-[10px]">Remove Selection</span>
                                 </button>
+                              </div>
+
+                              {/* Row 1: Primary Info (Market & Selection) */}
+                              <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                                <div className="md:col-span-6">
+                                  <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
+                                    Market
+                                  </label>
+                                  <input
+                                    type="text"
+                                    placeholder="Market (e.g. 1x2)"
+                                    value={leg.market || ''}
+                                    onChange={(e) => handleUpdateLeg(leg.id, 'market', e.target.value)}
+                                    className="w-full bg-[#171f33] border border-[#27314a] text-white rounded-lg px-3.5 py-2 text-xs font-medium placeholder-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all"
+                                  />
+                                </div>
+                                <div className="md:col-span-6">
+                                  <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
+                                    Selection Pick
+                                  </label>
+                                  <input
+                                    type="text"
+                                    placeholder="Selection (e.g. Over 2.5)"
+                                    value={leg.selection}
+                                    onChange={(e) => handleUpdateLeg(leg.id, 'selection', e.target.value)}
+                                    className="w-full bg-[#171f33] border border-[#27314a] text-white rounded-lg px-3.5 py-2 text-xs font-bold placeholder-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Row 2: Metadata & Controls (Date, Sport, Status) */}
+                              <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-1">
+                                <div className="md:col-span-5">
+                                  <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
+                                    Event Date & Time
+                                  </label>
+                                  <input
+                                    type="datetime-local"
+                                    value={formatForDateTimeLocal(leg.eventDate)}
+                                    onChange={(e) => handleUpdateLeg(leg.id, 'eventDate', e.target.value)}
+                                    className="w-full bg-[#171f33] border border-[#27314a] text-white rounded-lg px-3.5 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all"
+                                  />
+                                </div>
+                                <div className="md:col-span-3">
+                                  <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
+                                    Sport
+                                  </label>
+                                  <select
+                                    value={leg.sport || ''}
+                                    onChange={(e) => handleUpdateLeg(leg.id, 'sport', e.target.value as SportType | '')}
+                                    className="w-full bg-[#171f33] border border-[#27314a] text-white rounded-lg px-3.5 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all cursor-pointer"
+                                  >
+                                    <option value="">No Sport</option>
+                                    <option value="Football">⚽ Football</option>
+                                    <option value="Basketball">🏀 Basketball</option>
+                                    <option value="Tennis">🎾 Tennis</option>
+                                    <option value="Baseball">⚾ Baseball</option>
+                                    <option value="Ice Hockey">🏒 Ice Hockey</option>
+                                    <option value="Esports">🎮 Esports</option>
+                                    <option value="MMA">🥊 MMA</option>
+                                    <option value="Golf">⛳ Golf</option>
+                                  </select>
+                                </div>
+                                <div className="md:col-span-4">
+                                  <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
+                                    Status
+                                  </label>
+                                  <select
+                                    value={leg.status || 'pending'}
+                                    onChange={(e) => handleUpdateLeg(leg.id, 'status', e.target.value as BetStatus)}
+                                    className={`w-full border rounded-lg px-3.5 py-2 text-xs font-bold uppercase tracking-wide cursor-pointer focus:outline-none transition-all ${
+                                      leg.status === 'won'
+                                        ? 'bg-[#005236] text-[#4edea3] border-[#008f5d]'
+                                        : leg.status === 'lost'
+                                        ? 'bg-[#601410] text-[#ffb3ad] border-[#93231e]'
+                                        : leg.status === 'void'
+                                        ? 'bg-gray-800 text-gray-300 border-gray-600'
+                                        : 'bg-[#171f33] text-amber-400 border-[#27314a]'
+                                    }`}
+                                  >
+                                    <option value="pending">⌛ Pending</option>
+                                    <option value="won">✓ Won</option>
+                                    <option value="lost">✗ Lost</option>
+                                    <option value="void">⊘ Void</option>
+                                  </select>
+                                </div>
                               </div>
                             </div>
                           ))}
@@ -1262,72 +1325,138 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                     {legs.filter((l) => !l.builderId).map((leg, idx) => (
                       <div
                         key={leg.id}
-                        className="bg-[#0b1326] p-3 rounded-lg border border-[#27314a] space-y-2"
+                        className="bg-[#0b1326] p-5 rounded-xl border border-[#27314a] shadow-xl space-y-4 hover:border-indigo-500/40 transition-colors"
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-mono text-[#2563eb] font-bold">Single Leg #{idx + 1}</span>
+                        {/* Card Header */}
+                        <div className="flex items-center justify-between border-b border-[#27314a]/60 pb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-xs font-bold px-2.5 py-1 rounded">
+                              Single Leg #{idx + 1}
+                            </span>
+                          </div>
                           <button
                             onClick={() => handleRemoveLeg(leg.id)}
-                            className="text-xs text-rose-400 hover:text-rose-300 p-1"
+                            className="text-xs text-rose-400 hover:text-rose-300 p-2 bg-rose-950/20 hover:bg-rose-950/40 border border-rose-900/40 rounded-lg transition-all cursor-pointer flex items-center gap-1 font-semibold"
+                            title="Remove selection"
                           >
-                            <Trash2 size={14} />
+                            <Trash2 size={13} />
+                            <span>Delete Leg</span>
                           </button>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-6 gap-2">
-                          <input
-                            type="text"
-                            placeholder="Event (e.g. Real Madrid vs Barcelona)"
-                            value={leg.event}
-                            onChange={(e) => handleUpdateLeg(leg.id, 'event', e.target.value)}
-                            className="bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white"
-                          />
-                          <input
-                            type="datetime-local"
-                            value={leg.eventDate || ''}
-                            onChange={(e) => handleUpdateLeg(leg.id, 'eventDate', e.target.value)}
-                            className="bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white"
-                          />
-                          <input
-                            type="text"
-                            placeholder="Market (e.g. BTTS, 1x2)"
-                            value={leg.market || ''}
-                            onChange={(e) => handleUpdateLeg(leg.id, 'market', e.target.value)}
-                            className="bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white"
-                          />
-                          <input
-                            type="text"
-                            placeholder="Selection (e.g. Over 2.5 Goals, Sim)"
-                            value={leg.selection}
-                            onChange={(e) => handleUpdateLeg(leg.id, 'selection', e.target.value)}
-                            className="bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white"
-                          />
-                          <input
-                            type="number"
-                            step="0.01"
-                            placeholder="Decimal Odds"
-                            value={leg.odds}
-                            onChange={(e) => handleUpdateLeg(leg.id, 'odds', Number(e.target.value))}
-                            className="bg-[#171f33] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white font-mono"
-                          />
-                          <select
-                            value={leg.status || 'pending'}
-                            onChange={(e) => handleUpdateLeg(leg.id, 'status', e.target.value as BetStatus)}
-                            className={`border rounded px-2 py-1.5 text-xs font-bold uppercase tracking-wide cursor-pointer ${
-                              leg.status === 'won'
-                                ? 'bg-[#005236] text-[#4edea3] border-[#008f5d]'
-                                : leg.status === 'lost'
-                                ? 'bg-[#601410] text-[#ffb3ad] border-[#93231e]'
-                                : leg.status === 'void'
-                                ? 'bg-gray-800 text-gray-300 border-gray-600'
-                                : 'bg-[#171f33] text-amber-400 border-[#27314a]'
-                            }`}
-                          >
-                            <option value="pending">⌛ Pending</option>
-                            <option value="won">✓ Won</option>
-                            <option value="lost">✗ Lost</option>
-                            <option value="void">⊘ Void</option>
-                          </select>
+                        {/* Row 1: Primary Info (Match / Event & Market) */}
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                          <div className="md:col-span-7">
+                            <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
+                              Match / Event Name
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="Event (e.g. Real Madrid vs Barcelona)"
+                              value={leg.event}
+                              onChange={(e) => handleUpdateLeg(leg.id, 'event', e.target.value)}
+                              className="w-full bg-[#171f33] border border-[#27314a] text-white rounded-lg px-3.5 py-2 text-xs font-medium placeholder-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all"
+                            />
+                          </div>
+                          <div className="md:col-span-5">
+                            <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
+                              Market
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="Market (e.g. Total Goals)"
+                              value={leg.market || ''}
+                              onChange={(e) => handleUpdateLeg(leg.id, 'market', e.target.value)}
+                              className="w-full bg-[#171f33] border border-[#27314a] text-white rounded-lg px-3.5 py-2 text-xs font-medium placeholder-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Row 2: Pick Details (Selection & Odds) */}
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                          <div className="md:col-span-8">
+                            <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
+                              Selection Pick
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="Selection (e.g. Over 2.5)"
+                              value={leg.selection}
+                              onChange={(e) => handleUpdateLeg(leg.id, 'selection', e.target.value)}
+                              className="w-full bg-[#171f33] border border-[#27314a] text-white rounded-lg px-3.5 py-2 text-xs font-bold placeholder-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all"
+                            />
+                          </div>
+                          <div className="md:col-span-4">
+                            <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
+                              Odds
+                            </label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              placeholder="Odds"
+                              value={leg.odds}
+                              onChange={(e) => handleUpdateLeg(leg.id, 'odds', Number(e.target.value))}
+                              className="w-full bg-[#171f33] border border-[#27314a] text-white rounded-lg px-3.5 py-2 text-xs font-mono font-bold focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Row 3: Metadata & Controls */}
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-1">
+                          <div className="md:col-span-5">
+                            <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
+                              Event Date & Time
+                            </label>
+                            <input
+                              type="datetime-local"
+                              value={formatForDateTimeLocal(leg.eventDate)}
+                              onChange={(e) => handleUpdateLeg(leg.id, 'eventDate', e.target.value)}
+                              className="w-full bg-[#171f33] border border-[#27314a] text-white rounded-lg px-3.5 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all"
+                            />
+                          </div>
+                          <div className="md:col-span-3">
+                            <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
+                              Sport
+                            </label>
+                            <select
+                              value={leg.sport || ''}
+                              onChange={(e) => handleUpdateLeg(leg.id, 'sport', e.target.value as SportType | '')}
+                              className="w-full bg-[#171f33] border border-[#27314a] text-white rounded-lg px-3.5 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all cursor-pointer"
+                            >
+                              <option value="">No Sport</option>
+                              <option value="Football">⚽ Football</option>
+                              <option value="Basketball">🏀 Basketball</option>
+                              <option value="Tennis">🎾 Tennis</option>
+                              <option value="Baseball">⚾ Baseball</option>
+                              <option value="Ice Hockey">🏒 Ice Hockey</option>
+                              <option value="Esports">🎮 Esports</option>
+                              <option value="MMA">🥊 MMA</option>
+                              <option value="Golf">⛳ Golf</option>
+                            </select>
+                          </div>
+                          <div className="md:col-span-4">
+                            <label className="block text-[11px] font-bold tracking-wider text-[#8d90a0] uppercase mb-1.5">
+                              Status
+                            </label>
+                            <select
+                              value={leg.status || 'pending'}
+                              onChange={(e) => handleUpdateLeg(leg.id, 'status', e.target.value as BetStatus)}
+                              className={`w-full border rounded-lg px-3.5 py-2 text-xs font-bold uppercase tracking-wide cursor-pointer focus:outline-none transition-all ${
+                                leg.status === 'won'
+                                  ? 'bg-[#005236] text-[#4edea3] border-[#008f5d]'
+                                  : leg.status === 'lost'
+                                  ? 'bg-[#601410] text-[#ffb3ad] border-[#93231e]'
+                                  : leg.status === 'void'
+                                  ? 'bg-gray-800 text-gray-300 border-gray-600'
+                                  : 'bg-[#171f33] text-amber-400 border-[#27314a]'
+                              }`}
+                            >
+                              <option value="pending">⌛ Pending</option>
+                              <option value="won">✓ Won</option>
+                              <option value="lost">✗ Lost</option>
+                              <option value="void">⊘ Void</option>
+                            </select>
+                          </div>
                         </div>
                       </div>
                     ))}

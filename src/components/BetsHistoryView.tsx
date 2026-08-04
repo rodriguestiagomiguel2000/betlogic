@@ -717,11 +717,11 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                         </td>
 
                         {/* Event / Selection */}
-                        <td className="p-3 max-w-xs">
+                        <td className="p-3 max-w-sm md:max-w-md">
                           {bet.legs.length === 1 ? (
                             <div>
-                              <div className="font-bold text-white truncate">{mainLeg?.event}</div>
-                              <div className="text-[#8d90a0] text-[11px] truncate">
+                              <div className="font-bold text-white whitespace-normal break-words">{mainLeg?.event}</div>
+                              <div className="text-[#8d90a0] text-[11px] whitespace-normal break-words">
                                 <span className="text-[#2563eb] font-semibold">{formatLegSelection(mainLeg?.selection, mainLeg?.market)}</span> • {mainLeg?.market}
                               </div>
                             </div>
@@ -731,8 +731,8 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                                 <span>{bet.legs.length}-Leg Multi Parlay</span>
                                 <span className="text-[10px] text-[#8d90a0]">({mainLeg?.sport})</span>
                               </div>
-                              <div className="text-[#8d90a0] text-[11px] truncate">
-                                First leg: {formatLegSelection(mainLeg?.selection, mainLeg?.market)} ({mainLeg?.event})
+                              <div className="text-[#8d90a0] text-[11px] whitespace-normal break-words">
+                                First leg: <span className="text-white font-medium">{formatLegSelection(mainLeg?.selection, mainLeg?.market)}</span> ({mainLeg?.event})
                               </div>
                             </div>
                           )}
@@ -855,13 +855,13 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                                       <span>Leg #{idx + 1} • {leg.sport}</span>
                                       <span className="font-mono font-bold text-white">@{formatOdds(leg.odds)}</span>
                                     </div>
-                                    <div className="font-bold text-white text-xs truncate">
+                                    <div className="font-bold text-white text-xs whitespace-normal break-words">
                                       {leg.event}
                                       {formatEventDate(leg.eventDate) ? (
                                         <span className="text-[10px] font-normal text-[#8d90a0] ml-1.5">— {formatEventDate(leg.eventDate)}</span>
                                       ) : null}
                                     </div>
-                                    <div className="text-[#2563eb] font-semibold text-[11px] truncate">
+                                    <div className="text-[#2563eb] font-semibold text-[11px] whitespace-normal break-words">
                                       {formatLegSelection(leg.selection, leg.market)} <span className="text-[#8d90a0]">({leg.market})</span>
                                     </div>
                                     <div className="flex items-center justify-between border-t border-[#27314a] pt-1.5 mt-1 text-[10px]">
@@ -981,27 +981,41 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                   </div>
 
                   {/* Legs breakdown */}
-                  <div className="space-y-1.5 pt-1">
+                  <div className="space-y-2 pt-1.5">
                     {bet.legs.map((leg, idx) => (
-                      <div key={leg.id || idx} className="bg-[#0b1326] p-2 rounded border border-[#27314a] text-xs flex items-center justify-between gap-2">
-                        <div className="truncate">
-                          <span className="font-bold text-white text-[11px]">{formatLegSelection(leg.selection, leg.market)}</span>
-                          <span className="text-[#8d90a0] text-[10px] block truncate">
-                            {leg.event}
-                            {formatEventDate(leg.eventDate) ? ` — ${formatEventDate(leg.eventDate)}` : ''} (@{formatOdds(leg.odds)})
-                          </span>
+                      <div key={leg.id || idx} className="bg-[#0b1326] p-3 rounded-lg border border-[#27314a] text-xs flex items-center justify-between gap-3 shadow-sm">
+                        <div className="min-w-0 flex-1 space-y-1">
+                          {/* Event & Market Context Header */}
+                          <div className="text-[#8d90a0] text-[10px] leading-relaxed font-medium whitespace-normal break-words">
+                            <span className="text-slate-300 font-semibold">{leg.event}</span>
+                            {leg.market ? <span className="text-[#8d90a0]"> • {leg.market}</span> : ''}
+                          </div>
+                          
+                          {/* Selection value block */}
+                          <div className="whitespace-normal break-words text-xs">
+                            <span className="text-slate-400">Selection: </span>
+                            <span className="font-extrabold text-[#4edea3] text-[13px]">{formatLegSelection(leg.selection, leg.market)}</span>
+                            {leg.odds ? <span className="text-[#8d90a0] font-mono text-[10px] ml-1.5">(@{formatOdds(leg.odds)})</span> : ''}
+                          </div>
+
+                          {/* Date details if any */}
+                          {formatEventDate(leg.eventDate) && (
+                            <div className="text-[9px] text-[#8d90a0]">
+                              Event Date: {formatEventDate(leg.eventDate)}
+                            </div>
+                          )}
                         </div>
                         <select
                           value={leg.status || 'pending'}
                           onChange={(e) => onUpdateBetLegStatus?.(bet.id, leg.id, e.target.value as BetStatus)}
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider cursor-pointer ${
+                          className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider cursor-pointer border shrink-0 ${
                             leg.status === 'won'
-                              ? 'bg-[#005236] text-[#4edea3] border border-[#008f5d]'
+                              ? 'bg-[#005236] text-[#4edea3] border-[#008f5d]'
                               : leg.status === 'lost'
-                              ? 'bg-[#601410] text-[#ffb3ad] border border-[#93231e]'
+                              ? 'bg-[#601410] text-[#ffb3ad] border-[#93231e]'
                               : leg.status === 'void'
-                              ? 'bg-gray-800 text-gray-300 border border-gray-600'
-                              : 'bg-[#171f33] text-amber-400 border border-amber-700'
+                              ? 'bg-gray-800 text-gray-300 border-gray-600'
+                              : 'bg-[#171f33] text-amber-400 border-amber-700'
                           }`}
                         >
                           <option value="pending">Pending</option>

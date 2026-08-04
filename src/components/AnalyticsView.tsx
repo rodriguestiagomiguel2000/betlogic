@@ -98,18 +98,30 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
   const sportStatsMap: Record<string, { staked: number; returned: number; wins: number; total: number }> = {};
   bets.forEach((bet) => {
     if (bet.status !== 'won' && bet.status !== 'lost' && bet.status !== 'cashout') return;
-    const sport = bet.legs[0]?.sport || 'Football';
-    if (!sportStatsMap[sport]) {
-      sportStatsMap[sport] = { staked: 0, returned: 0, wins: 0, total: 0 };
-    }
-    sportStatsMap[sport].staked += bet.stake;
-    if (bet.status === 'won') {
-      sportStatsMap[sport].returned += bet.actualReturn || bet.potentialPayout;
-      sportStatsMap[sport].wins += 1;
-    } else if (bet.status === 'cashout') {
-      sportStatsMap[sport].returned += bet.actualReturn || 0;
-    }
-    sportStatsMap[sport].total += 1;
+    
+    const validLegs = bet.legs && bet.legs.length > 0 ? bet.legs : [{ sport: 'Football' }];
+    const legCount = validLegs.length;
+    
+    validLegs.forEach((leg) => {
+      const sport = leg.sport || 'Football';
+      if (!sportStatsMap[sport]) {
+        sportStatsMap[sport] = { staked: 0, returned: 0, wins: 0, total: 0 };
+      }
+      
+      const proportion = 1 / legCount;
+      sportStatsMap[sport].staked += bet.stake * proportion;
+      
+      let returnedAmt = 0;
+      if (bet.status === 'won') {
+        returnedAmt = (bet.actualReturn || bet.potentialPayout) * proportion;
+        sportStatsMap[sport].wins += proportion;
+      } else if (bet.status === 'cashout') {
+        returnedAmt = (bet.actualReturn || 0) * proportion;
+      }
+      
+      sportStatsMap[sport].returned += returnedAmt;
+      sportStatsMap[sport].total += proportion;
+    });
   });
 
   const sportRoiData = Object.keys(sportStatsMap).map((sport) => {
@@ -119,11 +131,11 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
     const winRate = data.total > 0 ? (data.wins / data.total) * 100 : 0;
     return {
       sport,
-      staked: data.staked,
-      profit,
+      staked: Number(data.staked.toFixed(2)),
+      profit: Number(profit.toFixed(2)),
       roi: Number(roi.toFixed(2)),
       winRate: Number(winRate.toFixed(1)),
-      total: data.total
+      total: Number(data.total.toFixed(1))
     };
   });
 

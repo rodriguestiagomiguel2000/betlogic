@@ -4,7 +4,7 @@ export type SportType = 'Football' | 'Basketball' | 'Tennis' | 'Baseball' | 'Ice
 
 export interface BetLeg {
   id: string;
-  sport: SportType;
+  sport?: SportType | '';
   league?: string;
   event: string;
   market: string;

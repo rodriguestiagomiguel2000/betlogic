@@ -164,9 +164,22 @@ export function formatLegSelection(selection?: string, market?: string): string 
  * Calculates raw and effective total odds for a list of bet legs.
  * Correctly accounts for Bet Builder groups where multiple sub-selections share a single builder odds value.
  */
-export function calculateLegsOdds(legs: BetLeg[]): { rawTotalOdds: number; effectiveTotalOdds: number } {
+export function calculateLegsOdds(legs: BetLeg[], betType?: string): { rawTotalOdds: number; effectiveTotalOdds: number } {
   if (!legs || legs.length === 0) {
     return { rawTotalOdds: 1.0, effectiveTotalOdds: 1.0 };
+  }
+
+  // If the bet type is a bet_builder, the legs form a single combined unit.
+  // We do not multiply individual selections' odds together.
+  if (betType === 'bet_builder') {
+    const groupOdds = legs[0]?.builderOdds || legs[0]?.odds || 1.0;
+    const allVoid = legs.every((l) => l.status === 'void');
+    const effectiveOdds = allVoid ? 1.0 : groupOdds;
+
+    return {
+      rawTotalOdds: Number(groupOdds.toFixed(3)),
+      effectiveTotalOdds: Number(effectiveOdds.toFixed(3)),
+    };
   }
 
   const builderGroups: Record<string, { legs: BetLeg[]; odds: number }> = {};
@@ -215,4 +228,34 @@ export function calculateLegsOdds(legs: BetLeg[]): { rawTotalOdds: number; effec
     rawTotalOdds: Number(rawTotal.toFixed(3)),
     effectiveTotalOdds: Number(effectiveTotal.toFixed(3)),
   };
+}
+
+/**
+ * Formats a Date object as a local datetime string (YYYY-MM-DDTHH:mm:ss) without UTC shifting.
+ */
+export function formatToLocalISOString(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+}
+
+/**
+ * Ensures a date string is formatted correctly for standard datetime-local inputs (YYYY-MM-DDTHH:mm).
+ */
+export function formatForDateTimeLocal(dateStr?: string): string {
+  if (!dateStr || typeof dateStr !== 'string' || !dateStr.trim()) return '';
+  const d = parseDateString(dateStr);
+  if (!d || isNaN(d.getTime())) return '';
+
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
