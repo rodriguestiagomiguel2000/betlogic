@@ -1,27 +1,33 @@
-import React, { useState } from 'react';
-import { Bet, BetLeg, Bankroll, Bookmaker, BetType, SportType, TagDefinition } from '../types';
+import React, { useState, useMemo } from 'react';
+import { Bet, BetLeg, Bankroll, Bookmaker, BetType, SportType, TagDefinition, Tipster } from '../types';
 import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
 import { calculateLegsOdds, parseDateString, formatToLocalISOString, formatForDateTimeLocal } from '../utils/dateUtils';
-import { PlusCircle, Trash2, CheckCircle2, ArrowLeft, Zap, Sparkles, Plus } from 'lucide-react';
+import { PlusCircle, Trash2, CheckCircle2, ArrowLeft, Zap, Sparkles, Plus, UserCheck, X, AlertTriangle } from 'lucide-react';
 
 interface ManualBetEntryProps {
   bankrolls: Bankroll[];
   bookmakers: Bookmaker[];
+  bets?: Bet[];
   activeBankrollId?: string;
   onAddBet: (bet: Omit<Bet, 'id'>) => void;
   onNavigate: (tab: string) => void;
   tagDefinitions: TagDefinition[];
   onAddTagDefinition?: (tag: TagDefinition) => void;
+  tipsters?: Tipster[];
+  onAddTipster?: (data: { name: string; platform?: string; notes?: string; color?: string }) => Promise<Tipster>;
 }
 
 export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
   bankrolls,
   bookmakers,
+  bets = [],
   activeBankrollId,
   onAddBet,
   onNavigate,
   tagDefinitions,
-  onAddTagDefinition
+  onAddTagDefinition,
+  tipsters = [],
+  onAddTipster
 }) => {
   const [betType, setBetType] = useState<BetType>('single');
   const [selectedBookmaker, setSelectedBookmaker] = useState<string>(bookmakers[0]?.id || '');
@@ -30,6 +36,12 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
       ? activeBankrollId
       : bankrolls[0]?.id || ''
   );
+  const [selectedTipsterId, setSelectedTipsterId] = useState<string>('');
+  const [showInlineTipsterModal, setShowInlineTipsterModal] = useState<boolean>(false);
+  const [inlineTipsterName, setInlineTipsterName] = useState<string>('');
+  const [inlineTipsterPlatform, setInlineTipsterPlatform] = useState<string>('Telegram');
+  const [inlineTipsterColor, setInlineTipsterColor] = useState<string>('#3b82f6');
+  const [isCreatingTipster, setIsCreatingTipster] = useState<boolean>(false);
   const [stake, setStake] = useState<string>('50');
   const [isLive, setIsLive] = useState<boolean>(false);
   const [isFreeBet, setIsFreeBet] = useState<boolean>(false);
@@ -56,6 +68,30 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
   const { rawTotalOdds, effectiveTotalOdds } = calculateLegsOdds(legs, betType);
   const totalOdds = effectiveTotalOdds;
   const potentialPayout = parseFloat(stake) * totalOdds;
+
+  const activeBankrollObj = bankrolls.find(b => b.id === selectedBankroll);
+  const bankrollTotal = activeBankrollObj ? activeBankrollObj.currentBalance : 0;
+  const numericStake = parseFloat(stake) || 0;
+  const stakePercentage = bankrollTotal > 0 ? (numericStake / bankrollTotal) * 100 : 0;
+
+  const duplicateBet = useMemo(() => {
+    if (!bets || bets.length === 0 || !legs || legs.length === 0) return null;
+    const firstLeg = legs[0];
+    if (!firstLeg || !firstLeg.event || !firstLeg.selection) return null;
+
+    const eventNorm = firstLeg.event.trim().toLowerCase();
+    const selNorm = firstLeg.selection.trim().toLowerCase();
+    if (!eventNorm || !selNorm) return null;
+
+    return bets.find(b => {
+      if (b.status === 'lost' || b.status === 'void') return false;
+      return b.legs && b.legs.some(l => {
+        const eMatch = l.event && l.event.trim().toLowerCase() === eventNorm;
+        const sMatch = l.selection && l.selection.trim().toLowerCase() === selNorm;
+        return eMatch && sMatch;
+      });
+    }) || null;
+  }, [bets, legs]);
 
   const handleAddLeg = () => {
     setLegs([
@@ -166,6 +202,7 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
       status: 'pending',
       bookmakerId: selectedBookmaker,
       bankrollId: selectedBankroll,
+      tipsterId: selectedTipsterId || undefined,
       isLive,
       isFreeBet,
       freeBetDestination: isFreeBet ? freeBetDestination : 'cash',
@@ -260,8 +297,8 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
       </div>
 
       <form onSubmit={handleSubmit} className="bg-[#171f33] p-6 rounded-xl border border-[#27314a] space-y-6">
-        {/* Row 1: Bet Type & Bankroll */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {/* Row 1: Bet Type, Bankroll, Bookmaker, Tipster */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
             <label className="block text-xs font-medium text-[#8d90a0] mb-1">Structure Type</label>
             <select
@@ -302,6 +339,46 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
                   {bm.name}
                 </option>
               ))}
+            </select>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-medium text-[#8d90a0]">Tipster Source</label>
+              <button
+                type="button"
+                onClick={() => {
+                  setInlineTipsterName('');
+                  setInlineTipsterPlatform('Telegram');
+                  setInlineTipsterColor('#3b82f6');
+                  setShowInlineTipsterModal(true);
+                }}
+                className="text-[10px] text-[#3b82f6] hover:underline font-bold flex items-center gap-0.5 cursor-pointer"
+              >
+                <Plus size={10} /> Add New
+              </button>
+            </div>
+            <select
+              value={selectedTipsterId}
+              onChange={(e) => {
+                if (e.target.value === '__NEW_TIPSTER__') {
+                  setInlineTipsterName('');
+                  setInlineTipsterPlatform('Telegram');
+                  setInlineTipsterColor('#3b82f6');
+                  setShowInlineTipsterModal(true);
+                } else {
+                  setSelectedTipsterId(e.target.value);
+                }
+              }}
+              className="w-full bg-[#0b1326] border border-[#27314a] rounded-lg px-3 py-2 text-xs text-white"
+            >
+              <option value="">👤 My Own Pick (No Tipster)</option>
+              {tipsters.map((t) => (
+                <option key={t.id} value={t.id}>
+                  🎯 {t.name} {t.platform ? `(${t.platform})` : ''}
+                </option>
+              ))}
+              <option value="__NEW_TIPSTER__">+ Add New Tipster...</option>
             </select>
           </div>
         </div>
@@ -630,10 +707,34 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
           </div>
         </div>
 
+        {/* Anti-Duplication Warning Guard Banner */}
+        {duplicateBet && (
+          <div className="bg-amber-950/40 border border-amber-500/50 p-3.5 rounded-xl text-xs text-amber-200 space-y-1 shadow-lg">
+            <div className="flex items-center gap-2 font-bold text-amber-400">
+              <AlertTriangle size={16} className="shrink-0" />
+              <span>Duplicate Bet Detection Guard</span>
+            </div>
+            <p className="text-[11px] text-amber-300/80">
+              You already logged an open/won wager matching <strong>{duplicateBet.legs?.[0]?.event || 'this event'}</strong> ({duplicateBet.legs?.[0]?.selection}) in your portfolio history on {duplicateBet.date?.slice(0, 10)}. Please verify before adding.
+            </p>
+          </div>
+        )}
+
         {/* Stake & Toggles Section */}
         <div className="pt-4 border-t border-[#27314a] grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-medium text-[#8d90a0] mb-1">Total Stake Amount ({getCurrencySymbol()})</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-medium text-[#8d90a0]">Total Stake Amount ({getCurrencySymbol()})</label>
+              {activeBankrollObj && bankrollTotal > 0 && numericStake > 0 && (
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                  stakePercentage > 5 
+                    ? 'bg-amber-500/10 text-amber-400 border border-amber-500/25' 
+                    : 'bg-indigo-500/10 text-indigo-300 border border-indigo-500/20'
+                }`}>
+                  {stakePercentage.toFixed(1)}% of {activeBankrollObj.name}
+                </span>
+              )}
+            </div>
             <input
               type="number"
               step="0.01"
@@ -643,6 +744,12 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
               className="w-full bg-[#0b1326] border border-[#27314a] rounded-lg px-3 py-2 text-sm font-mono text-white font-bold"
               required
             />
+            {stakePercentage > 5 && (
+              <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-amber-400 font-medium">
+                <AlertTriangle size={12} className="shrink-0 animate-pulse text-amber-500" />
+                <span>⚠️ High Exposure: &gt;5% of Bankroll</span>
+              </div>
+            )}
           </div>
 
           <div>
@@ -922,6 +1029,113 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
           </button>
         </div>
       </form>
+
+      {/* Inline Add Tipster Modal */}
+      {showInlineTipsterModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#171f33] border border-[#27314a] rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[#27314a] pb-3">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <UserCheck className="w-5 h-5 text-[#2563eb]" />
+                <span>Create New Tipster Source</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowInlineTipsterModal(false)}
+                className="text-[#8d90a0] hover:text-white p-1 rounded-lg hover:bg-[#27314a]"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-[#8d90a0] font-semibold mb-1">
+                  Tipster Name <span className="text-red-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. SharpPicks, @JohnDoePicks"
+                  value={inlineTipsterName}
+                  onChange={(e) => setInlineTipsterName(e.target.value)}
+                  className="w-full bg-[#0b1326] border border-[#27314a] rounded-xl px-3 py-2 text-white placeholder-[#8d90a0] focus:outline-none focus:border-[#2563eb]"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-[#8d90a0] font-semibold mb-1">Platform</label>
+                <select
+                  value={inlineTipsterPlatform}
+                  onChange={(e) => setInlineTipsterPlatform(e.target.value)}
+                  className="w-full bg-[#0b1326] border border-[#27314a] rounded-xl px-3 py-2 text-white"
+                >
+                  <option value="Telegram">Telegram</option>
+                  <option value="Twitter/X">Twitter/X</option>
+                  <option value="Discord">Discord</option>
+                  <option value="YouTube">YouTube</option>
+                  <option value="VIP Group">VIP Group</option>
+                  <option value="Personal Pick">Personal Pick</option>
+                  <option value="Website">Website</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[#8d90a0] font-semibold mb-1.5">Badge Color</label>
+                <div className="flex items-center gap-2">
+                  {['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899', '#06b6d4', '#f97316'].map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setInlineTipsterColor(c)}
+                      className={`w-6 h-6 rounded-full border-2 cursor-pointer transition-transform ${
+                        inlineTipsterColor === c ? 'scale-110 border-white' : 'border-transparent'
+                      }`}
+                      style={{ backgroundColor: c }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#27314a]">
+              <button
+                type="button"
+                onClick={() => setShowInlineTipsterModal(false)}
+                className="px-4 py-2 bg-[#0b1326] text-[#8d90a0] hover:text-white rounded-xl text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!inlineTipsterName.trim() || isCreatingTipster}
+                onClick={async () => {
+                  if (!inlineTipsterName.trim() || !onAddTipster) return;
+                  setIsCreatingTipster(true);
+                  try {
+                    const newTipster = await onAddTipster({
+                      name: inlineTipsterName.trim(),
+                      platform: inlineTipsterPlatform,
+                      color: inlineTipsterColor
+                    });
+                    if (newTipster && newTipster.id) {
+                      setSelectedTipsterId(newTipster.id);
+                    }
+                    setShowInlineTipsterModal(false);
+                  } catch (err) {
+                    console.error('Failed to create tipster:', err);
+                  } finally {
+                    setIsCreatingTipster(false);
+                  }
+                }}
+                className="px-4 py-2 bg-[#2563eb] hover:bg-[#1d4ed8] text-white rounded-xl text-xs font-bold disabled:opacity-50"
+              >
+                {isCreatingTipster ? 'Creating...' : 'Save & Select Tipster'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

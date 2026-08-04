@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Bet, Bookmaker, BankrollTransaction } from '../types';
+import { Bet, Bookmaker, BankrollTransaction, Tipster } from '../types';
 import { formatCurrency, calculateWinStreak, getCurrencySymbol } from '../utils/storage';
 import { getBetLatestEventDate } from '../utils/dateUtils';
 import {
@@ -37,7 +37,8 @@ import {
   Activity,
   Layers,
   Sparkles,
-  ArrowRight
+  ArrowRight,
+  UserCheck
 } from 'lucide-react';
 
 interface AnalyticsViewProps {
@@ -45,9 +46,10 @@ interface AnalyticsViewProps {
   bookmakers: Bookmaker[];
   transactions?: BankrollTransaction[];
   userCurrency?: string;
+  tipsters?: Tipster[];
 }
 
-export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, transactions = [], userCurrency }) => {
+export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, transactions = [], userCurrency, tipsters = [] }) => {
   const [activeSubTab, setActiveSubTab] = useState<'overview' | 'heatmap_risk' | 'margins' | 'monte_carlo' | 'kelly'>('overview');
 
   // Kelly Criterion Calculator state
@@ -431,6 +433,73 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
     };
   }).sort((a, b) => b.profit - a.profit);
 
+  // Tipster Performance Breakdown
+  const tipsterStatsMap: Record<string, {
+    tipsterId?: string;
+    name: string;
+    platform?: string;
+    color?: string;
+    staked: number;
+    returned: number;
+    wins: number;
+    total: number;
+    settled: number;
+    isSelf: boolean;
+  }> = {};
+
+  bets.forEach((bet) => {
+    const tId = bet.tipsterId;
+    const key = tId || '__MY_OWN_PICKS__';
+
+    if (!tipsterStatsMap[key]) {
+      const matchTipster = tipsters.find(t => t.id === tId);
+      tipsterStatsMap[key] = {
+        tipsterId: tId,
+        name: key === '__MY_OWN_PICKS__' ? 'My Own Picks' : (matchTipster?.name || 'Unknown Tipster'),
+        platform: key === '__MY_OWN_PICKS__' ? 'Personal' : (matchTipster?.platform || 'General'),
+        color: key === '__MY_OWN_PICKS__' ? '#10b981' : (matchTipster?.color || '#3b82f6'),
+        staked: 0,
+        returned: 0,
+        wins: 0,
+        total: 0,
+        settled: 0,
+        isSelf: key === '__MY_OWN_PICKS__'
+      };
+    }
+
+    const stat = tipsterStatsMap[key];
+    stat.staked += bet.stake;
+    stat.total += 1;
+
+    if (bet.status === 'won') {
+      stat.returned += bet.actualReturn ?? bet.potentialPayout;
+      stat.wins += 1;
+      stat.settled += 1;
+    } else if (bet.status === 'lost') {
+      stat.returned += 0;
+      stat.settled += 1;
+    } else if (bet.status === 'cashout') {
+      stat.returned += bet.actualReturn ?? 0;
+      stat.settled += 1;
+    } else if (bet.status === 'void') {
+      stat.returned += bet.stake;
+      stat.settled += 1;
+    }
+  });
+
+  const tipsterPerformanceData = Object.values(tipsterStatsMap).map((stat) => {
+    const profit = stat.returned - stat.staked;
+    const roi = stat.staked > 0 ? (profit / stat.staked) * 100 : 0;
+    const winRate = stat.settled > 0 ? (stat.wins / stat.settled) * 100 : 0;
+
+    return {
+      ...stat,
+      profit: Number(profit.toFixed(2)),
+      roi: Number(roi.toFixed(1)),
+      winRate: Number(winRate.toFixed(1))
+    };
+  }).sort((a, b) => b.roi - a.roi); // Default sort by Yield (ROI) descending!
+
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto pb-24 md:pb-12">
       {/* Header */}
@@ -714,6 +783,123 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
                             {row.profit >= 0 ? '+' : ''}{formatCurrency(row.profit)}
                           </td>
                           <td className={`p-2.5 text-right font-mono font-bold ${row.roi >= 0 ? 'text-[#4edea3]' : 'text-rose-400'}`}>
+                            {row.roi >= 0 ? '+' : ''}{row.roi.toFixed(1)}%
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {/* Tipster Performance Breakdown Section */}
+          <div className="bg-[#171f33] p-5 rounded-xl border border-[#27314a] space-y-4 pt-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#27314a] pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <UserCheck size={18} className="text-[#3b82f6]" />
+                  <span>TIPSTER PERFORMANCE BREAKDOWN</span>
+                </h3>
+                <p className="text-xs text-[#8d90a0] mt-0.5">
+                  Track ROI, win rates, and net profitability by tipster source versus your own picks.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="bg-[#3b82f6]/10 text-[#3b82f6] border border-[#3b82f6]/20 px-2.5 py-1 rounded-lg font-mono font-bold">
+                  {tipsterPerformanceData.length} Sources Tracked
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Bar chart for Tipster ROI */}
+              <div className="lg:col-span-4 bg-[#0b1326] p-4 rounded-xl border border-[#27314a] space-y-3">
+                <span className="text-xs font-bold text-[#8d90a0] uppercase tracking-wider block">
+                  Tipster Yield (ROI %)
+                </span>
+                <div className="h-56 w-full">
+                  {tipsterPerformanceData.length === 0 ? (
+                    <div className="h-full flex items-center justify-center text-xs text-[#8d90a0] italic">
+                      No tipster data logged yet.
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={tipsterPerformanceData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#27314a" vertical={false} />
+                        <XAxis dataKey="name" stroke="#8d90a0" tick={{ fontSize: 10 }} />
+                        <YAxis stroke="#8d90a0" tick={{ fontSize: 10 }} tickFormatter={(v) => `${v}%`} />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: '#171f33', borderColor: '#27314a', borderRadius: '8px', color: '#fff' }}
+                          formatter={(val: any) => [`${val}%`, 'Yield (ROI)']}
+                        />
+                        <Bar dataKey="roi" fill="#3b82f6" radius={[4, 4, 0, 0]}>
+                          {tipsterPerformanceData.map((entry, index) => (
+                            <Cell key={`tcell-${index}`} fill={entry.roi >= 0 ? '#10b981' : '#ef4444'} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+
+              {/* Tipster Breakdown Table */}
+              <div className="lg:col-span-8 overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-[#0b1326] border-b border-[#27314a] text-[#8d90a0] font-semibold uppercase tracking-wider text-[10px]">
+                      <th className="p-3">Tipster / Source</th>
+                      <th className="p-3">Platform</th>
+                      <th className="p-3 text-right">Bets</th>
+                      <th className="p-3 text-right">Win Rate</th>
+                      <th className="p-3 text-right">Staked</th>
+                      <th className="p-3 text-right">Returned</th>
+                      <th className="p-3 text-right">Net P&L</th>
+                      <th className="p-3 text-right">Yield (ROI)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#27314a]/50">
+                    {tipsterPerformanceData.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="p-6 text-center text-xs text-[#8d90a0] italic">
+                          No tipster picks recorded. Log wagers with tipster sources or select "My Own Picks" to view performance metrics.
+                        </td>
+                      </tr>
+                    ) : (
+                      tipsterPerformanceData.map((row) => (
+                        <tr
+                          key={row.name}
+                          className={`hover:bg-[#131b2e] transition-colors ${
+                            row.isSelf ? 'bg-[#10b981]/5 border-l-2 border-l-[#10b981]' : ''
+                          }`}
+                        >
+                          <td className="p-3 font-bold text-white flex items-center gap-2">
+                            <span
+                              className="w-2.5 h-2.5 rounded-full shrink-0"
+                              style={{ backgroundColor: row.color || '#3b82f6' }}
+                            />
+                            <span>{row.name}</span>
+                            {row.isSelf && (
+                              <span className="text-[10px] bg-[#10b981]/20 text-[#10b981] px-1.5 py-0.5 rounded border border-[#10b981]/30 font-semibold ml-1">
+                                Self
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-3 text-[#8d90a0]">
+                            <span className="bg-[#0b1326] px-2 py-0.5 rounded text-[11px] font-medium border border-[#27314a]">
+                              {row.platform || 'General'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right font-mono text-[#8d90a0]">{row.total}</td>
+                          <td className="p-3 text-right font-mono text-white">{row.winRate}%</td>
+                          <td className="p-3 text-right font-mono text-white">{formatCurrency(row.staked, userCurrency)}</td>
+                          <td className="p-3 text-right font-mono text-white">{formatCurrency(row.returned, userCurrency)}</td>
+                          <td className={`p-3 text-right font-mono font-bold ${row.profit >= 0 ? 'text-[#4edea3]' : 'text-rose-400'}`}>
+                            {row.profit >= 0 ? '+' : ''}{formatCurrency(row.profit, userCurrency)}
+                          </td>
+                          <td className={`p-3 text-right font-mono font-bold ${row.roi >= 0 ? 'text-[#4edea3]' : 'text-rose-400'}`}>
                             {row.roi >= 0 ? '+' : ''}{row.roi.toFixed(1)}%
                           </td>
                         </tr>

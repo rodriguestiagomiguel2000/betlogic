@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Bet, Bankroll, Bookmaker, BetStatus, SportType, BetType, TagDefinition } from '../types';
+import { Bet, Bankroll, Bookmaker, BetStatus, SportType, BetType, TagDefinition, Tipster } from '../types';
 import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
 import { formatEventDate, getRepresentativeEventDateTimestamp, formatLegSelection, formatBetDateTime } from '../utils/dateUtils';
 import { BookmakerLogo } from './BookmakerLogo';
@@ -25,7 +25,8 @@ import {
   TrendingDown,
   Radio,
   Camera,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Users
 } from 'lucide-react';
 
 interface BetsHistoryViewProps {
@@ -33,6 +34,7 @@ interface BetsHistoryViewProps {
   bankrolls: Bankroll[];
   bookmakers: Bookmaker[];
   tagDefinitions: TagDefinition[];
+  tipsters?: Tipster[];
   activeBankrollId?: string;
   userCurrency?: string;
   onUpdateBetStatus: (
@@ -54,6 +56,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
   bankrolls,
   bookmakers,
   tagDefinitions,
+  tipsters = [],
   activeBankrollId,
   userCurrency,
   onUpdateBetStatus,
@@ -78,6 +81,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
   const [liveFilter, setLiveFilter] = useState<string>('all');
   const [dateRange, setDateRange] = useState<string>('all');
   const [selectedTagsFilter, setSelectedTagsFilter] = useState<string[]>([]);
+  const [tipsterFilter, setTipsterFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'event-date-asc' | 'event-date-desc' | 'stake-desc' | 'odds-desc' | 'profit-desc'>('date-desc');
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
 
@@ -163,11 +167,37 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
         }
       }
 
+      // Tipster filter
+      if (tipsterFilter !== 'all') {
+        if (tipsterFilter === '__MY_OWN_PICKS__') {
+          if (bet.tipsterId) return false;
+        } else {
+          if (bet.tipsterId !== tipsterFilter) return false;
+        }
+      }
+
       // Tag filter
       if (selectedTagsFilter.length > 0) {
-        if (!bet.tags || !bet.tags.some(t => selectedTagsFilter.includes(t))) {
-          return false;
+        if (!bet.tags) return false;
+        let tagsList: string[] = [];
+        if (Array.isArray(bet.tags)) {
+          tagsList = bet.tags;
+        } else if (typeof bet.tags === 'string') {
+          try {
+            const parsed = JSON.parse(bet.tags);
+            tagsList = Array.isArray(parsed) ? parsed : [bet.tags];
+          } catch {
+            tagsList = [bet.tags];
+          }
         }
+
+        const matchesTag = tagsList.some((t) => {
+          if (!t) return false;
+          const cleanT = String(t).trim().toLowerCase();
+          return selectedTagsFilter.some((ft) => ft.trim().toLowerCase() === cleanT);
+        });
+
+        if (!matchesTag) return false;
       }
 
       return true;
@@ -189,7 +219,23 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
       }
       return 0;
     });
-  }, [bets, searchTerm, statusFilter, sportFilter, bookmakerFilter, bankrollFilter, typeFilter, liveFilter, dateRange, sortBy, bookmakers]);
+  }, [
+    bets,
+    searchTerm,
+    statusFilter,
+    sportFilter,
+    bookmakerFilter,
+    bankrollFilter,
+    typeFilter,
+    liveFilter,
+    dateRange,
+    selectedTagsFilter,
+    tipsterFilter,
+    sortBy,
+    bookmakers,
+    tagDefinitions,
+    tipsters
+  ]);
 
   // Statistics for filtered list
   const metrics = useMemo(() => {
@@ -437,7 +483,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
         </div>
 
         {/* Extended Filter Dropdowns */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2 pt-2 border-t border-[#27314a] text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2 pt-2 border-t border-[#27314a] text-xs">
           {/* Sport Filter */}
           <div>
             <label className="block text-[10px] text-[#8d90a0] mb-1">Sport</label>
@@ -563,63 +609,126 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
             </select>
           </div>
 
-          {/* Sort By */}
+          {/* Tipster Source Filter */}
           <div>
-            <label className="block text-[10px] text-[#8d90a0] mb-1">Sort By</label>
+            <label className="block text-[10px] text-[#8d90a0] mb-1">Tipster Source</label>
             <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
+              value={tipsterFilter}
+              onChange={(e) => setTipsterFilter(e.target.value)}
               className="w-full bg-[#0b1326] border border-[#27314a] rounded px-2.5 py-1.5 text-white"
             >
-              <option value="date-desc">Newest Placement First</option>
-              <option value="date-asc">Oldest Placement First</option>
-              <option value="event-date-asc">Earliest Event First</option>
-              <option value="event-date-desc">Latest Event First</option>
-              <option value="stake-desc">Highest Stake</option>
-              <option value="odds-desc">Highest Odds</option>
-              <option value="profit-desc">Highest Profit</option>
+              <option value="all">All Sources</option>
+              <option value="__MY_OWN_PICKS__">👤 My Own Picks</option>
+              {tipsters.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.platform || 'General'})
+                </option>
+              ))}
             </select>
           </div>
         </div>
 
-        {/* Multi-Tag Chip Filter Selector */}
-        {tagDefinitions.length > 0 && (
-          <div className="pt-2 flex flex-wrap items-center gap-2 border-t border-[#27314a]/30">
-            <span className="text-[10px] text-[#8d90a0] font-bold uppercase tracking-wider">Strategy Filter:</span>
-            <div className="flex flex-wrap gap-1.5">
-              {tagDefinitions.map((tag) => {
-                const isSelected = selectedTagsFilter.includes(tag.name);
-                return (
+        {/* Multi-Tag & Tipster Chips Selector */}
+        {(tagDefinitions.length > 0 || tipsters.length > 0) && (
+          <div className="pt-2 space-y-2 border-t border-[#27314a]/30">
+            {tagDefinitions.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] text-[#8d90a0] font-bold uppercase tracking-wider min-w-[90px]">Strategy Filter:</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {tagDefinitions.map((tag) => {
+                    const isSelected = selectedTagsFilter.includes(tag.name);
+                    return (
+                      <button
+                        key={tag.id}
+                        onClick={() => {
+                          if (isSelected) {
+                            setSelectedTagsFilter(selectedTagsFilter.filter((t) => t !== tag.name));
+                          } else {
+                            setSelectedTagsFilter([...selectedTagsFilter, tag.name]);
+                          }
+                        }}
+                        style={{
+                          borderColor: isSelected ? tag.color : '#27314a',
+                          backgroundColor: isSelected ? `${tag.color}20` : '#0b1326',
+                          color: isSelected ? '#ffffff' : '#8d90a0',
+                        }}
+                        className="text-[10px] font-semibold px-2.5 py-1 rounded-full border transition-all cursor-pointer hover:text-white"
+                      >
+                        {isSelected && <span className="inline-block mr-1 text-white">✓</span>}
+                        {tag.name}
+                      </button>
+                    );
+                  })}
+                  {selectedTagsFilter.length > 0 && (
+                    <button
+                      onClick={() => setSelectedTagsFilter([])}
+                      className="text-[10px] font-bold text-rose-400 hover:text-rose-300 px-2.5 py-1 bg-[#201013] border border-rose-950 rounded-full transition-colors cursor-pointer"
+                    >
+                      Clear Tags
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {tipsters.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] text-[#8d90a0] font-bold uppercase tracking-wider min-w-[90px]">Tipster Source:</span>
+                <div className="flex flex-wrap gap-1.5">
                   <button
-                    key={tag.id}
-                    onClick={() => {
-                      if (isSelected) {
-                        setSelectedTagsFilter(selectedTagsFilter.filter((t) => t !== tag.name));
-                      } else {
-                        setSelectedTagsFilter([...selectedTagsFilter, tag.name]);
-                      }
-                    }}
-                    style={{
-                      borderColor: isSelected ? tag.color : '#27314a',
-                      backgroundColor: isSelected ? `${tag.color}20` : '#0b1326',
-                      color: isSelected ? '#ffffff' : '#8d90a0',
-                    }}
-                    className="text-[10px] font-semibold px-2.5 py-1 rounded-full border transition-all cursor-pointer hover:text-white"
+                    onClick={() => setTipsterFilter('all')}
+                    className={`text-[10px] font-semibold px-2.5 py-1 rounded-full border transition-all cursor-pointer ${
+                      tipsterFilter === 'all'
+                        ? 'bg-[#2563eb] border-[#3b82f6] text-white'
+                        : 'bg-[#0b1326] border-[#27314a] text-[#8d90a0] hover:text-white'
+                    }`}
                   >
-                    {isSelected && <span className="inline-block mr-1 text-white">✓</span>}
-                    {tag.name}
+                    All Sources
                   </button>
-                );
-              })}
-              {selectedTagsFilter.length > 0 && (
-                <button
-                  onClick={() => setSelectedTagsFilter([])}
-                  className="text-[10px] font-bold text-rose-400 hover:text-rose-300 px-2.5 py-1 bg-[#201013] border border-rose-950 rounded-full transition-colors cursor-pointer"
-                >
-                  Clear Tags
-                </button>
-              )}
-            </div>
+
+                  <button
+                    onClick={() => setTipsterFilter(tipsterFilter === '__MY_OWN_PICKS__' ? 'all' : '__MY_OWN_PICKS__')}
+                    className={`text-[10px] font-semibold px-2.5 py-1 rounded-full border transition-all cursor-pointer ${
+                      tipsterFilter === '__MY_OWN_PICKS__'
+                        ? 'bg-indigo-600/30 border-indigo-400 text-indigo-200'
+                        : 'bg-[#0b1326] border-[#27314a] text-[#8d90a0] hover:text-white'
+                    }`}
+                  >
+                    {tipsterFilter === '__MY_OWN_PICKS__' && <span className="inline-block mr-1 text-white">✓</span>}
+                    👤 My Own Picks
+                  </button>
+
+                  {tipsters.map((t) => {
+                    const isSelected = tipsterFilter === t.id;
+                    const color = t.color || '#3b82f6';
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => setTipsterFilter(isSelected ? 'all' : t.id)}
+                        style={{
+                          borderColor: isSelected ? color : '#27314a',
+                          backgroundColor: isSelected ? `${color}25` : '#0b1326',
+                          color: isSelected ? '#ffffff' : '#8d90a0',
+                        }}
+                        className="text-[10px] font-semibold px-2.5 py-1 rounded-full border transition-all cursor-pointer hover:text-white"
+                      >
+                        {isSelected && <span className="inline-block mr-1 text-white">✓</span>}
+                        {t.name}
+                      </button>
+                    );
+                  })}
+
+                  {tipsterFilter !== 'all' && (
+                    <button
+                      onClick={() => setTipsterFilter('all')}
+                      className="text-[10px] font-bold text-rose-400 hover:text-rose-300 px-2.5 py-1 bg-[#201013] border border-rose-950 rounded-full transition-colors cursor-pointer"
+                    >
+                      Clear Tipster
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -642,6 +751,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
               setLiveFilter('all');
               setDateRange('all');
               setSelectedTagsFilter([]);
+              setTipsterFilter('all');
             }}
             className="px-4 py-2 bg-[#2563eb] text-white text-xs font-bold rounded-lg hover:bg-[#1d4ed8] cursor-pointer inline-block"
           >
@@ -736,9 +846,23 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                               </div>
                             </div>
                           )}
-                          {bet.tags && bet.tags.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-1.5">
-                              {bet.tags.map((tagName) => {
+                          {((bet.tags && bet.tags.length > 0) || bet.tipsterId || bet.tipsterName) && (
+                            <div className="flex flex-wrap gap-1 mt-1.5 items-center">
+                              {(() => {
+                                const tObj = tipsters.find(t => t.id === bet.tipsterId);
+                                const name = tObj?.name || bet.tipsterName;
+                                const color = tObj?.color || bet.tipsterColor || '#3b82f6';
+                                if (!name) return null;
+                                return (
+                                  <span
+                                    style={{ backgroundColor: `${color}18`, borderColor: `${color}40`, color: color }}
+                                    className="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded border whitespace-nowrap flex items-center gap-1"
+                                  >
+                                    🎯 {name}
+                                  </span>
+                                );
+                              })()}
+                              {bet.tags && bet.tags.map((tagName) => {
                                 const def = tagDefinitions.find(t => t.name.toLowerCase() === tagName.toLowerCase());
                                 const color = def ? def.color : '#4b5563';
                                 return (
@@ -961,9 +1085,23 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                     <p className="text-xs text-[#8d90a0] mt-0.5">
                       <span className="text-white font-semibold">{formatLegSelection(mainLeg?.selection, mainLeg?.market)}</span> ({mainLeg?.market})
                     </p>
-                    {bet.tags && bet.tags.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1.5">
-                        {bet.tags.map((tagName) => {
+                    {((bet.tags && bet.tags.length > 0) || bet.tipsterId || bet.tipsterName) && (
+                      <div className="flex flex-wrap gap-1 mt-1.5 items-center">
+                        {(() => {
+                          const tObj = tipsters.find(t => t.id === bet.tipsterId);
+                          const name = tObj?.name || bet.tipsterName;
+                          const color = tObj?.color || bet.tipsterColor || '#3b82f6';
+                          if (!name) return null;
+                          return (
+                            <span
+                              style={{ backgroundColor: `${color}18`, borderColor: `${color}40`, color: color }}
+                              className="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded border whitespace-nowrap flex items-center gap-1"
+                            >
+                              🎯 {name}
+                            </span>
+                          );
+                        })()}
+                        {bet.tags && bet.tags.map((tagName) => {
                           const def = tagDefinitions.find(t => t.name.toLowerCase() === tagName.toLowerCase());
                           const color = def ? def.color : '#4b5563';
                           return (

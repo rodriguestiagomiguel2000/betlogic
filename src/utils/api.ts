@@ -1,4 +1,4 @@
-import { Bet, UserPreferences, Bankroll, Bookmaker, TagDefinition, BankrollTransaction } from '../types';
+import { Bet, UserPreferences, Bankroll, Bookmaker, TagDefinition, BankrollTransaction, Tipster } from '../types';
 
 const API_BASE_URL = '/api';
 
@@ -242,6 +242,36 @@ export const tagsApi = {
 
   async delete(id: string): Promise<{ message: string }> {
     return apiRequest<{ message: string }>(`/tags/${id}`, {
+      method: 'DELETE',
+    });
+  }
+};
+
+// ==========================================
+// TIPSTERS API
+// ==========================================
+
+export const tipstersApi = {
+  async list(): Promise<Tipster[]> {
+    return apiRequest<Tipster[]>('/tipsters');
+  },
+
+  async create(data: { name: string; platform?: string; notes?: string; color?: string }): Promise<Tipster> {
+    return apiRequest<Tipster>('/tipsters', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async update(id: string, data: { name?: string; platform?: string; notes?: string; color?: string }): Promise<Tipster> {
+    return apiRequest<Tipster>(`/tipsters/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async delete(id: string): Promise<{ message: string }> {
+    return apiRequest<{ message: string }>(`/tipsters/${id}`, {
       method: 'DELETE',
     });
   }

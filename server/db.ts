@@ -26,6 +26,7 @@ const memoryStore = {
   betLegs: [] as any[],
   transfers: [] as any[],
   tags: [] as any[],
+  tipsters: [] as any[],
   bankrollTransactions: [] as any[],
 };
 
@@ -68,8 +69,9 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
         { table_name: 'bankroll_transfers' },
         { table_name: 'tag_definitions' },
         { table_name: 'bankroll_transactions' },
+        { table_name: 'tipsters' },
       ],
-      rowCount: 9,
+      rowCount: 10,
     };
   }
 
@@ -818,6 +820,97 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
   if (/DELETE FROM tag_definitions WHERE id = \$1 AND user_id = \$2/i.test(sql)) {
     const [id, userId] = params;
     memoryStore.tags = memoryStore.tags.filter((t) => !(t.id === id && t.user_id === userId));
+    return { rows: [], rowCount: 1 };
+  }
+
+  // --- TIPSTERS ---
+  if (/SELECT .* FROM tipsters WHERE user_id = \$1/i.test(sql)) {
+    const userId = params[0];
+    const found = memoryStore.tipsters
+      .filter((t) => t.user_id === userId)
+      .map((t) => ({
+        id: t.id,
+        userId: t.user_id,
+        name: t.name,
+        platform: t.platform || '',
+        notes: t.notes || '',
+        color: t.color || '#3b82f6',
+        createdAt: t.created_at
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { rows: found, rowCount: found.length };
+  }
+
+  if (/INSERT INTO tipsters/i.test(sql)) {
+    const [userId, name, platform, notes, color] = params;
+    let existing = memoryStore.tipsters.find((t) => t.user_id === userId && t.name === name);
+    if (existing) {
+      existing.platform = platform || '';
+      existing.notes = notes || '';
+      existing.color = color || '#3b82f6';
+    } else {
+      existing = {
+        id: generateId('tipster'),
+        user_id: userId,
+        name,
+        platform: platform || '',
+        notes: notes || '',
+        color: color || '#3b82f6',
+        created_at: new Date().toISOString(),
+      };
+      memoryStore.tipsters.push(existing);
+    }
+    return {
+      rows: [
+        {
+          id: existing.id,
+          userId: existing.user_id,
+          name: existing.name,
+          platform: existing.platform,
+          notes: existing.notes,
+          color: existing.color,
+          createdAt: existing.created_at,
+        },
+      ],
+      rowCount: 1,
+    };
+  }
+
+  if (/UPDATE tipsters SET/i.test(sql)) {
+    const [name, platform, notes, color, tipsterId, userId] = params;
+    const t = memoryStore.tipsters.find((x) => x.id === tipsterId && x.user_id === userId);
+    if (t) {
+      if (name) t.name = name;
+      t.platform = platform || '';
+      t.notes = notes || '';
+      if (color) t.color = color;
+      return {
+        rows: [
+          {
+            id: t.id,
+            userId: t.user_id,
+            name: t.name,
+            platform: t.platform,
+            notes: t.notes,
+            color: t.color,
+            createdAt: t.created_at,
+          }
+        ],
+        rowCount: 1,
+      };
+    }
+    return { rows: [], rowCount: 0 };
+  }
+
+  if (/DELETE FROM tipsters WHERE id = \$1 AND user_id = \$2/i.test(sql)) {
+    const [id, userId] = params;
+    memoryStore.tipsters = memoryStore.tipsters.filter((t) => !(t.id === id && t.user_id === userId));
+    // Nullify tipster_id on bets in memory store
+    memoryStore.bets.forEach((b) => {
+      if (b.tipster_id === id) {
+        b.tipster_id = null;
+      }
+    });
     return { rows: [], rowCount: 1 };
   }
 

@@ -23,6 +23,7 @@ import bankrollsRouter from './server/bankrolls';
 import bookmakersRouter from './server/bookmakers';
 import transfersRouter from './server/transfers';
 import tagsRouter from './server/tags';
+import tipstersRouter from './server/tipsters';
 
 async function startServer() {
   const app = express();
@@ -42,6 +43,7 @@ async function startServer() {
   app.use('/api/bookmakers', bookmakersRouter);
   app.use('/api/bankroll-transfers', transfersRouter);
   app.use('/api/tags', tagsRouter);
+  app.use('/api/tipsters', tipstersRouter);
   app.use('/api/health', healthRouter);
 
   // Run database table verification check on startup

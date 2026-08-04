@@ -20,7 +20,8 @@ import {
   Calendar,
   LogOut,
   MoreHorizontal,
-  X
+  X,
+  UserCheck
 } from 'lucide-react';
 import { APP_LOGO_BASE64 } from '../assets/logoData';
 
@@ -100,7 +101,8 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
       title: 'BET LOGGING',
       items: [
         { id: 'scanner', label: 'Betslip OCR Scan', icon: ScanLine },
-        { id: 'entry', label: 'Manual Bet Entry', icon: PlusCircle }
+        { id: 'entry', label: 'Manual Bet Entry', icon: PlusCircle },
+        { id: 'tipsters', label: 'Tipster Sources', icon: UserCheck, badge: 'New' }
       ]
     },
     {
@@ -131,6 +133,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, winStre
   // Secondary items accessible via the "More" drawer
   const moreMenuItems = [
     { id: 'calendar', label: 'P&L Calendar', icon: Calendar },
+    { id: 'tipsters', label: 'Tipster Sources', icon: UserCheck },
     { id: 'analytics', label: 'Analytics & ROI', icon: PieChart },
     { id: 'scanner', label: 'Betslip OCR Scan', icon: ScanLine },
     { id: 'csv', label: 'CSV Export/Import', icon: FileSpreadsheet },

@@ -35,6 +35,20 @@ export interface Bet {
   scannedSlipUrl?: string;
   imageUrl?: string;
   tags?: string[];
+  tipsterId?: string;
+  tipsterName?: string;
+  tipsterColor?: string;
+  tipsterPlatform?: string;
+}
+
+export interface Tipster {
+  id: string;
+  userId?: string;
+  name: string;
+  platform?: string;
+  notes?: string;
+  color?: string;
+  createdAt?: string;
 }
 
 export interface TagDefinition {

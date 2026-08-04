@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bet, Bankroll, Bookmaker, BankrollTransfer, BankrollTransaction, UserPreferences, BetStatus, TagDefinition } from './types';
+import { Bet, Bankroll, Bookmaker, BankrollTransfer, BankrollTransaction, UserPreferences, BetStatus, TagDefinition, Tipster } from './types';
 import {
   isAuthenticated,
   logoutUser,
@@ -8,7 +8,8 @@ import {
   bankrollsApi,
   bookmakersApi,
   transfersApi,
-  tagsApi
+  tagsApi,
+  tipstersApi
 } from './utils/api';
 import { calculateWinStreak } from './utils/storage';
 import { calculateLegsOdds } from './utils/dateUtils';
@@ -25,6 +26,7 @@ import { BankrollManager } from './components/BankrollManager';
 import { CSVImportExport } from './components/CSVImportExport';
 import { UserProfile } from './components/UserProfile';
 import { PLCalendarView } from './components/PLCalendarView';
+import { TipstersView } from './components/TipstersView';
 import { Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 
 import { AnimatePresence, motion } from 'motion/react';
@@ -56,6 +58,7 @@ export function App() {
     }
   });
   const [tagDefinitions, setTagDefinitions] = useState<TagDefinition[]>([]);
+  const [tipsters, setTipsters] = useState<Tipster[]>([]);
 
   const loadData = async (showSpinner = false) => {
     if (!isAuthenticated()) {
@@ -69,12 +72,13 @@ export function App() {
     }
     setError(null);
     try {
-      const [betsData, bankrollsData, bookmakersData, transfersData, tagsData, profileData, transactionsData] = await Promise.all([
+      const [betsData, bankrollsData, bookmakersData, transfersData, tagsData, tipstersData, profileData, transactionsData] = await Promise.all([
         betsApi.list(),
         bankrollsApi.list(),
         bookmakersApi.list(),
         transfersApi.list(),
         tagsApi.list(),
+        tipstersApi.list().catch(() => []),
         authApi.getProfile(),
         bankrollsApi.allTransactions().catch(() => [])
       ]);
@@ -84,6 +88,7 @@ export function App() {
       setBookmakers(bookmakersData);
       setTransfers(transfersData);
       setTagDefinitions(tagsData);
+      setTipsters(tipstersData);
       setTransactions(transactionsData);
 
       if (profileData) {
@@ -348,6 +353,17 @@ export function App() {
     }
   };
 
+  const handleAddTipster = async (data: { name: string; platform?: string; notes?: string; color?: string }): Promise<Tipster> => {
+    try {
+      const created = await tipstersApi.create(data);
+      await loadData();
+      return created;
+    } catch (err: any) {
+      alert(`Failed to create tipster: ${err.message}`);
+      throw err;
+    }
+  };
+
   const handleUpdatePrefs = async (newPrefs: UserPreferences) => {
     try {
       setUserPrefs(newPrefs);
@@ -450,6 +466,7 @@ export function App() {
             bankrolls={bankrolls}
             bookmakers={bookmakers}
             tagDefinitions={tagDefinitions}
+            tipsters={tipsters}
             activeBankrollId={userPrefs.activeBankrollId}
             userCurrency={userPrefs.currency}
             onUpdateBetStatus={handleUpdateBetStatus}
@@ -487,6 +504,8 @@ export function App() {
             onNavigate={setActiveTab}
             tagDefinitions={tagDefinitions}
             onAddTagDefinition={handleAddTagDefinition}
+            tipsters={tipsters}
+            onAddTipster={handleAddTipster}
           />
         );
       case 'entry':
@@ -494,11 +513,31 @@ export function App() {
           <ManualBetEntry
             bankrolls={bankrolls}
             bookmakers={bookmakers}
+            bets={bets}
             activeBankrollId={userPrefs.activeBankrollId}
             onAddBet={handleAddBet}
             onNavigate={setActiveTab}
             tagDefinitions={tagDefinitions}
             onAddTagDefinition={handleAddTagDefinition}
+            tipsters={tipsters}
+            onAddTipster={handleAddTipster}
+          />
+        );
+      case 'tipsters':
+        return (
+          <TipstersView
+            tipsters={tipsters}
+            bets={bets}
+            userCurrency={userPrefs.currency}
+            onAddTipster={handleAddTipster}
+            onUpdateTipster={async (id, data) => {
+              await tipstersApi.update(id, data);
+              await loadData();
+            }}
+            onDeleteTipster={async (id) => {
+              await tipstersApi.delete(id);
+              await loadData();
+            }}
           />
         );
       case 'analytics':
@@ -508,6 +547,7 @@ export function App() {
             bookmakers={bookmakers}
             transactions={transactions}
             userCurrency={userPrefs.currency}
+            tipsters={tipsters}
           />
         );
       case 'bankrolls':

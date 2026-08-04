@@ -138,10 +138,26 @@ CREATE TABLE IF NOT EXISTS bankroll_transactions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 10. TIPSTERS TABLE
+CREATE TABLE IF NOT EXISTS tipsters (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    platform VARCHAR(100),
+    notes TEXT,
+    color VARCHAR(50) DEFAULT '#3b82f6',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, name)
+);
+
+-- Add nullable tipster_id column to bets table
+ALTER TABLE bets ADD COLUMN IF NOT EXISTS tipster_id UUID REFERENCES tipsters(id) ON DELETE SET NULL;
+
 -- INDEXES FOR HIGH-SPEED LOOKUPS
 CREATE INDEX IF NOT EXISTS idx_bets_user_date ON bets(user_id, date);
 CREATE INDEX IF NOT EXISTS idx_bets_bankroll ON bets(bankroll_id);
 CREATE INDEX IF NOT EXISTS idx_bets_status ON bets(status);
+CREATE INDEX IF NOT EXISTS idx_bets_tipster ON bets(tipster_id);
 CREATE INDEX IF NOT EXISTS idx_bet_legs_bet ON bet_legs(bet_id);
 CREATE INDEX IF NOT EXISTS idx_bankrolls_user ON bankrolls(user_id);
 CREATE INDEX IF NOT EXISTS idx_bookmakers_user ON bookmakers(user_id);

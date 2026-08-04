@@ -117,33 +117,35 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
 
     let queryText = `
       SELECT 
-        id, date::text as date, type, total_odds as "totalOdds", stake, 
-        potential_payout as "potentialPayout", actual_return as "actualReturn", 
-        status, bookmaker_id as "bookmakerId", bankroll_id as "bankrollId", 
-        is_live as "isLive", is_free_bet as "isFreeBet", 
-        free_bet_destination as "freeBetDestination", notes, 
-        scanned_slip_url as "scannedSlipUrl", image_url as "imageUrl", tags
-      FROM bets 
-      WHERE user_id = $1
+        b.id, b.date::text as date, b.type, b.total_odds as "totalOdds", b.stake, 
+        b.potential_payout as "potentialPayout", b.actual_return as "actualReturn", 
+        b.status, b.bookmaker_id as "bookmakerId", b.bankroll_id as "bankrollId", 
+        b.tipster_id as "tipsterId", t.name as "tipsterName", t.color as "tipsterColor", t.platform as "tipsterPlatform",
+        b.is_live as "isLive", b.is_free_bet as "isFreeBet", 
+        b.free_bet_destination as "freeBetDestination", b.notes, 
+        b.scanned_slip_url as "scannedSlipUrl", b.image_url as "imageUrl", b.tags
+      FROM bets b
+      LEFT JOIN tipsters t ON b.tipster_id = t.id
+      WHERE b.user_id = $1
     `;
     const queryParams: any[] = [userId];
 
     if (startDate) {
       queryParams.push(startDate);
-      queryText += ` AND date >= $${queryParams.length}`;
+      queryText += ` AND b.date >= $${queryParams.length}`;
     }
 
     if (endDate) {
       queryParams.push(endDate);
-      queryText += ` AND date <= $${queryParams.length}`;
+      queryText += ` AND b.date <= $${queryParams.length}`;
     }
 
     if (bankrollId) {
       queryParams.push(bankrollId);
-      queryText += ` AND bankroll_id = $${queryParams.length}`;
+      queryText += ` AND b.bankroll_id = $${queryParams.length}`;
     }
 
-    queryText += ' ORDER BY date DESC, created_at DESC';
+    queryText += ' ORDER BY b.date DESC, b.created_at DESC';
 
     const betsResult = await query(queryText, queryParams);
     const bets = betsResult.rows;
@@ -224,6 +226,7 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
       scannedSlipUrl,
       imageUrl,
       tags,
+      tipsterId,
     } = req.body;
 
     if (!date || !type || !legs || !stake || !bookmakerId || !bankrollId) {
@@ -237,8 +240,8 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
       INSERT INTO bets (
         user_id, bankroll_id, bookmaker_id, date, type, total_odds, stake, 
         potential_payout, actual_return, status, is_live, is_free_bet, 
-        free_bet_destination, notes, scanned_slip_url, image_url, tags
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        free_bet_destination, notes, scanned_slip_url, image_url, tags, tipster_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
       RETURNING id
     `;
     const betInsertParams = [
@@ -259,6 +262,7 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
       scannedSlipUrl || '',
       imageUrl || '',
       JSON.stringify(tags || []),
+      tipsterId || null,
     ];
 
     const betResult = await client.query(betInsertQuery, betInsertParams);
@@ -335,6 +339,7 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
       scannedSlipUrl,
       imageUrl,
       tags,
+      tipsterId,
     } = req.body;
 
     await client.query('BEGIN');
@@ -372,8 +377,8 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
         bankroll_id = $1, bookmaker_id = $2, date = $3, type = $4, total_odds = $5, 
         stake = $6, potential_payout = $7, actual_return = $8, status = $9, 
         is_live = $10, is_free_bet = $11, free_bet_destination = $12, notes = $13, 
-        scanned_slip_url = $14, image_url = $15, tags = $16
-       WHERE id = $17 AND user_id = $18`,
+        scanned_slip_url = $14, image_url = $15, tags = $16, tipster_id = $17
+       WHERE id = $18 AND user_id = $19`,
       [
         bankrollId || orig.bankroll_id,
         bookmakerId || orig.bookmaker_id,
@@ -391,6 +396,7 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
         scannedSlipUrl || '',
         imageUrl || '',
         JSON.stringify(tags || []),
+        tipsterId || null,
         betId,
         userId,
       ]

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Bet, BetLeg, Bankroll, Bookmaker, BetType, SportType, BetStatus, TagDefinition } from '../types';
+import { Bet, BetLeg, Bankroll, Bookmaker, BetType, SportType, BetStatus, TagDefinition, Tipster } from '../types';
 import {
   ScanLine,
   Upload,
@@ -17,7 +17,9 @@ import {
   Copy,
   Sparkles,
   ShieldAlert,
-  Key
+  Key,
+  UserCheck,
+  X
 } from 'lucide-react';
 import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
 import { formatLegSelection, calculateLegsOdds, parseDateString, formatToLocalISOString, formatForDateTimeLocal } from '../utils/dateUtils';
@@ -32,6 +34,8 @@ interface BetslipScannerProps {
   onNavigate: (tab: string) => void;
   tagDefinitions: TagDefinition[];
   onAddTagDefinition?: (tag: TagDefinition) => void;
+  tipsters?: Tipster[];
+  onAddTipster?: (data: { name: string; platform?: string; notes?: string; color?: string }) => Promise<Tipster>;
 }
 
 export const BetslipScanner: React.FC<BetslipScannerProps> = ({
@@ -43,13 +47,21 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   onAddBet,
   onNavigate,
   tagDefinitions = [],
-  onAddTagDefinition
+  onAddTagDefinition,
+  tipsters = [],
+  onAddTipster
 }) => {
   const [selectedBankroll, setSelectedBankroll] = useState<string>(
     activeBankrollId && bankrolls.some((b) => b.id === activeBankrollId)
       ? activeBankrollId
       : bankrolls[0]?.id || ''
   );
+  const [selectedTipsterId, setSelectedTipsterId] = useState<string>('');
+  const [showInlineTipsterModal, setShowInlineTipsterModal] = useState<boolean>(false);
+  const [inlineTipsterName, setInlineTipsterName] = useState<string>('');
+  const [inlineTipsterPlatform, setInlineTipsterPlatform] = useState<string>('Telegram');
+  const [inlineTipsterColor, setInlineTipsterColor] = useState<string>('#3b82f6');
+  const [isCreatingTipster, setIsCreatingTipster] = useState<boolean>(false);
   const [scanningState, setScanningState] = useState<'idle' | 'scanning' | 'scanned' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<{
@@ -679,6 +691,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
       status: betStatus,
       bookmakerId: selectedBookmaker,
       bankrollId: selectedBankroll,
+      tipsterId: selectedTipsterId || undefined,
       isLive,
       isFreeBet,
       freeBetDestination: isFreeBet ? freeBetDestination : 'cash',
@@ -1233,6 +1246,46 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                       className="w-full bg-[#0b1326] border border-[#27314a] rounded-lg px-3 py-2 text-xs text-white"
                     />
                   </div>
+
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-xs text-[#8d90a0] font-medium">Tipster Source</label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInlineTipsterName('');
+                          setInlineTipsterPlatform('Telegram');
+                          setInlineTipsterColor('#3b82f6');
+                          setShowInlineTipsterModal(true);
+                        }}
+                        className="text-[10px] text-[#3b82f6] hover:underline font-bold flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <Plus size={10} /> Add New
+                      </button>
+                    </div>
+                    <select
+                      value={selectedTipsterId}
+                      onChange={(e) => {
+                        if (e.target.value === '__NEW_TIPSTER__') {
+                          setInlineTipsterName('');
+                          setInlineTipsterPlatform('Telegram');
+                          setInlineTipsterColor('#3b82f6');
+                          setShowInlineTipsterModal(true);
+                        } else {
+                          setSelectedTipsterId(e.target.value);
+                        }
+                      }}
+                      className="w-full bg-[#0b1326] border border-[#27314a] rounded-lg px-3 py-2 text-xs text-white font-semibold"
+                    >
+                      <option value="">👤 My Own Pick (No Tipster)</option>
+                      {tipsters.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          🎯 {t.name} {t.platform ? `(${t.platform})` : ''}
+                        </option>
+                      ))}
+                      <option value="__NEW_TIPSTER__">+ Add New Tipster...</option>
+                    </select>
+                  </div>
                 </div>
 
                 {/* Switches for Live / Free Bet */}
@@ -1522,8 +1575,8 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                       >
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#172036] p-3 rounded-lg border border-indigo-500/30">
                           {/* Match Event Name row / full width input */}
-                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1 w-full">
-                            <div className="flex items-center justify-between w-full sm:w-auto">
+                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1 w-full min-w-0">
+                            <div className="flex items-center justify-between w-full sm:w-auto shrink-0">
                               <span className="bg-indigo-600/30 text-indigo-300 border border-indigo-500/50 text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 shrink-0">
                                 <Sparkles size={12} /> Bet Builder
                               </span>
@@ -1531,7 +1584,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                               {/* Mobile Delete Button */}
                               <button
                                 onClick={() => handleRemoveBuilderGroup(group.builderId)}
-                                className="sm:hidden text-xs text-rose-400 hover:text-rose-300 p-1"
+                                className="sm:hidden text-xs text-rose-400 hover:text-rose-300 p-1 shrink-0"
                                 title="Delete Bet Builder block"
                               >
                                 <Trash2 size={14} />
@@ -1542,27 +1595,27 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                               placeholder="Match Event (e.g. Halmstad vs. Sirius)"
                               value={group.event}
                               onChange={(e) => handleUpdateBuilderEvent(group.builderId, e.target.value)}
-                              className="bg-[#0b1326] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white font-bold w-full"
+                              className="bg-[#0b1326] border border-[#27314a] rounded px-2.5 py-1.5 text-xs text-white font-bold w-full min-w-0 flex-1"
                             />
                           </div>
 
                           {/* Combined Odds & Desktop Delete Button */}
                           <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 w-full sm:w-auto pt-1.5 sm:pt-0 border-t border-indigo-500/10 sm:border-t-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[11px] text-indigo-200 font-medium">Combined Odds:</span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-[11px] text-indigo-200 font-medium whitespace-nowrap">Combined Odds:</span>
                               <input
                                 type="number"
                                 step="0.01"
                                 placeholder="4.50"
                                 value={group.builderOdds}
                                 onChange={(e) => handleUpdateBuilderOdds(group.builderId, Number(e.target.value))}
-                                className="bg-[#0b1326] border border-indigo-500/60 rounded px-2 py-1 text-xs text-indigo-300 font-mono font-bold w-20 text-center"
+                                className="bg-[#0b1326] border border-indigo-500/60 rounded px-2 py-1 text-xs text-indigo-300 font-mono font-bold w-20 text-center shrink-0"
                               />
                             </div>
 
                             <button
                               onClick={() => handleRemoveBuilderGroup(group.builderId)}
-                              className="hidden sm:block text-xs text-rose-400 hover:text-rose-300 p-1"
+                              className="hidden sm:block text-xs text-rose-400 hover:text-rose-300 p-1 shrink-0"
                               title="Delete Bet Builder block"
                             >
                               <Trash2 size={14} />
@@ -2001,6 +2054,113 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Inline Add Tipster Modal */}
+      {showInlineTipsterModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#171f33] border border-[#27314a] rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[#27314a] pb-3">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <UserCheck className="w-5 h-5 text-[#2563eb]" />
+                <span>Create New Tipster Source</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowInlineTipsterModal(false)}
+                className="text-[#8d90a0] hover:text-white p-1 rounded-lg hover:bg-[#27314a]"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-[#8d90a0] font-semibold mb-1">
+                  Tipster Name <span className="text-red-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. SharpPicks, @JohnDoePicks"
+                  value={inlineTipsterName}
+                  onChange={(e) => setInlineTipsterName(e.target.value)}
+                  className="w-full bg-[#0b1326] border border-[#27314a] rounded-xl px-3 py-2 text-white placeholder-[#8d90a0] focus:outline-none focus:border-[#2563eb]"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-[#8d90a0] font-semibold mb-1">Platform</label>
+                <select
+                  value={inlineTipsterPlatform}
+                  onChange={(e) => setInlineTipsterPlatform(e.target.value)}
+                  className="w-full bg-[#0b1326] border border-[#27314a] rounded-xl px-3 py-2 text-white"
+                >
+                  <option value="Telegram">Telegram</option>
+                  <option value="Twitter/X">Twitter/X</option>
+                  <option value="Discord">Discord</option>
+                  <option value="YouTube">YouTube</option>
+                  <option value="VIP Group">VIP Group</option>
+                  <option value="Personal Pick">Personal Pick</option>
+                  <option value="Website">Website</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[#8d90a0] font-semibold mb-1.5">Badge Color</label>
+                <div className="flex items-center gap-2">
+                  {['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899', '#06b6d4', '#f97316'].map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setInlineTipsterColor(c)}
+                      className={`w-6 h-6 rounded-full border-2 cursor-pointer transition-transform ${
+                        inlineTipsterColor === c ? 'scale-110 border-white' : 'border-transparent'
+                      }`}
+                      style={{ backgroundColor: c }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#27314a]">
+              <button
+                type="button"
+                onClick={() => setShowInlineTipsterModal(false)}
+                className="px-4 py-2 bg-[#0b1326] text-[#8d90a0] hover:text-white rounded-xl text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!inlineTipsterName.trim() || isCreatingTipster}
+                onClick={async () => {
+                  if (!inlineTipsterName.trim() || !onAddTipster) return;
+                  setIsCreatingTipster(true);
+                  try {
+                    const newTipster = await onAddTipster({
+                      name: inlineTipsterName.trim(),
+                      platform: inlineTipsterPlatform,
+                      color: inlineTipsterColor
+                    });
+                    if (newTipster && newTipster.id) {
+                      setSelectedTipsterId(newTipster.id);
+                    }
+                    setShowInlineTipsterModal(false);
+                  } catch (err) {
+                    console.error('Failed to create tipster:', err);
+                  } finally {
+                    setIsCreatingTipster(false);
+                  }
+                }}
+                className="px-4 py-2 bg-[#2563eb] hover:bg-[#1d4ed8] text-white rounded-xl text-xs font-bold disabled:opacity-50"
+              >
+                {isCreatingTipster ? 'Creating...' : 'Save & Select Tipster'}
+              </button>
             </div>
           </div>
         </div>
