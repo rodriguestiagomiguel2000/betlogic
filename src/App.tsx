@@ -75,16 +75,21 @@ export function App() {
     }
     setError(null);
     try {
-      const [betsData, bankrollsData, bookmakersData, transfersData, tagsData, tipstersData, profileData, transactionsData] = await Promise.all([
-        betsApi.list(),
-        bankrollsApi.list(),
-        bookmakersApi.list(),
-        transfersApi.list(),
-        tagsApi.list(),
-        tipstersApi.list().catch(() => []),
-        authApi.getProfile(),
-        bankrollsApi.allTransactions().catch(() => [])
-      ]);
+      // Serialize calls to avoid peak memory usage on the server
+      const betsData = await betsApi.list();
+      const bankrollsData = await bankrollsApi.list();
+      const bookmakersData = await bookmakersApi.list();
+      const transfersData = await transfersApi.list();
+      const tagsData = await tagsApi.list();
+      const tipstersData = await tipstersApi.list().catch(() => []);
+      const profileData = await authApi.getProfile();
+      
+      // Transactions are typically large, only fetch if we don't have them or as needed
+      // For now, we'll still fetch them but separately from the main batch
+      let transactionsData = transactions;
+      if (activeTab === 'analytics' || activeTab === 'bankrolls' || transactions.length === 0) {
+        transactionsData = await bankrollsApi.allTransactions().catch(() => []);
+      }
 
       setBets(betsData);
       setBankrolls(bankrollsData);
@@ -129,6 +134,13 @@ export function App() {
       window.removeEventListener('auth-logout', handleLogoutEvent);
     };
   }, []);
+
+  // Fetch transactions when switching to tabs that need them
+  useEffect(() => {
+    if ((activeTab === 'analytics' || activeTab === 'bankrolls') && transactions.length === 0 && isAuth) {
+      loadData(false);
+    }
+  }, [activeTab, isAuth]);
 
   if (!isAuth) {
     return <AuthScreen onAuthenticated={() => { setIsAuth(true); loadData(); }} />;

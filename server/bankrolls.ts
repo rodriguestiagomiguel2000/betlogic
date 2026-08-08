@@ -27,16 +27,17 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
       [userId]
     );
 
-    const bankrolls = result.rows.map((b) => ({
-      ...b,
-      initialBalance: parseFloat(b.initialBalance),
-      currentBalance: parseFloat(b.currentBalance),
-      freeBetCredits: parseFloat(b.freeBetCredits),
-      allocatedMargin: parseFloat(b.allocatedMargin),
-      displayOrder: parseInt(b.displayOrder || 0),
-    }));
+    // Optimize by modifying in-place to reduce memory pressure
+    for (let i = 0; i < result.rows.length; i++) {
+      const b = result.rows[i];
+      b.initialBalance = parseFloat(b.initialBalance);
+      b.currentBalance = parseFloat(b.currentBalance);
+      b.freeBetCredits = parseFloat(b.freeBetCredits);
+      b.allocatedMargin = parseFloat(b.allocatedMargin);
+      b.displayOrder = parseInt(b.displayOrder || 0);
+    }
 
-    return res.json(bankrolls);
+    return res.json(result.rows);
   } catch (err: any) {
     console.error('Error fetching bankrolls:', err);
     return res.status(500).json({ error: 'Failed to retrieve bankrolls.' });
@@ -314,12 +315,13 @@ router.get('/all-transactions', authenticateToken as any, async (req: Authentica
        ORDER BY date ASC, created_at ASC`;
 
     const result = await query(queryText, [userId]);
-    const transactions = result.rows.map((t) => ({
-      ...t,
-      amount: parseFloat(t.amount || 0),
-    }));
+    // Optimize by modifying in-place to reduce memory pressure
+    for (let i = 0; i < result.rows.length; i++) {
+      const t = result.rows[i];
+      t.amount = parseFloat(t.amount || 0);
+    }
 
-    return res.json(transactions);
+    return res.json(result.rows);
   } catch (err: any) {
     console.error('Error fetching all bankroll transactions:', err);
     return res.status(500).json({ error: err.message || 'Failed to retrieve all bankroll transactions.' });

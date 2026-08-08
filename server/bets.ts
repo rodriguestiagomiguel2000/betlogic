@@ -182,18 +182,18 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
       });
     });
 
-    // Merge legs into bets
-    const enrichedBets = bets.map((bet) => ({
-      ...bet,
-      totalOdds: parseFloat(bet.totalOdds),
-      stake: parseFloat(bet.stake),
-      potentialPayout: parseFloat(bet.potentialPayout),
-      actualReturn: bet.actualReturn ? parseFloat(bet.actualReturn) : 0,
-      tags: typeof bet.tags === 'string' ? JSON.parse(bet.tags) : (bet.tags || []),
-      legs: legsByBetId[bet.id] || [],
-    }));
+    // Merge legs into bets - Optimize by modifying in-place to reduce memory pressure
+    for (let i = 0; i < bets.length; i++) {
+      const bet = bets[i];
+      bet.totalOdds = parseFloat(bet.totalOdds);
+      bet.stake = parseFloat(bet.stake);
+      bet.potentialPayout = parseFloat(bet.potentialPayout);
+      bet.actualReturn = bet.actualReturn ? parseFloat(bet.actualReturn) : 0;
+      bet.tags = typeof bet.tags === 'string' ? JSON.parse(bet.tags) : (bet.tags || []);
+      bet.legs = legsByBetId[bet.id] || [];
+    }
 
-    return res.json(enrichedBets);
+    return res.json(bets);
   } catch (err: any) {
     console.error('Error listing bets:', err);
     return res.status(500).json({ error: 'Failed to retrieve bets list.' });
