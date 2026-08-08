@@ -187,10 +187,17 @@ export function App() {
         status,
         actualReturn: actualReturn !== undefined ? actualReturn : status === 'won' ? existing.potentialPayout : 0
       };
+      
+      // Optimistic update
+      setBets(prev => prev.map(b => b.id === betId ? updated : b));
+      
       await betsApi.update(betId, updated);
-      await loadData();
+      // Background reload to ensure everything (bankrolls, bookmakers) is in sync
+      loadData();
     } catch (err: any) {
       alert(`Failed to update bet status: ${err.message}`);
+      // Revert on error
+      loadData();
     }
   };
 
@@ -227,10 +234,16 @@ export function App() {
         actualReturn: ret
       };
 
+      // Optimistic update
+      setBets(prev => prev.map(b => b.id === betId ? updated : b));
+
       await betsApi.update(betId, updated);
-      await loadData();
+      // Background reload to ensure everything (bankrolls, bookmakers) is in sync
+      loadData();
     } catch (err: any) {
       alert(`Failed to update leg status: ${err.message}`);
+      // Revert on error
+      loadData();
     }
   };
 
