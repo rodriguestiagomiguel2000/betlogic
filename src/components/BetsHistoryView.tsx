@@ -113,7 +113,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
 
   // Filtered Bets Computation
   const filteredBets = useMemo(() => {
-    return bets.filter((bet) => {
+    const filtered = bets.filter((bet) => {
       // Search term filter
       if (searchTerm) {
         const query = searchTerm.toLowerCase();
@@ -179,13 +179,18 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
       // Tag filter
       if (selectedTagsFilter.length > 0) {
         if (!bet.tags) return false;
+        
         let tagsList: string[] = [];
         if (Array.isArray(bet.tags)) {
-          tagsList = bet.tags;
+          tagsList = bet.tags.map(t => typeof t === 'string' ? t : (t as any)?.name || String(t));
         } else if (typeof bet.tags === 'string') {
           try {
             const parsed = JSON.parse(bet.tags);
-            tagsList = Array.isArray(parsed) ? parsed : [bet.tags];
+            if (Array.isArray(parsed)) {
+              tagsList = parsed.map(t => typeof t === 'string' ? t : (t as any)?.name || String(t));
+            } else {
+              tagsList = [bet.tags];
+            }
           } catch {
             tagsList = [bet.tags];
           }
@@ -201,24 +206,32 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
       }
 
       return true;
-    }).sort((a, b) => {
-      if (sortBy === 'date-desc') return getRepresentativeEventDateTimestamp(b) - getRepresentativeEventDateTimestamp(a);
-      if (sortBy === 'date-asc') return getRepresentativeEventDateTimestamp(a) - getRepresentativeEventDateTimestamp(b);
-      if (sortBy === 'event-date-asc') return getRepresentativeEventDateTimestamp(a) - getRepresentativeEventDateTimestamp(b);
-      if (sortBy === 'event-date-desc') return getRepresentativeEventDateTimestamp(b) - getRepresentativeEventDateTimestamp(a);
-      if (sortBy === 'stake-desc') return b.stake - a.stake;
-      if (sortBy === 'odds-desc') return b.totalOdds - a.totalOdds;
-      if (sortBy === 'profit-desc') {
-        const getProfit = (bet: Bet) => {
-          if (bet.status === 'won') return (bet.actualReturn ?? bet.potentialPayout) - bet.stake;
-          if (bet.status === 'lost') return -bet.stake;
-          if (bet.status === 'cashout') return (bet.actualReturn ?? 0) - bet.stake;
-          return 0;
-        };
-        return getProfit(b) - getProfit(a);
-      }
+    });
+
+    // Pre-calculate sort keys to avoid expensive calls during sort
+    const betsWithKeys = filtered.map(bet => ({
+      bet,
+      timestamp: getRepresentativeEventDateTimestamp(bet),
+      profit: (() => {
+        if (bet.status === 'won') return (bet.actualReturn ?? bet.potentialPayout) - bet.stake;
+        if (bet.status === 'lost') return -bet.stake;
+        if (bet.status === 'cashout') return (bet.actualReturn ?? 0) - bet.stake;
+        return 0;
+      })()
+    }));
+
+    betsWithKeys.sort((a, b) => {
+      if (sortBy === 'date-desc') return b.timestamp - a.timestamp;
+      if (sortBy === 'date-asc') return a.timestamp - b.timestamp;
+      if (sortBy === 'event-date-asc') return a.timestamp - b.timestamp;
+      if (sortBy === 'event-date-desc') return b.timestamp - a.timestamp;
+      if (sortBy === 'stake-desc') return b.bet.stake - a.bet.stake;
+      if (sortBy === 'odds-desc') return b.bet.totalOdds - a.bet.totalOdds;
+      if (sortBy === 'profit-desc') return b.profit - a.profit;
       return 0;
     });
+
+    return betsWithKeys.map((bk: any) => bk.bet);
   }, [
     bets,
     searchTerm,
@@ -306,7 +319,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
     const headers = ['Date', 'Type', 'Sport', 'Event/Selection', 'Odds', 'Stake', 'Potential Payout', 'Actual Return', 'Status', 'Bookmaker', 'Live', 'Free Bet', 'Notes'];
     const rows = filteredBets.map((b) => {
       const bmName = bookmakers.find((bm) => bm.id === b.bookmakerId)?.name || 'Unknown';
-      const eventDesc = b.legs.map((l) => `${l.event} (${l.selection} @ ${l.odds})`).join(' | ');
+      const eventDesc = b.legs.map((l: any) => `${l.event} (${l.selection} @ ${l.odds})`).join(' | ');
       return [
         formatBetDateTime(b),
         b.type.toUpperCase(),
@@ -862,7 +875,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                                   </span>
                                 );
                               })()}
-                              {bet.tags && bet.tags.map((tagName) => {
+                              {bet.tags && bet.tags.map((tagName: string) => {
                                 const def = tagDefinitions.find(t => t.name.toLowerCase() === tagName.toLowerCase());
                                 const color = def ? def.color : '#4b5563';
                                 return (
@@ -973,7 +986,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                                 Parlay Legs Detail Breakdown ({bet.legs.length} Selections)
                               </div>
                               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                                {bet.legs.map((leg, idx) => (
+                                {bet.legs.map((leg: any, idx: number) => (
                                   <div key={leg.id || idx} className="bg-[#171f33] p-2.5 rounded border border-[#27314a] text-xs space-y-1.5">
                                     <div className="flex justify-between items-center text-[#8d90a0] text-[10px]">
                                       <span>Leg #{idx + 1} • {leg.sport}</span>
@@ -1031,7 +1044,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
       ) : (
         /* Card View */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredBets.map((bet) => {
+          {filteredBets.map((bet: any) => {
             const bm = bookmakers.find((b) => b.id === bet.bookmakerId);
             const mainLeg = bet.legs[0];
 
@@ -1101,7 +1114,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                             </span>
                           );
                         })()}
-                        {bet.tags && bet.tags.map((tagName) => {
+                        {bet.tags && bet.tags.map((tagName: string) => {
                           const def = tagDefinitions.find(t => t.name.toLowerCase() === tagName.toLowerCase());
                           const color = def ? def.color : '#4b5563';
                           return (
@@ -1120,7 +1133,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
 
                   {/* Legs breakdown */}
                   <div className="space-y-2 pt-1.5">
-                    {bet.legs.map((leg, idx) => (
+                    {bet.legs.map((leg: any, idx: number) => (
                       <div key={leg.id || idx} className="bg-[#0b1326] p-3 rounded-lg border border-[#27314a] text-xs flex items-center justify-between gap-3 shadow-sm">
                         <div className="min-w-0 flex-1 space-y-1">
                           {/* Event & Market Context Header */}

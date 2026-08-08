@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Bet, Bankroll, Bookmaker, BankrollTransfer, BankrollTransaction, UserPreferences, BetStatus, TagDefinition, Tipster } from './types';
 import {
   isAuthenticated,
@@ -11,7 +11,7 @@ import {
   tagsApi,
   tipstersApi
 } from './utils/api';
-import { calculateWinStreak } from './utils/storage';
+import { calculateWinStreak, computeBetFinancialImpact, updateBookmakerBalanceForBankroll } from './utils/storage';
 import { calculateLegsOdds } from './utils/dateUtils';
 import { AuthScreen } from './components/AuthScreen';
 
@@ -59,6 +59,9 @@ export function App() {
   });
   const [tagDefinitions, setTagDefinitions] = useState<TagDefinition[]>([]);
   const [tipsters, setTipsters] = useState<Tipster[]>([]);
+
+  // Memoized win streak
+  const winStreak = useMemo(() => calculateWinStreak(bets), [bets]);
 
   const loadData = async (showSpinner = false) => {
     if (!isAuthenticated()) {
@@ -188,12 +191,47 @@ export function App() {
         actualReturn: actualReturn !== undefined ? actualReturn : status === 'won' ? existing.potentialPayout : 0
       };
       
-      // Optimistic update
-      setBets(prev => prev.map(b => b.id === betId ? updated : b));
+      // Optimistic update of all related states
+      const oldBet = bets.find(b => b.id === betId);
+      if (oldBet) {
+        // Update bets state
+        setBets(prev => prev.map(b => b.id === betId ? updated : b));
+
+        // Update bookmakers state
+        const oldImpact = computeBetFinancialImpact(oldBet);
+        const newImpact = computeBetFinancialImpact(updated);
+        
+        const realDelta = newImpact.realCashDelta - oldImpact.realCashDelta;
+        const freeDelta = newImpact.freeBetDelta - oldImpact.freeBetDelta;
+
+        if (realDelta !== 0 || freeDelta !== 0) {
+          setBookmakers(prev => prev.map(bm => {
+            if (bm.id === updated.bookmakerId) {
+              return updateBookmakerBalanceForBankroll(bm, updated.bankrollId, 
+                (bm.realBalance || 0) + realDelta, 
+                (bm.freeBetBalance || 0) + freeDelta
+              );
+            }
+            return bm;
+          }));
+
+          // Update bankrolls state
+          setBankrolls(prev => prev.map(br => {
+            if (br.id === updated.bankrollId) {
+              return {
+                ...br,
+                currentBalance: (br.currentBalance || 0) + realDelta,
+                freeBetCredits: (br.freeBetCredits || 0) + freeDelta
+              };
+            }
+            return br;
+          }));
+        }
+      }
       
       await betsApi.update(betId, updated);
-      // Background reload to ensure everything (bankrolls, bookmakers) is in sync
-      loadData();
+      // Background reload (silent) to ensure everything is in sync with server-side calculations
+      loadData(false);
     } catch (err: any) {
       alert(`Failed to update bet status: ${err.message}`);
       // Revert on error
@@ -234,12 +272,46 @@ export function App() {
         actualReturn: ret
       };
 
-      // Optimistic update
-      setBets(prev => prev.map(b => b.id === betId ? updated : b));
+      // Optimistic update of all related states
+      const oldBet = bets.find(b => b.id === betId);
+      if (oldBet) {
+        // Update bets state
+        setBets(prev => prev.map(b => b.id === betId ? updated : b));
+
+        // Update bookmakers and bankrolls based on impact change
+        const oldImpact = computeBetFinancialImpact(oldBet);
+        const newImpact = computeBetFinancialImpact(updated);
+        
+        const realDelta = newImpact.realCashDelta - oldImpact.realCashDelta;
+        const freeDelta = newImpact.freeBetDelta - oldImpact.freeBetDelta;
+
+        if (realDelta !== 0 || freeDelta !== 0) {
+          setBookmakers(prev => prev.map(bm => {
+            if (bm.id === updated.bookmakerId) {
+              return updateBookmakerBalanceForBankroll(bm, updated.bankrollId, 
+                (bm.realBalance || 0) + realDelta, 
+                (bm.freeBetBalance || 0) + freeDelta
+              );
+            }
+            return bm;
+          }));
+
+          setBankrolls(prev => prev.map(br => {
+            if (br.id === updated.bankrollId) {
+              return {
+                ...br,
+                currentBalance: (br.currentBalance || 0) + realDelta,
+                freeBetCredits: (br.freeBetCredits || 0) + freeDelta
+              };
+            }
+            return br;
+          }));
+        }
+      }
 
       await betsApi.update(betId, updated);
-      // Background reload to ensure everything (bankrolls, bookmakers) is in sync
-      loadData();
+      // Background reload (silent)
+      loadData(false);
     } catch (err: any) {
       alert(`Failed to update leg status: ${err.message}`);
       // Revert on error
@@ -611,7 +683,7 @@ export function App() {
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        winStreak={calculateWinStreak(bets)}
+        winStreak={winStreak}
         onLogout={handleLogout}
       />
 

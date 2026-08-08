@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Bet, Bookmaker, BankrollTransaction, Tipster } from '../types';
 import { formatCurrency, calculateWinStreak, getCurrencySymbol } from '../utils/storage';
 import { getBetLatestEventDate } from '../utils/dateUtils';
@@ -77,98 +77,227 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
     trajectories: Array<{ betIndex: number; median: number; worst: number; best: number }>;
   } | null>(null);
 
-  // Profit Milestone Goal
-  const targetMilestone = 15000;
-  const settledBets = bets.filter((b) => b.status === 'won' || b.status === 'lost' || b.status === 'cashout');
-  const settledWinsCount = bets.filter((b) => b.status === 'won').length;
-  
-  const currentTotalProfit = settledBets.reduce((sum, b) => {
-    if (b.status === 'won') return sum + ((b.actualReturn || b.potentialPayout) - b.stake);
-    if (b.status === 'lost') return sum - b.stake;
-    if (b.status === 'cashout') return sum + ((b.actualReturn || 0) - b.stake);
-    return sum;
-  }, 0);
+  const targetMilestone = 1000;
 
-  const totalSettledStaked = settledBets.reduce((sum, b) => sum + b.stake, 0);
-  const portfolioRoi = totalSettledStaked > 0 ? (currentTotalProfit / totalSettledStaked) * 100 : null;
-  const actualWinRate = settledBets.length > 0 ? settledWinsCount / settledBets.length : null;
-  const actualAvgOdds = settledBets.length > 0 ? settledBets.reduce((sum, b) => sum + b.totalOdds, 0) / settledBets.length : null;
+  const runMonteCarloSimulation = () => {
+    const iterations = 500;
+    const numBets = mcNumBets;
+    const startBankroll = mcBankroll;
+    const winProb = mcWinRate / 100;
+    const odds = mcAvgOdds;
+    const stakePct = mcStakePct / 100;
 
-  const milestoneProgress = Math.min(100, Math.max(0, (currentTotalProfit / targetMilestone) * 100));
+    let ruinCount = 0;
+    const allFinalBankrolls: number[] = [];
+    const allTrajectories: number[][] = [];
+
+    for (let i = 0; i < iterations; i++) {
+      let currentBalance = startBankroll;
+      const trajectory = [currentBalance];
+      let isRuined = false;
+
+      for (let j = 0; j < numBets; j++) {
+        if (currentBalance <= 0) {
+          isRuined = true;
+          currentBalance = 0;
+        }
+
+        if (!isRuined) {
+          const stake = currentBalance * stakePct;
+          const isWin = Math.random() < winProb;
+          if (isWin) {
+            currentBalance += stake * (odds - 1);
+          } else {
+            currentBalance -= stake;
+          }
+        }
+        trajectory.push(currentBalance);
+      }
+
+      if (isRuined || currentBalance <= 0) ruinCount++;
+      allFinalBankrolls.push(currentBalance);
+      allTrajectories.push(trajectory);
+    }
+
+    allFinalBankrolls.sort((a, b) => a - b);
+    const worstCase = allFinalBankrolls[Math.floor(iterations * 0.05)];
+    const medianFinal = allFinalBankrolls[Math.floor(iterations * 0.5)];
+    const bestCase = allFinalBankrolls[Math.floor(iterations * 0.95)];
+    const ruinRate = Number(((ruinCount / iterations) * 100).toFixed(1));
+
+    const combinedTrajectories = [];
+    for (let j = 0; j <= numBets; j++) {
+      const stepBankrolls = allTrajectories.map(t => t[j]).sort((a, b) => a - b);
+      combinedTrajectories.push({
+        betIndex: j,
+        worst: Number(stepBankrolls[Math.floor(iterations * 0.05)].toFixed(2)),
+        median: Number(stepBankrolls[Math.floor(iterations * 0.5)].toFixed(2)),
+        best: Number(stepBankrolls[Math.floor(iterations * 0.95)].toFixed(2))
+      });
+    }
+
+    setMcResults({
+      medianFinal,
+      worstCase,
+      bestCase,
+      ruinRate,
+      trajectories: combinedTrajectories
+    });
+  };
+
+  const settledStats = useMemo(() => {
+    const settled = bets.filter((b) => b.status === 'won' || b.status === 'lost' || b.status === 'cashout');
+    const wonCount = settled.filter((b) => b.status === 'won').length;
+    
+    const profit = settled.reduce((sum, b) => {
+      if (b.status === 'won') return sum + ((b.actualReturn || b.potentialPayout) - b.stake);
+      if (b.status === 'lost') return sum - b.stake;
+      if (b.status === 'cashout') return sum + ((b.actualReturn || 0) - b.stake);
+      return sum;
+    }, 0);
+
+    const staked = settled.reduce((sum, b) => sum + b.stake, 0);
+    const roi = staked > 0 ? (profit / staked) * 100 : null;
+    const winRate = settled.length > 0 ? wonCount / settled.length : null;
+    const avgOdds = settled.length > 0 ? settled.reduce((sum, b) => sum + b.totalOdds, 0) / settled.length : null;
+    const progress = Math.min(100, Math.max(0, (profit / targetMilestone) * 100));
+
+    return { settled, wonCount, profit, staked, roi, winRate, avgOdds, progress };
+  }, [bets]);
+
+  const { settled: settledBets, wonCount: settledWinsCount, profit: currentTotalProfit, staked: totalSettledStaked, roi: portfolioRoi, winRate: actualWinRate, avgOdds: actualAvgOdds, progress: milestoneProgress } = settledStats;
 
   // Sport ROI Breakdown (Only settled bets)
-  const sportStatsMap: Record<string, { staked: number; returned: number; wins: number; total: number }> = {};
-  bets.forEach((bet) => {
-    if (bet.status !== 'won' && bet.status !== 'lost' && bet.status !== 'cashout') return;
-    
-    const validLegs = bet.legs && bet.legs.length > 0 ? bet.legs : [{ sport: 'Football' }];
-    const legCount = validLegs.length;
-    
-    validLegs.forEach((leg) => {
-      const sport = leg.sport || 'Football';
-      if (!sportStatsMap[sport]) {
-        sportStatsMap[sport] = { staked: 0, returned: 0, wins: 0, total: 0 };
-      }
+  const sportRoiData = useMemo(() => {
+    const sportStatsMap: Record<string, { staked: number; returned: number; wins: number; total: number }> = {};
+    bets.forEach((bet) => {
+      if (bet.status !== 'won' && bet.status !== 'lost' && bet.status !== 'cashout') return;
       
-      const proportion = 1 / legCount;
-      sportStatsMap[sport].staked += bet.stake * proportion;
+      const validLegs = bet.legs && bet.legs.length > 0 ? bet.legs : [{ sport: 'Football' }];
+      const legCount = validLegs.length;
       
-      let returnedAmt = 0;
-      if (bet.status === 'won') {
-        returnedAmt = (bet.actualReturn || bet.potentialPayout) * proportion;
-        sportStatsMap[sport].wins += proportion;
-      } else if (bet.status === 'cashout') {
-        returnedAmt = (bet.actualReturn || 0) * proportion;
-      }
-      
-      sportStatsMap[sport].returned += returnedAmt;
-      sportStatsMap[sport].total += proportion;
+      validLegs.forEach((leg) => {
+        const sport = leg.sport || 'Football';
+        if (!sportStatsMap[sport]) {
+          sportStatsMap[sport] = { staked: 0, returned: 0, wins: 0, total: 0 };
+        }
+        
+        const proportion = 1 / legCount;
+        sportStatsMap[sport].staked += bet.stake * proportion;
+        
+        let returnedAmt = 0;
+        if (bet.status === 'won') {
+          returnedAmt = (bet.actualReturn || bet.potentialPayout) * proportion;
+          sportStatsMap[sport].wins += proportion;
+        } else if (bet.status === 'cashout') {
+          returnedAmt = (bet.actualReturn || 0) * proportion;
+        }
+        
+        sportStatsMap[sport].returned += returnedAmt;
+        sportStatsMap[sport].total += proportion;
+      });
     });
-  });
 
-  const sportRoiData = Object.keys(sportStatsMap).map((sport) => {
-    const data = sportStatsMap[sport];
-    const profit = data.returned - data.staked;
-    const roi = data.staked > 0 ? (profit / data.staked) * 100 : 0;
-    const winRate = data.total > 0 ? (data.wins / data.total) * 100 : 0;
-    return {
-      sport,
-      staked: Number(data.staked.toFixed(2)),
-      profit: Number(profit.toFixed(2)),
-      roi: Number(roi.toFixed(2)),
-      winRate: Number(winRate.toFixed(1)),
-      total: Number(data.total.toFixed(1))
-    };
-  });
+    return Object.keys(sportStatsMap).map((sport) => {
+      const data = sportStatsMap[sport];
+      const profit = data.returned - data.staked;
+      const roi = data.staked > 0 ? (profit / data.staked) * 100 : 0;
+      const winRate = data.total > 0 ? (data.wins / data.total) * 100 : 0;
+      return {
+        sport,
+        staked: Number(data.staked.toFixed(2)),
+        profit: Number(profit.toFixed(2)),
+        roi: Number(roi.toFixed(2)),
+        winRate: Number(winRate.toFixed(1)),
+        total: Number(data.total.toFixed(1))
+      };
+    });
+  }, [bets]);
 
   // Risk Heatmap Bucket Analysis
-  const totalStakedAll = bets.reduce((sum, b) => sum + b.stake, 0);
-  let highStakeCount = 0;
-  let medStakeCount = 0;
-  let lowStakeCount = 0;
-  let highStakeAmt = 0;
-  let medStakeAmt = 0;
-  let lowStakeAmt = 0;
+  const riskAnalysis = useMemo(() => {
+    const totalStakedAll = bets.reduce((sum, b) => sum + b.stake, 0);
+    let highStakeCount = 0;
+    let medStakeCount = 0;
+    let lowStakeCount = 0;
+    let highStakeAmt = 0;
+    let medStakeAmt = 0;
+    let lowStakeAmt = 0;
+
+    bets.forEach((b) => {
+      if (b.stake >= 100) {
+        highStakeCount++;
+        highStakeAmt += b.stake;
+      } else if (b.stake >= 30) {
+        medStakeCount++;
+        medStakeAmt += b.stake;
+      } else {
+        lowStakeCount++;
+        lowStakeAmt += b.stake;
+      }
+    });
+
+    const highPct = totalStakedAll > 0 ? ((highStakeAmt / totalStakedAll) * 100).toFixed(1) : '0.0';
+    const medPct = totalStakedAll > 0 ? ((medStakeAmt / totalStakedAll) * 100).toFixed(1) : '0.0';
+    const lowPct = totalStakedAll > 0 ? ((lowStakeAmt / totalStakedAll) * 100).toFixed(1) : '0.0';
+
+    return { totalStakedAll, highStakeCount, medStakeCount, lowStakeCount, highStakeAmt, medStakeAmt, lowStakeAmt, highPct, medPct, lowPct };
+  }, [bets]);
+
+  const { totalStakedAll, highStakeAmt, medStakeAmt, lowStakeAmt, highPct, medPct, lowPct, highStakeCount, medStakeCount, lowStakeCount } = riskAnalysis;
 
   // Dynamic Bankroll Evolution calculation based on chronological history of transactions and settled bets
-  interface TimelineItem {
-    rawDate: string;
-    capitalDelta: number;
-    betProfit: number;
-    descriptions: string[];
-  }
+  const bankrollEvolutionData = useMemo(() => {
+    interface TimelineItem {
+      rawDate: string;
+      capitalDelta: number;
+      betProfit: number;
+      descriptions: string[];
+    }
 
-  const timelineMap: Record<string, TimelineItem> = {};
+    const timelineMap: Record<string, TimelineItem> = {};
 
-  // 1. Process capital transactions (deposits, withdrawals, transfers, initial balances, adjustments)
-  if (transactions && transactions.length > 0) {
-    transactions.forEach((tx) => {
-      const d = new Date(tx.date);
+    // 1. Process capital transactions (deposits, withdrawals, transfers, initial balances, adjustments)
+    if (transactions && transactions.length > 0) {
+      transactions.forEach((tx) => {
+        const d = new Date(tx.date);
+        if (isNaN(d.getTime())) return;
+        const rawDate = d.toISOString().slice(0, 10);
+        let amt = Number(tx.amount || 0);
+        if (tx.type && tx.type.toLowerCase().includes('withdraw') && amt > 0) {
+          amt = -amt;
+        }
+
+        if (!timelineMap[rawDate]) {
+          timelineMap[rawDate] = {
+            rawDate,
+            capitalDelta: 0,
+            betProfit: 0,
+            descriptions: []
+          };
+        }
+        timelineMap[rawDate].capitalDelta += amt;
+        if (tx.description) {
+          timelineMap[rawDate].descriptions.push(tx.description);
+        }
+      });
+    }
+
+    // 2. Process settled bets
+    const sortedBetsForEvolution = bets.filter((b) => b.status === 'won' || b.status === 'lost' || b.status === 'cashout');
+
+    sortedBetsForEvolution.forEach((bet) => {
+      const d = getBetLatestEventDate(bet);
       if (isNaN(d.getTime())) return;
       const rawDate = d.toISOString().slice(0, 10);
-      let amt = Number(tx.amount || 0);
-      if (tx.type && tx.type.toLowerCase().includes('withdraw') && amt > 0) {
-        amt = -amt;
+
+      let profit = 0;
+      if (bet.status === 'won') {
+        profit = (bet.actualReturn || bet.potentialPayout) - bet.stake;
+      } else if (bet.status === 'lost') {
+        profit = -bet.stake;
+      } else if (bet.status === 'cashout') {
+        profit = (bet.actualReturn || 0) - bet.stake;
       }
 
       if (!timelineMap[rawDate]) {
@@ -179,326 +308,237 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
           descriptions: []
         };
       }
-      timelineMap[rawDate].capitalDelta += amt;
-      if (tx.description) {
-        timelineMap[rawDate].descriptions.push(tx.description);
+      timelineMap[rawDate].betProfit += profit;
+    });
+
+    const sortedTimeline = Object.values(timelineMap).sort((a, b) => a.rawDate.localeCompare(b.rawDate));
+    const evolutionData: Array<{
+      date: string;
+      rawDate: string;
+      balance: number;
+      capitalDelta?: number;
+      betProfit?: number;
+    }> = [];
+
+    if (sortedTimeline.length > 0) {
+      const hasTransactions = transactions && transactions.length > 0;
+      let runningBalance = 0;
+
+      if (!hasTransactions) {
+        // Fallback for legacy mode without transaction log
+        const totalCurrentCash = bookmakers.reduce((sum, bm) => sum + (bm.realBalance || 0), 0);
+        const fallbackBaseline = Math.max(0, totalCurrentCash - currentTotalProfit);
+        runningBalance = fallbackBaseline;
+
+        evolutionData.push({
+          date: 'Start',
+          rawDate: 'start',
+          balance: Number(fallbackBaseline.toFixed(2)),
+          capitalDelta: 0,
+          betProfit: 0
+        });
       }
-    });
-  }
 
-  // 2. Process settled bets
-  const sortedBetsForEvolution = [...bets]
-    .filter((b) => b.status === 'won' || b.status === 'lost' || b.status === 'cashout');
+      sortedTimeline.forEach((item) => {
+        runningBalance += item.capitalDelta + item.betProfit;
+        const displayDate = new Date(item.rawDate + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
-  sortedBetsForEvolution.forEach((bet) => {
-    const d = getBetLatestEventDate(bet);
-    if (isNaN(d.getTime())) return;
-    const rawDate = d.toISOString().slice(0, 10);
-
-    let profit = 0;
-    if (bet.status === 'won') {
-      profit = (bet.actualReturn || bet.potentialPayout) - bet.stake;
-    } else if (bet.status === 'lost') {
-      profit = -bet.stake;
-    } else if (bet.status === 'cashout') {
-      profit = (bet.actualReturn || 0) - bet.stake;
-    }
-
-    if (!timelineMap[rawDate]) {
-      timelineMap[rawDate] = {
-        rawDate,
-        capitalDelta: 0,
-        betProfit: 0,
-        descriptions: []
-      };
-    }
-    timelineMap[rawDate].betProfit += profit;
-  });
-
-  const sortedTimeline = Object.values(timelineMap).sort((a, b) => a.rawDate.localeCompare(b.rawDate));
-
-  const bankrollEvolutionData: Array<{
-    date: string;
-    rawDate: string;
-    balance: number;
-    capitalDelta?: number;
-    betProfit?: number;
-  }> = [];
-
-  if (sortedTimeline.length > 0) {
-    const hasTransactions = transactions && transactions.length > 0;
-    let runningBalance = 0;
-
-    if (!hasTransactions) {
-      // Fallback for legacy mode without transaction log
-      const totalCurrentCash = bookmakers.reduce((sum, bm) => sum + (bm.realBalance || 0), 0);
-      const fallbackBaseline = Math.max(0, totalCurrentCash - currentTotalProfit);
-      runningBalance = fallbackBaseline;
-
-      bankrollEvolutionData.push({
-        date: 'Start',
-        rawDate: 'start',
-        balance: Number(fallbackBaseline.toFixed(2)),
-        capitalDelta: 0,
-        betProfit: 0
+        evolutionData.push({
+          date: displayDate,
+          rawDate: item.rawDate,
+          balance: Number(runningBalance.toFixed(2)),
+          capitalDelta: Number(item.capitalDelta.toFixed(2)),
+          betProfit: Number(item.betProfit.toFixed(2))
+        });
       });
     }
-
-    sortedTimeline.forEach((item) => {
-      runningBalance += item.capitalDelta + item.betProfit;
-      const displayDate = new Date(item.rawDate + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-
-      bankrollEvolutionData.push({
-        date: displayDate,
-        rawDate: item.rawDate,
-        balance: Number(runningBalance.toFixed(2)),
-        capitalDelta: Number(item.capitalDelta.toFixed(2)),
-        betProfit: Number(item.betProfit.toFixed(2))
-      });
-    });
-  }
+    return evolutionData;
+  }, [bets, transactions, bookmakers, currentTotalProfit]);
 
   // Dynamic ROI by Bookmaker calculation
-  const bmRoiMap: Record<string, { staked: number; returned: number }> = {};
-  bets.forEach((bet) => {
-    if (bet.status !== 'won' && bet.status !== 'lost' && bet.status !== 'cashout') return;
-    const bmName = bookmakers.find((b) => b.id === bet.bookmakerId)?.name || 'Other';
-    if (!bmRoiMap[bmName]) {
-      bmRoiMap[bmName] = { staked: 0, returned: 0 };
-    }
-    bmRoiMap[bmName].staked += bet.stake;
-    if (bet.status === 'won') {
-      bmRoiMap[bmName].returned += bet.actualReturn || bet.potentialPayout;
-    } else if (bet.status === 'cashout') {
-      bmRoiMap[bmName].returned += bet.actualReturn || 0;
-    }
-  });
+  const bookmakerRoiData = useMemo(() => {
+    const bmRoiMap: Record<string, { staked: number; returned: number }> = {};
+    bets.forEach((bet) => {
+      if (bet.status !== 'won' && bet.status !== 'lost' && bet.status !== 'cashout') return;
+      const bmName = bookmakers.find((b) => b.id === bet.bookmakerId)?.name || 'Other';
+      if (!bmRoiMap[bmName]) {
+        bmRoiMap[bmName] = { staked: 0, returned: 0 };
+      }
+      bmRoiMap[bmName].staked += bet.stake;
+      if (bet.status === 'won') {
+        bmRoiMap[bmName].returned += bet.actualReturn || bet.potentialPayout;
+      } else if (bet.status === 'cashout') {
+        bmRoiMap[bmName].returned += bet.actualReturn || 0;
+      }
+    });
 
-  const bookmakerRoiData = Object.keys(bmRoiMap).map((bmName) => {
-    const data = bmRoiMap[bmName];
-    const profit = data.returned - data.staked;
-    const roi = data.staked > 0 ? (profit / data.staked) * 100 : 0;
-    return {
-      name: bmName,
-      roi: Number(roi.toFixed(1))
-    };
-  });
-
-  bets.forEach((b) => {
-    if (b.stake >= 100) {
-      highStakeCount++;
-      highStakeAmt += b.stake;
-    } else if (b.stake >= 30) {
-      medStakeCount++;
-      medStakeAmt += b.stake;
-    } else {
-      lowStakeCount++;
-      lowStakeAmt += b.stake;
-    }
-  });
-
-  const highPct = totalStakedAll > 0 ? ((highStakeAmt / totalStakedAll) * 100).toFixed(1) : '0.0';
-  const medPct = totalStakedAll > 0 ? ((medStakeAmt / totalStakedAll) * 100).toFixed(1) : '0.0';
-  const lowPct = totalStakedAll > 0 ? ((lowStakeAmt / totalStakedAll) * 100).toFixed(1) : '0.0';
+    return Object.keys(bmRoiMap).map((bmName) => {
+      const data = bmRoiMap[bmName];
+      const profit = data.returned - data.staked;
+      const roi = data.staked > 0 ? (profit / data.staked) * 100 : 0;
+      return {
+        name: bmName,
+        roi: Number(roi.toFixed(1))
+      };
+    });
+  }, [bets, bookmakers]);
 
   // Analytical Risk of Ruin Calculation
-  let analyticalRuinPct: string | null = null;
-  if (settledBets.length > 0 && actualWinRate !== null && actualAvgOdds !== null) {
-    const netOdds = Math.max(0.1, actualAvgOdds - 1);
-    const evFraction = actualWinRate * netOdds - (1 - actualWinRate);
-    analyticalRuinPct = evFraction <= 0 ? '99.9' : Math.max(0.1, Math.min(100, Math.exp(-2 * evFraction * 15) * 100)).toFixed(1);
-  }
+  const analyticalRuinPct = useMemo(() => {
+    if (settledBets.length > 0 && actualWinRate !== null && actualAvgOdds !== null) {
+      const netOdds = Math.max(0.1, actualAvgOdds - 1);
+      const evFraction = actualWinRate * netOdds - (1 - actualWinRate);
+      return evFraction <= 0 ? '99.9' : Math.max(0.1, Math.min(100, Math.exp(-2 * evFraction * 15) * 100)).toFixed(1);
+    }
+    return null;
+  }, [settledBets.length, actualWinRate, actualAvgOdds]);
 
   // Kelly Calculation
-  const p = kellyProbability / 100;
-  const q = 1 - p;
-  const b = kellyDecimalOdds - 1;
-  const fullKellyPercent = Math.max(0, (b * p - q) / b);
-  const recommendedPercent = fullKellyPercent * kellyFraction;
-  const recommendedStakeAmount = recommendedPercent * kellyBankrollSize;
+  const kellyMetrics = useMemo(() => {
+    const p = kellyProbability / 100;
+    const q = 1 - p;
+    const b = kellyDecimalOdds - 1;
+    const fullKellyPercent = Math.max(0, (b * p - q) / b);
+    const recommendedPercent = fullKellyPercent * kellyFraction;
+    const recommendedStakeAmount = recommendedPercent * kellyBankrollSize;
+    return { fullKellyPercent, recommendedPercent, recommendedStakeAmount };
+  }, [kellyProbability, kellyDecimalOdds, kellyFraction, kellyBankrollSize]);
+
+  const { fullKellyPercent, recommendedPercent, recommendedStakeAmount } = kellyMetrics;
 
   // Vig calculation
-  const p1 = vigOdds1 > 1 ? 1 / vigOdds1 : 0;
-  const p2 = vigOdds2 > 1 ? 1 / vigOdds2 : 0;
-  const p3 = vigOdds3 > 1 ? 1 / vigOdds3 : 0;
-  const totalImpliedProb = (p1 + p2 + p3) * 100;
-  const overroundMargin = Math.max(0, totalImpliedProb - 100);
+  const vigMetrics = useMemo(() => {
+    const p1 = vigOdds1 > 1 ? 1 / vigOdds1 : 0;
+    const p2 = vigOdds2 > 1 ? 1 / vigOdds2 : 0;
+    const p3 = vigOdds3 > 1 ? 1 / vigOdds3 : 0;
+    const totalImpliedProb = (p1 + p2 + p3) * 100;
+    const overroundMargin = Math.max(0, totalImpliedProb - 100);
+    return { totalImpliedProb, overroundMargin };
+  }, [vigOdds1, vigOdds2, vigOdds3]);
 
-  // Monte Carlo Simulator logic
-  const runMonteCarloSimulation = () => {
-    const iterations = 500;
-    const steps = Math.min(200, mcNumBets);
-    const winProb = mcWinRate / 100;
-    const stakeAmt = (mcBankroll * mcStakePct) / 100;
+  const { totalImpliedProb, overroundMargin } = vigMetrics;
 
-    const finalBankrolls: number[] = [];
-    const stepSums: Record<number, number[]> = {};
-    let ruinedCount = 0;
-
-    for (let i = 0; i < iterations; i++) {
-      let currentB = mcBankroll;
-      for (let s = 1; s <= steps; s++) {
-        if (!stepSums[s]) stepSums[s] = [];
-        if (currentB <= mcBankroll * 0.1) {
-          currentB = 0;
-        } else {
-          const won = Math.random() < winProb;
-          if (won) {
-            currentB += stakeAmt * (mcAvgOdds - 1);
-          } else {
-            currentB -= stakeAmt;
-          }
-        }
-        stepSums[s].push(currentB);
-      }
-      if (currentB === 0) ruinedCount++;
-      finalBankrolls.push(currentB);
-    }
-
-    finalBankrolls.sort((a, b) => a - b);
-    const worst = finalBankrolls[Math.floor(iterations * 0.05)];
-    const median = finalBankrolls[Math.floor(iterations * 0.5)];
-    const best = finalBankrolls[Math.floor(iterations * 0.95)];
-
-    const trajectories: Array<{ betIndex: number; median: number; worst: number; best: number }> = [];
-    const stepInterval = Math.max(1, Math.floor(steps / 10));
-
-    for (let s = stepInterval; s <= steps; s += stepInterval) {
-      const arr = (stepSums[s] || []).sort((a, b) => a - b);
-      trajectories.push({
-        betIndex: s,
-        worst: Math.round(arr[Math.floor(arr.length * 0.05)] || 0),
-        median: Math.round(arr[Math.floor(arr.length * 0.5)] || 0),
-        best: Math.round(arr[Math.floor(arr.length * 0.95)] || 0)
-      });
-    }
-
-    setMcResults({
-      medianFinal: Math.round(median),
-      worstCase: Math.round(worst),
-      bestCase: Math.round(best),
-      ruinRate: Number(((ruinedCount / iterations) * 100).toFixed(1)),
-      trajectories
-    });
-  };
-
-  const streakInfo = calculateWinStreak(bets);
+  const streakInfo = useMemo(() => calculateWinStreak(bets), [bets]);
 
   // Tag / Strategy Performance Analytics
-  const tagStatsMap: Record<string, { staked: number; returned: number; wins: number; total: number; settled: number }> = {};
-  
-  bets.forEach((bet) => {
-    const betTags = bet.tags && bet.tags.length > 0 ? bet.tags : ['Untagged'];
+  const tagPerformanceData = useMemo(() => {
+    const tagStatsMap: Record<string, { staked: number; returned: number; wins: number; total: number; settled: number }> = {};
     
-    betTags.forEach((tag) => {
-      if (!tagStatsMap[tag]) {
-        tagStatsMap[tag] = { staked: 0, returned: 0, wins: 0, total: 0, settled: 0 };
-      }
+    bets.forEach((bet) => {
+      const betTags = bet.tags && bet.tags.length > 0 ? bet.tags : ['Untagged'];
       
-      tagStatsMap[tag].staked += bet.stake;
-      
-      if (bet.status === 'won') {
-        tagStatsMap[tag].returned += bet.actualReturn ?? bet.potentialPayout;
-        tagStatsMap[tag].wins += 1;
-        tagStatsMap[tag].settled += 1;
-      } else if (bet.status === 'lost') {
-        tagStatsMap[tag].returned += 0;
-        tagStatsMap[tag].settled += 1;
-      } else if (bet.status === 'cashout') {
-        tagStatsMap[tag].returned += bet.actualReturn ?? 0;
-        tagStatsMap[tag].settled += 1;
-      } else if (bet.status === 'void') {
-        tagStatsMap[tag].returned += bet.stake;
-        tagStatsMap[tag].settled += 1;
-      }
-      
-      tagStatsMap[tag].total += 1;
+      betTags.forEach((tag) => {
+        if (!tagStatsMap[tag]) {
+          tagStatsMap[tag] = { staked: 0, returned: 0, wins: 0, total: 0, settled: 0 };
+        }
+        
+        tagStatsMap[tag].staked += bet.stake;
+        
+        if (bet.status === 'won') {
+          tagStatsMap[tag].returned += bet.actualReturn ?? bet.potentialPayout;
+          tagStatsMap[tag].wins += 1;
+          tagStatsMap[tag].settled += 1;
+        } else if (bet.status === 'lost') {
+          tagStatsMap[tag].returned += 0;
+          tagStatsMap[tag].settled += 1;
+        } else if (bet.status === 'cashout') {
+          tagStatsMap[tag].returned += bet.actualReturn ?? 0;
+          tagStatsMap[tag].settled += 1;
+        } else if (bet.status === 'void') {
+          tagStatsMap[tag].returned += bet.stake;
+          tagStatsMap[tag].settled += 1;
+        }
+        
+        tagStatsMap[tag].total += 1;
+      });
     });
-  });
 
-  const tagPerformanceData = Object.keys(tagStatsMap).map((tagName) => {
-    const data = tagStatsMap[tagName];
-    const profitLoss = data.returned - data.staked;
-    const roi = data.staked > 0 ? (profitLoss / data.staked) * 100 : 0;
-    const winRate = data.settled > 0 ? (data.wins / data.settled) * 100 : 0;
-    
-    return {
-      tag: tagName,
-      staked: data.staked,
-      profit: Number(profitLoss.toFixed(2)),
-      roi: Number(roi.toFixed(1)),
-      winRate: Number(winRate.toFixed(1)),
-      total: data.total,
-      settled: data.settled
-    };
-  }).sort((a, b) => b.profit - a.profit);
+    return Object.keys(tagStatsMap).map((tagName) => {
+      const data = tagStatsMap[tagName];
+      const profitLoss = data.returned - data.staked;
+      const roi = data.staked > 0 ? (profitLoss / data.staked) * 100 : 0;
+      const winRate = data.settled > 0 ? (data.wins / data.settled) * 100 : 0;
+      
+      return {
+        tag: tagName,
+        staked: data.staked,
+        profit: Number(profitLoss.toFixed(2)),
+        roi: Number(roi.toFixed(1)),
+        winRate: Number(winRate.toFixed(1)),
+        total: data.total,
+        settled: data.settled
+      };
+    }).sort((a, b) => b.profit - a.profit);
+  }, [bets]);
 
   // Tipster Performance Breakdown
-  const tipsterStatsMap: Record<string, {
-    tipsterId?: string;
-    name: string;
-    platform?: string;
-    color?: string;
-    staked: number;
-    returned: number;
-    wins: number;
-    total: number;
-    settled: number;
-    isSelf: boolean;
-  }> = {};
+  const tipsterPerformanceData = useMemo(() => {
+    const tipsterStatsMap: Record<string, {
+      tipsterId?: string;
+      name: string;
+      platform?: string;
+      color?: string;
+      staked: number;
+      returned: number;
+      wins: number;
+      total: number;
+      settled: number;
+      isSelf: boolean;
+    }> = {};
 
-  bets.forEach((bet) => {
-    const tId = bet.tipsterId;
-    const key = tId || '__MY_OWN_PICKS__';
+    bets.forEach((bet) => {
+      const tId = bet.tipsterId;
+      const key = tId || '__MY_OWN_PICKS__';
 
-    if (!tipsterStatsMap[key]) {
-      const matchTipster = tipsters.find(t => t.id === tId);
-      tipsterStatsMap[key] = {
-        tipsterId: tId,
-        name: key === '__MY_OWN_PICKS__' ? 'My Own Picks' : (matchTipster?.name || 'Unknown Tipster'),
-        platform: key === '__MY_OWN_PICKS__' ? 'Personal' : (matchTipster?.platform || 'General'),
-        color: key === '__MY_OWN_PICKS__' ? '#10b981' : (matchTipster?.color || '#3b82f6'),
-        staked: 0,
-        returned: 0,
-        wins: 0,
-        total: 0,
-        settled: 0,
-        isSelf: key === '__MY_OWN_PICKS__'
+      if (!tipsterStatsMap[key]) {
+        const matchTipster = tipsters.find(t => t.id === tId);
+        tipsterStatsMap[key] = {
+          tipsterId: tId,
+          name: key === '__MY_OWN_PICKS__' ? 'My Own Picks' : (matchTipster?.name || 'Unknown Tipster'),
+          platform: key === '__MY_OWN_PICKS__' ? 'Personal' : (matchTipster?.platform || 'General'),
+          color: key === '__MY_OWN_PICKS__' ? '#10b981' : (matchTipster?.color || '#3b82f6'),
+          staked: 0,
+          returned: 0,
+          wins: 0,
+          total: 0,
+          settled: 0,
+          isSelf: key === '__MY_OWN_PICKS__'
+        };
+      }
+
+      const stat = tipsterStatsMap[key];
+      stat.staked += bet.stake;
+      stat.total += 1;
+
+      if (bet.status === 'won') {
+        stat.returned += bet.actualReturn ?? bet.potentialPayout;
+        stat.wins += 1;
+        stat.settled += 1;
+      } else if (bet.status === 'lost') {
+        stat.returned += 0;
+        stat.settled += 1;
+      } else if (bet.status === 'cashout') {
+        stat.returned += bet.actualReturn ?? 0;
+        stat.settled += 1;
+      } else if (bet.status === 'void') {
+        stat.returned += bet.stake;
+        stat.settled += 1;
+      }
+    });
+
+    return Object.values(tipsterStatsMap).map((stat) => {
+      const profit = stat.returned - stat.staked;
+      const roi = stat.staked > 0 ? (profit / stat.staked) * 100 : 0;
+      const winRate = stat.settled > 0 ? (stat.wins / stat.settled) * 100 : 0;
+
+      return {
+        ...stat,
+        profit: Number(profit.toFixed(2)),
+        roi: Number(roi.toFixed(1)),
+        winRate: Number(winRate.toFixed(1))
       };
-    }
-
-    const stat = tipsterStatsMap[key];
-    stat.staked += bet.stake;
-    stat.total += 1;
-
-    if (bet.status === 'won') {
-      stat.returned += bet.actualReturn ?? bet.potentialPayout;
-      stat.wins += 1;
-      stat.settled += 1;
-    } else if (bet.status === 'lost') {
-      stat.returned += 0;
-      stat.settled += 1;
-    } else if (bet.status === 'cashout') {
-      stat.returned += bet.actualReturn ?? 0;
-      stat.settled += 1;
-    } else if (bet.status === 'void') {
-      stat.returned += bet.stake;
-      stat.settled += 1;
-    }
-  });
-
-  const tipsterPerformanceData = Object.values(tipsterStatsMap).map((stat) => {
-    const profit = stat.returned - stat.staked;
-    const roi = stat.staked > 0 ? (profit / stat.staked) * 100 : 0;
-    const winRate = stat.settled > 0 ? (stat.wins / stat.settled) * 100 : 0;
-
-    return {
-      ...stat,
-      profit: Number(profit.toFixed(2)),
-      roi: Number(roi.toFixed(1)),
-      winRate: Number(winRate.toFixed(1))
-    };
-  }).sort((a, b) => b.roi - a.roi); // Default sort by Yield (ROI) descending!
+    }).sort((a, b) => b.roi - a.roi); // Default sort by Yield (ROI) descending!
+  }, [bets, tipsters]);
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto pb-24 md:pb-12">

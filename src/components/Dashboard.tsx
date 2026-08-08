@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Bet, Bankroll, Bookmaker, BetStatus } from '../types';
 import { formatCurrency, formatOdds, calculateWinStreak, getBookmakerBalanceForBankroll, getCurrencySymbol } from '../utils/storage';
 import { formatEventDate, getRepresentativeEventDateTimestamp, formatLegSelection, formatBetDateTime, getBetLatestEventDate } from '../utils/dateUtils';
@@ -44,55 +44,88 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [lightboxBet, setLightboxBet] = useState<Bet | null>(null);
 
   // Filter bets
-  const filteredBets = bets.filter((b) => {
-    if (filterMode === 'live' && !b.isLive) return false;
-    if (filterMode === 'prematch' && b.isLive) return false;
-    if (selectedBankroll !== 'all' && b.bankrollId !== selectedBankroll) return false;
-    if (selectedStatus !== 'all' && b.status !== selectedStatus) return false;
-    if (selectedSport !== 'all') {
-      const hasSport = b.legs.some((leg) => leg.sport && leg.sport.toLowerCase() === selectedSport.toLowerCase());
-      if (!hasSport) return false;
-    }
-    return true;
-  });
+  const filteredBets = useMemo(() => {
+    return bets.filter((b: Bet) => {
+      if (filterMode === 'live' && !b.isLive) return false;
+      if (filterMode === 'prematch' && b.isLive) return false;
+      if (selectedBankroll !== 'all' && b.bankrollId !== selectedBankroll) return false;
+      if (selectedStatus !== 'all' && b.status !== selectedStatus) return false;
+      if (selectedSport !== 'all') {
+        const hasSport = b.legs.some((leg: any) => leg.sport && leg.sport.toLowerCase() === selectedSport.toLowerCase());
+        if (!hasSport) return false;
+      }
+      return true;
+    });
+  }, [bets, filterMode, selectedBankroll, selectedStatus, selectedSport]);
 
   // Calculate Metrics
-  const totalBankrollBalance = bankrolls.reduce((sum, b) => {
-    if (selectedBankroll !== 'all' && b.id !== selectedBankroll) return sum;
-    return sum + b.currentBalance;
-  }, 0);
+  const totalBankrollBalance = useMemo(() => {
+    return bankrolls.reduce((sum, b) => {
+      if (selectedBankroll !== 'all' && b.id !== selectedBankroll) return sum;
+      return sum + b.currentBalance;
+    }, 0);
+  }, [bankrolls, selectedBankroll]);
 
-  const totalFreeBets = bankrolls.reduce((sum, b) => {
-    if (selectedBankroll !== 'all' && b.id !== selectedBankroll) return sum;
-    return sum + b.freeBetCredits;
-  }, 0);
+  const totalFreeBets = useMemo(() => {
+    return bankrolls.reduce((sum, b) => {
+      if (selectedBankroll !== 'all' && b.id !== selectedBankroll) return sum;
+      return sum + b.freeBetCredits;
+    }, 0);
+  }, [bankrolls, selectedBankroll]);
   
-  const settledBets = filteredBets.filter((b) => b.status === 'won' || b.status === 'lost' || b.status === 'cashout');
-  const totalStaked = settledBets.reduce((sum, b) => sum + b.stake, 0);
-  const totalReturns = settledBets.reduce((sum, b) => sum + (b.actualReturn || 0), 0);
-  const netProfit = totalReturns - totalStaked;
-  const roiPercentage = totalStaked > 0 ? (netProfit / totalStaked) * 100 : 0;
-  
-  const wonCount = settledBets.filter((b) => b.status === 'won').length;
-  const winRate = settledBets.length > 0 ? (wonCount / settledBets.length) * 100 : 0;
-  
-  const pendingBets = filteredBets
-    .filter((b) => b.status === 'pending')
-    .sort((a, b) => getRepresentativeEventDateTimestamp(a) - getRepresentativeEventDateTimestamp(b));
-  const winStreak = calculateWinStreak(bets);
+  const dashboardStats = useMemo(() => {
+    const settled = filteredBets.filter((b: Bet) => b.status === 'won' || b.status === 'lost' || b.status === 'cashout');
+    const staked = settled.reduce((sum: number, b: Bet) => sum + b.stake, 0);
+    const returns = settled.reduce((sum: number, b: Bet) => sum + (b.actualReturn || 0), 0);
+    const net = returns - staked;
+    const roi = staked > 0 ? (net / staked) * 100 : 0;
+    
+    const won = settled.filter((b: Bet) => b.status === 'won').length;
+    const wr = settled.length > 0 ? (won / settled.length) * 100 : 0;
+    
+    return { settled, staked, returns, net, roi, won, wr };
+  }, [filteredBets]);
+
+  const { settled: settledBets, staked: totalStaked, returns: totalReturns, net: netProfit, roi: roiPercentage, won: wonCount, wr: winRate } = dashboardStats;
+
+  const pendingBets = useMemo(() => {
+    const pending = filteredBets.filter((b: Bet) => b.status === 'pending');
+    
+    // Pre-calculate timestamps for sorting
+    const pendingWithKeys = pending.map((bet: Bet) => ({
+      bet,
+      timestamp: getRepresentativeEventDateTimestamp(bet)
+    }));
+    
+    pendingWithKeys.sort((a: any, b: any) => a.timestamp - b.timestamp);
+    
+    return pendingWithKeys.map((item: any) => item.bet);
+  }, [filteredBets]);
+
+  const winStreak = useMemo(() => calculateWinStreak(bets), [bets]);
 
   // Profit Chart Data generator
-  const sortedSettled = [...settledBets].sort((a, b) => getRepresentativeEventDateTimestamp(a) - getRepresentativeEventDateTimestamp(b));
-  let runningProfit = 0;
-  const chartData = sortedSettled.map((bet, index) => {
-    const profit = (bet.actualReturn || 0) - bet.stake;
-    runningProfit += profit;
-    return {
-      index: `#${index + 1}`,
-      date: getBetLatestEventDate(bet).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-      profit: runningProfit,
-    };
-  });
+  const chartData = useMemo(() => {
+    // Pre-calculate timestamps for sorting
+    const settledWithKeys = settledBets.map(bet => ({
+      bet,
+      timestamp: getRepresentativeEventDateTimestamp(bet)
+    }));
+    
+    settledWithKeys.sort((a, b) => a.timestamp - b.timestamp);
+    
+    let runningProfit = 0;
+    return settledWithKeys.map((item: any, index: number) => {
+      const bet = item.bet;
+      const profit = (bet.actualReturn || 0) - bet.stake;
+      runningProfit += profit;
+      return {
+        index: `#${index + 1}`,
+        date: getBetLatestEventDate(bet).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        profit: Number(runningProfit.toFixed(2)),
+      };
+    });
+  }, [settledBets]);
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto pb-24 md:pb-12">
@@ -342,7 +375,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
         ) : (
           <div className="space-y-3">
-            {filteredBets.map((bet) => {
+            {filteredBets.map((bet: Bet) => {
               const bookmaker = bookmakers.find((b) => b.id === bet.bookmakerId);
               const bankroll = bankrolls.find((b) => b.id === bet.bankrollId);
 
@@ -421,7 +454,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                   {/* Legs detail */}
                   <div className="space-y-1.5">
-                    {bet.legs.map((leg, idx) => (
+                    {bet.legs.map((leg: any, idx: number) => (
                       <div key={leg.id || idx} className="text-xs bg-[#171f33] p-2 rounded border border-[#27314a] flex flex-wrap items-center justify-between gap-2">
                         <div className="truncate">
                           <span className="font-semibold text-white">{formatLegSelection(leg.selection, leg.market)}</span>
