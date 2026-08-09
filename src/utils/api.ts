@@ -1,4 +1,4 @@
-import { Bet, UserPreferences, Bankroll, Bookmaker, TagDefinition, BankrollTransaction, Tipster } from '../types';
+import { Bet, PaginatedBets, UserPreferences, Bankroll, Bookmaker, TagDefinition, BankrollTransaction, Tipster } from '../types';
 
 const API_BASE_URL = '/api';
 
@@ -282,16 +282,45 @@ export const tipstersApi = {
 // ==========================================
 
 export const betsApi = {
-  async list(filters?: { startDate?: string; endDate?: string; bankrollId?: string }): Promise<Bet[]> {
+  async list(filters?: { startDate?: string; endDate?: string; bankrollId?: string; page?: number; limit?: number }): Promise<Bet[]> {
     let query = '';
     if (filters) {
       const params = new URLSearchParams();
       if (filters.startDate) params.append('startDate', filters.startDate);
       if (filters.endDate) params.append('endDate', filters.endDate);
       if (filters.bankrollId) params.append('bankrollId', filters.bankrollId);
+      if (filters.page) params.append('page', filters.page.toString());
+      if (filters.limit) params.append('limit', filters.limit.toString());
       query = `?${params.toString()}`;
     }
-    return apiRequest<Bet[]>(`/bets${query}`);
+    const res = await apiRequest<any>(`/bets${query}`);
+    if (res && Array.isArray(res.bets)) {
+      return res.bets;
+    }
+    return res as Bet[];
+  },
+
+  async listPaginated(filters?: { startDate?: string; endDate?: string; bankrollId?: string; page?: number; limit?: number }): Promise<PaginatedBets> {
+    const page = filters?.page || 1;
+    const limit = filters?.limit || 8;
+    const params = new URLSearchParams();
+    params.append('page', page.toString());
+    params.append('limit', limit.toString());
+    if (filters?.startDate) params.append('startDate', filters.startDate);
+    if (filters?.endDate) params.append('endDate', filters.endDate);
+    if (filters?.bankrollId) params.append('bankrollId', filters.bankrollId);
+
+    const res = await apiRequest<any>(`/bets?${params.toString()}`);
+    if (Array.isArray(res)) {
+      const start = (page - 1) * limit;
+      return {
+        bets: res.slice(start, start + limit),
+        totalPages: Math.ceil(res.length / limit) || 1,
+        currentPage: page,
+        totalBets: res.length,
+      };
+    }
+    return res as PaginatedBets;
   },
 
   async create(bet: Omit<Bet, 'id'>): Promise<{ id: string; message: string }> {
@@ -311,6 +340,17 @@ export const betsApi = {
   async delete(id: string): Promise<{ message: string }> {
     return apiRequest<{ message: string }>(`/bets/${id}`, {
       method: 'DELETE',
+    });
+  },
+
+  async getBetImage(id: string): Promise<{ id: string; imageUrl?: string; scannedSlipUrl?: string }> {
+    return apiRequest<{ id: string; imageUrl?: string; scannedSlipUrl?: string }>(`/bets/${id}/image`);
+  },
+
+  async updateLegStatus(betId: string, legId: string, status: string): Promise<any> {
+    return apiRequest(`/bets/${betId}/legs/${legId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
     });
   }
 };

@@ -505,42 +505,92 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
   }
 
   // --- BETS & BET LEGS ---
-  if (/SELECT .* FROM bets WHERE user_id = \$1/i.test(sql)) {
+  if (/SELECT COUNT\(\*\)::int as total FROM bets b/i.test(sql)) {
     const userId = params[0];
     let found = memoryStore.bets.filter((b) => b.user_id === userId);
 
-    if (params[1]) {
-      found = found.filter((b) => b.date >= params[1]);
+    const startDateMatch = sql.match(/b\.date >= \$(\d+)/i);
+    if (startDateMatch) {
+      const idx = parseInt(startDateMatch[1], 10) - 1;
+      if (params[idx]) found = found.filter((b) => b.date >= params[idx]);
     }
-    if (params[2]) {
-      found = found.filter((b) => b.date <= params[2]);
+
+    const endDateMatch = sql.match(/b\.date <= \$(\d+)/i);
+    if (endDateMatch) {
+      const idx = parseInt(endDateMatch[1], 10) - 1;
+      if (params[idx]) found = found.filter((b) => b.date <= params[idx]);
     }
-    if (params[3]) {
-      found = found.filter((b) => b.bankroll_id === params[3]);
+
+    const bankrollMatch = sql.match(/b\.bankroll_id = \$(\d+)/i);
+    if (bankrollMatch) {
+      const idx = parseInt(bankrollMatch[1], 10) - 1;
+      if (params[idx]) found = found.filter((b) => b.bankroll_id === params[idx]);
+    }
+
+    return { rows: [{ total: found.length }], rowCount: 1 };
+  }
+
+  if (/SELECT .* FROM bets b/i.test(sql) || /SELECT .* FROM bets WHERE user_id = \$1/i.test(sql)) {
+    const userId = params[0];
+    let found = memoryStore.bets.filter((b) => b.user_id === userId);
+
+    const startDateMatch = sql.match(/b\.date >= \$(\d+)/i);
+    if (startDateMatch) {
+      const idx = parseInt(startDateMatch[1], 10) - 1;
+      if (params[idx]) found = found.filter((b) => b.date >= params[idx]);
+    }
+
+    const endDateMatch = sql.match(/b\.date <= \$(\d+)/i);
+    if (endDateMatch) {
+      const idx = parseInt(endDateMatch[1], 10) - 1;
+      if (params[idx]) found = found.filter((b) => b.date <= params[idx]);
+    }
+
+    const bankrollMatch = sql.match(/b\.bankroll_id = \$(\d+)/i);
+    if (bankrollMatch) {
+      const idx = parseInt(bankrollMatch[1], 10) - 1;
+      if (params[idx]) found = found.filter((b) => b.bankroll_id === params[idx]);
     }
 
     found.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
+    // Handle LIMIT and OFFSET if provided in SQL / params
+    const limitMatch = sql.match(/LIMIT \$(\d+)/i);
+    const offsetMatch = sql.match(/OFFSET \$(\d+)/i);
+    if (limitMatch && offsetMatch) {
+      const limitIdx = parseInt(limitMatch[1], 10) - 1;
+      const offsetIdx = parseInt(offsetMatch[1], 10) - 1;
+      const limitVal = params[limitIdx];
+      const offsetVal = params[offsetIdx];
+      if (typeof limitVal === 'number' && typeof offsetVal === 'number') {
+        found = found.slice(offsetVal, offsetVal + limitVal);
+      }
+    }
+
     return {
-      rows: found.map((b) => ({
-        id: b.id,
-        date: b.date,
-        type: b.type,
-        totalOdds: b.total_odds,
-        stake: b.stake,
-        potentialPayout: b.potential_payout,
-        actualReturn: b.actual_return,
-        status: b.status,
-        bookmakerId: b.bookmaker_id,
-        bankrollId: b.bankroll_id,
-        isLive: b.is_live,
-        isFreeBet: b.is_free_bet,
-        freeBetDestination: b.free_bet_destination,
-        notes: b.notes || '',
-        scannedSlipUrl: b.scanned_slip_url || '',
-        imageUrl: b.image_url || '',
-        tags: b.tags || [],
-      })),
+      rows: found.map((b) => {
+        const hasImg = !!(b.scanned_slip_url || b.image_url);
+        return {
+          id: b.id,
+          date: b.date,
+          type: b.type,
+          totalOdds: b.total_odds,
+          stake: b.stake,
+          potentialPayout: b.potential_payout,
+          actualReturn: b.actual_return,
+          status: b.status,
+          bookmakerId: b.bookmaker_id,
+          bankrollId: b.bankroll_id,
+          isLive: b.is_live,
+          isFreeBet: b.is_free_bet,
+          freeBetDestination: b.free_bet_destination,
+          notes: b.notes || '',
+          hasImage: hasImg,
+          scannedSlipUrl: hasImg ? 'attached' : '',
+          imageUrl: hasImg ? 'attached' : '',
+          tags: b.tags || [],
+        };
+      }),
       rowCount: found.length,
     };
   }
@@ -653,8 +703,8 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
       bet.is_free_bet = !!params[10];
       bet.free_bet_destination = params[11] || 'cash';
       bet.notes = params[12] || '';
-      bet.scanned_slip_url = params[13] || '';
-      bet.image_url = params[14] || '';
+      bet.scanned_slip_url = (params[13] && params[13] !== 'attached') ? params[13] : bet.scanned_slip_url;
+      bet.image_url = (params[14] && params[14] !== 'attached') ? params[14] : bet.image_url;
       bet.tags = typeof params[15] === 'string' ? JSON.parse(params[15]) : params[15] || [];
       return { rows: [], rowCount: 1 };
     }

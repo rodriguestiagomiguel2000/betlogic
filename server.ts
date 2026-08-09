@@ -14,6 +14,7 @@ if (fs.existsSync(renderSecretPath)) {
 }
 
 import express from 'express';
+import compression from 'compression';
 import { GoogleGenAI, Type } from '@google/genai';
 import authRouter from './server/auth';
 import betsRouter from './server/bets';
@@ -27,6 +28,9 @@ import tipstersRouter from './server/tipsters';
 
 async function startServer() {
   const app = express();
+  
+  // Enable HTTP response compression (gzip/brotli) for all responses
+  app.use(compression());
   
   // Use Render PORT in production if specified, otherwise fall back to 3001.
   // In development, we use 3000 to comply with AI Studio preview requirements.
@@ -312,9 +316,19 @@ Special parsing & Extraction Rules:
     });
     app.use(vite.middlewares);
   } else {
-    // Production serving
+    // Production serving with aggressive static asset caching
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, {
+      maxAge: '1y',
+      immutable: true,
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        } else {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      },
+    }));
     // Standard catch-all route to serve index.html for React SPA routing on Render
     app.get('*all', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

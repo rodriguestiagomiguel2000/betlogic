@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Bet, Bankroll, Bookmaker, BetStatus, SportType, BetType, TagDefinition, Tipster } from '../types';
 import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
 import { formatEventDate, getRepresentativeEventDateTimestamp, formatLegSelection, formatBetDateTime } from '../utils/dateUtils';
+import { betsApi } from '../utils/api';
 import { BookmakerLogo } from './BookmakerLogo';
 import {
   Search,
@@ -16,6 +17,8 @@ import {
   DollarSign,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   ExternalLink,
   Trash2,
   RefreshCw,
@@ -26,7 +29,8 @@ import {
   Radio,
   Camera,
   Image as ImageIcon,
-  Users
+  Users,
+  Loader2
 } from 'lucide-react';
 
 interface BetsHistoryViewProps {
@@ -94,6 +98,86 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
   // Expanded legs state & Lightbox state
   const [expandedBetIds, setExpandedBetIds] = useState<Set<string>>(new Set());
   const [lightboxBet, setLightboxBet] = useState<Bet | null>(null);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [loadingImage, setLoadingImage] = useState<boolean>(false);
+
+  // Pagination state (limit = 8)
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [serverBets, setServerBets] = useState<Bet[] | null>(null);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [totalBets, setTotalBets] = useState<number>(0);
+  const [loadingPaginated, setLoadingPaginated] = useState<boolean>(false);
+
+  const fetchPaginatedBets = React.useCallback(async (page: number) => {
+    setLoadingPaginated(true);
+    try {
+      const bankrollId = bankrollFilter !== 'all' ? bankrollFilter : undefined;
+      let startDate: string | undefined;
+      let endDate: string | undefined;
+
+      if (dateRange !== 'all') {
+        const now = new Date();
+        if (dateRange === 'today') {
+          startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+        } else if (dateRange === '7days') {
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        } else if (dateRange === '30days') {
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        }
+      }
+
+      const res = await betsApi.listPaginated({
+        page,
+        limit: 8,
+        bankrollId,
+        startDate,
+        endDate,
+      });
+
+      setServerBets(res.bets || []);
+      setTotalPages(res.totalPages || 1);
+      setTotalBets(res.totalBets || 0);
+      setCurrentPage(res.currentPage || page);
+    } catch (err) {
+      console.error('Error fetching paginated bets:', err);
+    } finally {
+      setLoadingPaginated(false);
+    }
+  }, [bankrollFilter, dateRange]);
+
+  useEffect(() => {
+    fetchPaginatedBets(currentPage);
+  }, [currentPage, bankrollFilter, dateRange, fetchPaginatedBets]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [bankrollFilter, dateRange]);
+
+  useEffect(() => {
+    if (!lightboxBet) {
+      setLightboxImage(null);
+      setLoadingImage(false);
+      return;
+    }
+
+    const cachedImg = lightboxBet.imageUrl || lightboxBet.scannedSlipUrl;
+    if (cachedImg && cachedImg !== 'attached' && cachedImg.length > 50) {
+      setLightboxImage(cachedImg);
+    } else {
+      setLoadingImage(true);
+      betsApi.getBetImage(lightboxBet.id)
+        .then((res) => {
+          setLightboxImage(res.imageUrl || res.scannedSlipUrl || null);
+        })
+        .catch((err) => {
+          console.error('Failed to fetch bet image:', err);
+          setLightboxImage(null);
+        })
+        .finally(() => {
+          setLoadingImage(false);
+        });
+    }
+  }, [lightboxBet]);
 
   // Settlement Modal state
   const [settlementBet, setSettlementBet] = useState<Bet | null>(null);
@@ -113,7 +197,8 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
 
   // Filtered Bets Computation
   const filteredBets = useMemo(() => {
-    const filtered = bets.filter((bet) => {
+    const sourceList = serverBets !== null ? serverBets : bets;
+    const filtered = sourceList.filter((bet) => {
       // Search term filter
       if (searchTerm) {
         const query = searchTerm.toLowerCase();
@@ -233,6 +318,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
 
     return betsWithKeys.map((bk: any) => bk.bet);
   }, [
+    serverBets,
     bets,
     searchTerm,
     statusFilter,
@@ -249,6 +335,35 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
     tagDefinitions,
     tipsters
   ]);
+
+  // Derived metrics for pagination and displayed slice
+  const hasClientFilters =
+    Boolean(searchTerm) ||
+    statusFilter !== 'all' ||
+    sportFilter !== 'all' ||
+    bookmakerFilter !== 'all' ||
+    typeFilter !== 'all' ||
+    liveFilter !== 'all' ||
+    tipsterFilter !== 'all' ||
+    selectedTagsFilter.length > 0;
+
+  const effectiveTotalBets =
+    serverBets !== null && !hasClientFilters
+      ? totalBets || serverBets.length
+      : filteredBets.length;
+
+  const effectiveTotalPages = Math.ceil(effectiveTotalBets / 8) || 1;
+
+  // Sliced bets array for current page view display
+  const displayedBets = useMemo(() => {
+    // If backend provided a server-paginated array for current page and no extra client filters are active, use directly
+    if (serverBets !== null && !hasClientFilters && filteredBets.length <= 8) {
+      return filteredBets;
+    }
+    // Perform exact client-side array slice: bets.slice((currentPage - 1) * limit, currentPage * limit)
+    const start = (currentPage - 1) * 8;
+    return filteredBets.slice(start, start + 8);
+  }, [filteredBets, serverBets, currentPage, hasClientFilters]);
 
   // Statistics for filtered list
   const metrics = useMemo(() => {
@@ -313,6 +428,9 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
 
     onUpdateBetStatus(settlementBet.id, status, ret);
     setSettlementBet(null);
+    setTimeout(() => {
+      fetchPaginatedBets(currentPage);
+    }, 150);
   };
 
   const exportFilteredCSV = () => {
@@ -790,7 +908,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#27314a]">
-                {filteredBets.map((bet) => {
+                {displayedBets.map((bet) => {
                   const bm = bookmakers.find((b) => b.id === bet.bookmakerId);
                   const isExpanded = expandedBetIds.has(bet.id);
                   const mainLeg = bet.legs[0];
@@ -1044,7 +1162,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
       ) : (
         /* Card View */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredBets.map((bet: any) => {
+          {displayedBets.map((bet: any) => {
             const bm = bookmakers.find((b) => b.id === bet.bookmakerId);
             const mainLeg = bet.legs[0];
 
@@ -1205,6 +1323,61 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
         </div>
       )}
 
+      {/* Pagination Controls */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#171f33] p-4 rounded-xl border border-[#27314a] mt-4 shadow-sm">
+        <div className="text-xs text-[#8d90a0] flex items-center gap-2">
+          <span>
+            Showing <span className="font-semibold text-white">{effectiveTotalBets > 0 ? (currentPage - 1) * 8 + 1 : 0}</span> to{' '}
+            <span className="font-semibold text-white">{Math.min(currentPage * 8, effectiveTotalBets)}</span> of{' '}
+            <span className="font-semibold text-white">{effectiveTotalBets}</span> bets
+          </span>
+          {loadingPaginated && <Loader2 className="animate-spin text-[#2563eb]" size={14} />}
+        </div>
+
+        <div className="flex items-center gap-1.5 flex-wrap justify-center">
+          <button
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            disabled={currentPage <= 1 || loadingPaginated}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#0b1326] text-[#b4c5ff] hover:bg-[#2563eb] hover:text-white border border-[#27314a] disabled:opacity-40 disabled:hover:bg-[#0b1326] disabled:hover:text-[#b4c5ff] transition-all cursor-pointer"
+          >
+            <ChevronLeft size={14} />
+            Previous
+          </button>
+
+          {Array.from({ length: effectiveTotalPages }, (_, i) => i + 1)
+            .filter((p) => p === 1 || p === effectiveTotalPages || Math.abs(p - currentPage) <= 1)
+            .map((p, idx, arr) => {
+              const prevP = arr[idx - 1];
+              const showEllipsis = prevP && p - prevP > 1;
+              return (
+                <React.Fragment key={p}>
+                  {showEllipsis && <span className="text-xs text-[#8d90a0] px-1">...</span>}
+                  <button
+                    onClick={() => setCurrentPage(p)}
+                    disabled={loadingPaginated}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                      currentPage === p
+                        ? 'bg-[#2563eb] text-white border-[#2563eb]'
+                        : 'bg-[#0b1326] text-[#b4c5ff] hover:bg-[#2563eb]/20 border-[#27314a]'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                </React.Fragment>
+              );
+            })}
+
+          <button
+            onClick={() => setCurrentPage((p) => Math.min(effectiveTotalPages, p + 1))}
+            disabled={currentPage >= effectiveTotalPages || loadingPaginated}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#0b1326] text-[#b4c5ff] hover:bg-[#2563eb] hover:text-white border border-[#27314a] disabled:opacity-40 disabled:hover:bg-[#0b1326] disabled:hover:text-[#b4c5ff] transition-all cursor-pointer"
+          >
+            Next
+            <ChevronRight size={14} />
+          </button>
+        </div>
+      </div>
+
       {/* Settlement Dialog Modal */}
       {settlementBet && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1300,9 +1473,14 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-2 flex-1 overflow-y-auto p-4 gap-6">
               {/* Slip Image View */}
               <div className="bg-[#0b1326] rounded-xl border border-[#27314a] p-3 flex flex-col items-center justify-center min-h-[280px]">
-                {lightboxBet.imageUrl || lightboxBet.scannedSlipUrl ? (
+                {loadingImage ? (
+                  <div className="flex flex-col items-center gap-2 text-xs text-[#8d90a0]">
+                    <Loader2 className="animate-spin text-[#2563eb]" size={24} />
+                    <span>Loading betslip image...</span>
+                  </div>
+                ) : lightboxImage ? (
                   <img
-                    src={lightboxBet.imageUrl || lightboxBet.scannedSlipUrl}
+                    src={lightboxImage}
                     alt="Original scanned betslip"
                     className="max-h-[420px] w-auto max-w-full object-contain rounded-lg border border-[#27314a]"
                     referrerPolicy="no-referrer"

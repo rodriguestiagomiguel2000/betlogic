@@ -108,13 +108,50 @@ function computeBetFinancialImpact(bet: {
 
 /**
  * GET /api/bets
- * Lists all bets for the authenticated user, supporting optional startDate, endDate, and bankrollId filters.
+ * Lists bets for the authenticated user, supporting optional startDate, endDate, bankrollId, page, and limit.
+ * Defaults to limit = 8 per page if page/limit are provided.
+ * Excludes raw base64 image data from response to optimize performance and prevent RAM/bandwidth spikes.
  */
 router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { startDate, endDate, bankrollId } = req.query;
+    const page = parseInt((req.query.page as string) || '1', 10) || 1;
+    const limit = parseInt((req.query.limit as string) || '8', 10) || 8;
+    const offset = (page - 1) * limit;
 
+    const startDate = req.query.startDate as string | undefined;
+    const endDate = req.query.endDate as string | undefined;
+    const bankrollId = req.query.bankrollId as string | undefined;
+
+    const usePagination = req.query.page !== undefined || req.query.limit !== undefined;
+
+    let whereClause = ` WHERE b.user_id = $1`;
+    const queryParams: any[] = [userId];
+
+    if (startDate) {
+      queryParams.push(startDate);
+      whereClause += ` AND b.date >= $${queryParams.length}`;
+    }
+
+    if (endDate) {
+      queryParams.push(endDate);
+      whereClause += ` AND b.date <= $${queryParams.length}`;
+    }
+
+    if (bankrollId) {
+      queryParams.push(bankrollId);
+      whereClause += ` AND b.bankroll_id = $${queryParams.length}`;
+    }
+
+    // 1. Get total count
+    const countResult = await query(
+      `SELECT COUNT(*)::int as total FROM bets b ${whereClause}`,
+      queryParams
+    );
+    const totalBets = countResult.rows[0]?.total || 0;
+    const totalPages = Math.ceil(totalBets / limit) || 1;
+
+    // 2. Fetch records
     let queryText = `
       SELECT 
         b.id, b.date::text as date, b.type, b.total_odds as "totalOdds", b.stake, 
@@ -123,34 +160,34 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
         b.tipster_id as "tipsterId", t.name as "tipsterName", t.color as "tipsterColor", t.platform as "tipsterPlatform",
         b.is_live as "isLive", b.is_free_bet as "isFreeBet", 
         b.free_bet_destination as "freeBetDestination", b.notes, 
-        b.scanned_slip_url as "scannedSlipUrl", b.image_url as "imageUrl", b.tags
+        ((b.scanned_slip_url IS NOT NULL AND b.scanned_slip_url != '') OR (b.image_url IS NOT NULL AND b.image_url != '')) as "hasImage",
+        b.tags
       FROM bets b
       LEFT JOIN tipsters t ON b.tipster_id = t.id
-      WHERE b.user_id = $1
+      ${whereClause}
+      ORDER BY b.date DESC, b.created_at DESC
     `;
-    const queryParams: any[] = [userId];
 
-    if (startDate) {
-      queryParams.push(startDate);
-      queryText += ` AND b.date >= $${queryParams.length}`;
+    const dataParams = [...queryParams];
+    if (usePagination) {
+      dataParams.push(limit);
+      queryText += ` LIMIT $${dataParams.length}`;
+      dataParams.push(offset);
+      queryText += ` OFFSET $${dataParams.length}`;
     }
 
-    if (endDate) {
-      queryParams.push(endDate);
-      queryText += ` AND b.date <= $${queryParams.length}`;
-    }
-
-    if (bankrollId) {
-      queryParams.push(bankrollId);
-      queryText += ` AND b.bankroll_id = $${queryParams.length}`;
-    }
-
-    queryText += ' ORDER BY b.date DESC, b.created_at DESC';
-
-    const betsResult = await query(queryText, queryParams);
+    const betsResult = await query(queryText, dataParams);
     const bets = betsResult.rows;
 
     if (bets.length === 0) {
+      if (usePagination) {
+        return res.json({
+          bets: [],
+          totalPages,
+          currentPage: page,
+          totalBets,
+        });
+      }
       return res.json([]);
     }
 
@@ -190,13 +227,59 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
       bet.potentialPayout = parseFloat(bet.potentialPayout);
       bet.actualReturn = bet.actualReturn ? parseFloat(bet.actualReturn) : 0;
       bet.tags = typeof bet.tags === 'string' ? JSON.parse(bet.tags) : (bet.tags || []);
+      const hasImg = !!bet.hasImage;
+      bet.hasImage = hasImg;
+      bet.scannedSlipUrl = hasImg ? 'attached' : '';
+      bet.imageUrl = hasImg ? 'attached' : '';
       bet.legs = legsByBetId[bet.id] || [];
+    }
+
+    if (usePagination) {
+      return res.json({
+        bets,
+        totalPages,
+        currentPage: pageNum,
+        totalBets,
+      });
     }
 
     return res.json(bets);
   } catch (err: any) {
     console.error('Error listing bets:', err);
     return res.status(500).json({ error: 'Failed to retrieve bets list.' });
+  }
+});
+
+/**
+ * GET /api/bets/:id/image
+ * Light endpoint to retrieve the base64 image or scanned slip URL on demand for the Lightbox modal.
+ */
+router.get('/:id/image', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const betId = req.params.id;
+
+    const result = await query(
+      `SELECT scanned_slip_url as "scannedSlipUrl", image_url as "imageUrl" 
+       FROM bets 
+       WHERE id = $1 AND user_id = $2`,
+      [betId, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Bet image not found.' });
+    }
+
+    const row = result.rows[0];
+    const imageUrl = row.imageUrl || row.scannedSlipUrl || '';
+    return res.json({
+      id: betId,
+      imageUrl,
+      scannedSlipUrl: row.scannedSlipUrl || imageUrl || '',
+    });
+  } catch (err: any) {
+    console.error('Error fetching bet image:', err);
+    return res.status(500).json({ error: 'Failed to fetch bet image.' });
   }
 });
 
@@ -346,7 +429,7 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
 
     // 1. Get original bet to reverse its balance impact before updating
     const originalBetQuery = await client.query(
-      'SELECT bankroll_id, bookmaker_id, stake, actual_return, potential_payout, status, is_free_bet, free_bet_destination FROM bets WHERE id = $1 AND user_id = $2',
+      'SELECT bankroll_id, bookmaker_id, stake, actual_return, potential_payout, status, is_free_bet, free_bet_destination, scanned_slip_url, image_url FROM bets WHERE id = $1 AND user_id = $2',
       [betId, userId]
     );
 
@@ -356,6 +439,10 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
     }
 
     const orig = originalBetQuery.rows[0];
+
+    // Preserve existing image fields if client passed 'attached' or omitted them
+    const newScannedSlipUrl = (scannedSlipUrl && scannedSlipUrl !== 'attached') ? scannedSlipUrl : (orig.scanned_slip_url || '');
+    const newImageUrl = (imageUrl && imageUrl !== 'attached') ? imageUrl : (orig.image_url || '');
 
     // 2. Reverse original balance adjustments (pending or settled)
     const origImpact = computeBetFinancialImpact({
@@ -393,8 +480,8 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
         isFreeBet || false,
         freeBetDestination || 'cash',
         notes || '',
-        scannedSlipUrl || '',
-        imageUrl || '',
+        newScannedSlipUrl,
+        newImageUrl,
         JSON.stringify(tags || []),
         tipsterId || null,
         betId,
@@ -439,11 +526,142 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
     }
 
     await client.query('COMMIT');
-    return res.json({ message: 'Bet updated successfully.' });
+    return res.json({ 
+      message: 'Bet updated successfully.',
+      hasImage: !!(newScannedSlipUrl || newImageUrl)
+    });
   } catch (err: any) {
     await client.query('ROLLBACK');
     console.error('Error updating bet:', err);
     return res.status(500).json({ error: 'Failed to update bet.' });
+  } finally {
+    client.release();
+  }
+});
+
+/**
+ * PATCH /api/bets/:id/legs/:legId/status
+ * Light endpoint to update a single leg status without returning base64 image strings.
+ */
+router.patch('/:id/legs/:legId/status', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  const client = await getDbPool().connect();
+  try {
+    const userId = req.user?.id;
+    const betId = req.params.id;
+    const legId = req.params.legId;
+    const { status: newLegStatus } = req.body;
+
+    if (!newLegStatus) {
+      return res.status(400).json({ error: 'Leg status is required.' });
+    }
+
+    await client.query('BEGIN');
+
+    // 1. Update the leg status
+    await client.query(
+      `UPDATE bet_legs SET status = $1 WHERE id = $2 AND bet_id = $3`,
+      [newLegStatus, legId, betId]
+    );
+
+    // 2. Fetch original bet header
+    const origBetRes = await client.query(
+      `SELECT bankroll_id, bookmaker_id, stake, total_odds, actual_return, potential_payout, status, is_free_bet, free_bet_destination, type, scanned_slip_url, image_url
+       FROM bets WHERE id = $1 AND user_id = $2`,
+      [betId, userId]
+    );
+
+    if (origBetRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Bet not found.' });
+    }
+
+    const orig = origBetRes.rows[0];
+
+    // 3. Reverse original financial impact
+    const origImpact = computeBetFinancialImpact({
+      stake: parseFloat(orig.stake),
+      potentialPayout: parseFloat(orig.potential_payout || 0),
+      actualReturn: orig.actual_return !== null && orig.actual_return !== undefined ? parseFloat(orig.actual_return) : undefined,
+      status: orig.status,
+      isFreeBet: !!orig.is_free_bet,
+      freeBetDestination: orig.free_bet_destination || 'cash'
+    });
+
+    if (origImpact.realCashDelta !== 0 || origImpact.freeBetDelta !== 0) {
+      await applyBookmakerBalanceChange(client, orig.bankroll_id, orig.bookmaker_id, -origImpact.realCashDelta, -origImpact.freeBetDelta);
+    }
+
+    // 4. Recalculate bet status based on all legs
+    const allLegsRes = await client.query(
+      `SELECT id, odds, status FROM bet_legs WHERE bet_id = $1`,
+      [betId]
+    );
+    const allLegs = allLegsRes.rows.map((l) => ({ ...l, odds: parseFloat(l.odds) }));
+
+    const anyLost = allLegs.some((l) => l.status === 'lost');
+    const allWon = allLegs.every((l) => l.status === 'won');
+    const allVoid = allLegs.every((l) => l.status === 'void');
+    const allWonOrVoid = allLegs.every((l) => l.status === 'won' || l.status === 'void');
+    const hasWon = allLegs.some((l) => l.status === 'won');
+
+    let newStatus = orig.status;
+    if (anyLost) newStatus = 'lost';
+    else if (allWon || (allWonOrVoid && hasWon)) newStatus = 'won';
+    else if (allVoid) newStatus = 'void';
+    else newStatus = 'pending';
+
+    let effectiveOdds = 1.0;
+    for (const leg of allLegs) {
+      if (leg.status !== 'void') {
+        effectiveOdds *= (leg.odds || 1.0);
+      }
+    }
+
+    const stake = parseFloat(orig.stake);
+    const payout = Number((stake * effectiveOdds).toFixed(2));
+    let ret = 0;
+    if (newStatus === 'won') ret = payout;
+    else if (newStatus === 'lost') ret = 0;
+    else if (newStatus === 'void') ret = stake;
+
+    // 5. Update bet header
+    await client.query(
+      `UPDATE bets SET status = $1, total_odds = $2, potential_payout = $3, actual_return = $4
+       WHERE id = $5 AND user_id = $6`,
+      [newStatus, parseFloat(effectiveOdds.toFixed(3)), payout, ret, betId, userId]
+    );
+
+    // 6. Apply new financial impact
+    const newImpact = computeBetFinancialImpact({
+      stake,
+      potentialPayout: payout,
+      actualReturn: ret,
+      status: newStatus,
+      isFreeBet: !!orig.is_free_bet,
+      freeBetDestination: orig.free_bet_destination || 'cash'
+    });
+
+    if (newImpact.realCashDelta !== 0 || newImpact.freeBetDelta !== 0) {
+      await applyBookmakerBalanceChange(client, orig.bankroll_id, orig.bookmaker_id, newImpact.realCashDelta, newImpact.freeBetDelta);
+    }
+
+    await client.query('COMMIT');
+
+    const hasImg = !!(orig.scanned_slip_url || orig.image_url);
+    return res.json({
+      id: betId,
+      status: newStatus,
+      totalOdds: parseFloat(effectiveOdds.toFixed(3)),
+      potentialPayout: payout,
+      actualReturn: ret,
+      scannedSlipUrl: hasImg ? 'attached' : '',
+      imageUrl: hasImg ? 'attached' : '',
+      hasImage: hasImg
+    });
+  } catch (err: any) {
+    await client.query('ROLLBACK');
+    console.error('Error updating leg status:', err);
+    return res.status(500).json({ error: 'Failed to update leg status.' });
   } finally {
     client.release();
   }

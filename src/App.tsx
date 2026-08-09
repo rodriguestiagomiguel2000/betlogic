@@ -321,7 +321,7 @@ export function App() {
         }
       }
 
-      await betsApi.update(betId, updated);
+      await betsApi.updateLegStatus(betId, legId, newLegStatus);
       // Background reload (silent)
       loadData(false);
     } catch (err: any) {

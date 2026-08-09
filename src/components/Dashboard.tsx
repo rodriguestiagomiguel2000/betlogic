@@ -3,8 +3,9 @@ import { Bet, Bankroll, Bookmaker, BetStatus } from '../types';
 import { formatCurrency, formatOdds, calculateWinStreak, getBookmakerBalanceForBankroll, getCurrencySymbol } from '../utils/storage';
 import { formatEventDate, getRepresentativeEventDateTimestamp, formatLegSelection, formatBetDateTime, getBetLatestEventDate } from '../utils/dateUtils';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
-import { TrendingUp, Flame, ShieldAlert, Zap, Filter, CheckCircle2, XCircle, Clock, Plus, ScanLine, ArrowUpRight, Camera } from 'lucide-react';
+import { TrendingUp, Flame, ShieldAlert, Zap, Filter, CheckCircle2, XCircle, Clock, Plus, ScanLine, ArrowUpRight, Camera, Loader2 } from 'lucide-react';
 import { BookmakerLogo } from './BookmakerLogo';
+import { betsApi } from '../utils/api';
 
 interface DashboardProps {
   bets: Bet[];
@@ -42,6 +43,34 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   // Lightbox modal state
   const [lightboxBet, setLightboxBet] = useState<Bet | null>(null);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [loadingImage, setLoadingImage] = useState<boolean>(false);
+
+  React.useEffect(() => {
+    if (!lightboxBet) {
+      setLightboxImage(null);
+      setLoadingImage(false);
+      return;
+    }
+
+    const cachedImg = lightboxBet.imageUrl || lightboxBet.scannedSlipUrl;
+    if (cachedImg && cachedImg !== 'attached' && cachedImg.length > 50) {
+      setLightboxImage(cachedImg);
+    } else {
+      setLoadingImage(true);
+      betsApi.getBetImage(lightboxBet.id)
+        .then((res) => {
+          setLightboxImage(res.imageUrl || res.scannedSlipUrl || null);
+        })
+        .catch((err) => {
+          console.error('Failed to fetch bet image:', err);
+          setLightboxImage(null);
+        })
+        .finally(() => {
+          setLoadingImage(false);
+        });
+    }
+  }, [lightboxBet]);
 
   // Filter bets
   const filteredBets = useMemo(() => {
@@ -542,9 +571,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-2 flex-1 overflow-y-auto p-4 gap-6">
               {/* Slip Image View */}
               <div className="bg-[#0b1326] rounded-xl border border-[#27314a] p-3 flex flex-col items-center justify-center min-h-[280px]">
-                {lightboxBet.imageUrl || lightboxBet.scannedSlipUrl ? (
+                {loadingImage ? (
+                  <div className="flex flex-col items-center gap-2 text-xs text-[#8d90a0]">
+                    <Loader2 className="animate-spin text-[#2563eb]" size={24} />
+                    <span>Loading betslip image...</span>
+                  </div>
+                ) : lightboxImage ? (
                   <img
-                    src={lightboxBet.imageUrl || lightboxBet.scannedSlipUrl}
+                    src={lightboxImage}
                     alt="Original scanned betslip"
                     className="max-h-[420px] w-auto max-w-full object-contain rounded-lg border border-[#27314a]"
                     referrerPolicy="no-referrer"

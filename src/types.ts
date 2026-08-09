@@ -34,11 +34,19 @@ export interface Bet {
   notes?: string;
   scannedSlipUrl?: string;
   imageUrl?: string;
+  hasImage?: boolean;
   tags?: string[];
   tipsterId?: string;
   tipsterName?: string;
   tipsterColor?: string;
   tipsterPlatform?: string;
+}
+
+export interface PaginatedBets {
+  bets: Bet[];
+  totalPages: number;
+  currentPage: number;
+  totalBets: number;
 }
 
 export interface Tipster {
