@@ -19,20 +19,17 @@ router.post('/register', async (req: any, res: any) => {
     const { name, email, password, currency } = req.body;
 
     if (!name || !email || !password) {
-      client.release();
       return res.status(400).json({ error: 'Name, email, and password are required.' });
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      client.release();
       return res.status(400).json({ error: 'Please provide a valid email address.' });
     }
 
     // Check if user already exists
     const checkUser = await client.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
     if (checkUser.rows.length > 0) {
-      client.release();
       return res.status(409).json({ error: 'An account with this email already exists.' });
     }
 

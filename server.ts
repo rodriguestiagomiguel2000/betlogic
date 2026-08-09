@@ -61,9 +61,13 @@ async function startServer() {
 
   // TASK 2: Secure Betslip Scanner Server Endpoint
   app.post('/api/scan-betslip', async (req, res) => {
+    // Keep reference to image outside try block for cleanup in finally if needed
+    let imageData: string | null = req.body.image;
+    
     try {
-      const { image, mimeType } = req.body;
-      if (!image) {
+      const mimeType = req.body.mimeType;
+      
+      if (!imageData) {
         return res.status(400).json({ error: 'Missing image base64 data' });
       }
 
@@ -134,7 +138,7 @@ Special parsing & Extraction Rules:
           {
             inlineData: {
               mimeType: mimeType || 'image/jpeg',
-              data: image,
+              data: imageData,
             },
           },
           {
@@ -256,18 +260,32 @@ Special parsing & Extraction Rules:
         },
       });
 
+      // CRITICAL: Immediate memory release
+      req.body.image = null;
+      imageData = null;
+
       const rawText = response.text;
       if (!rawText) {
         throw new Error('Gemini OCR returned an empty text response.');
       }
 
       // Safe parse to verify structure and log raw extraction
-      const parsedData = JSON.parse(rawText.trim());
+      let parsedData = JSON.parse(rawText.trim());
       console.log('\n=================== [RAW GEMINI OCR RESPONSE FROM SERVER] ===================');
       console.log(JSON.stringify(parsedData, null, 2));
       console.log('=============================================================================\n');
-      return res.json(parsedData);
+      
+      const resData = res.json(parsedData);
+      
+      // Cleanup local references
+      (parsedData as any) = null;
+      
+      return resData;
     } catch (err: any) {
+      // Ensure memory is released even on error
+      req.body.image = null;
+      imageData = null;
+      
       console.error('Betslip scanner error on backend:', err);
       const errMsg = (err.message || '').toLowerCase();
       if (errMsg.includes('resource_exhausted') || errMsg.includes('quota') || errMsg.includes('limit exceeded') || errMsg.includes('429')) {
@@ -278,9 +296,13 @@ Special parsing & Extraction Rules:
       return res.status(500).json({
         error: err.message || 'Failed to scan and parse the betslip using server-side Gemini OCR.',
       });
+    } finally {
+      // Final attempt to help GC
+      if (global.gc) {
+        global.gc();
+      }
     }
   });
-
   // Vite middleware setup for Development
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');

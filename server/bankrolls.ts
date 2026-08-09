@@ -55,7 +55,6 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
     const { name, currency, color, description, allocations } = req.body;
 
     if (!name || !allocations || !Array.isArray(allocations) || allocations.length === 0) {
-      client.release();
       return res.status(400).json({ error: 'Bankroll name and at least one allocation are required.' });
     }
 
@@ -79,7 +78,6 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
     for (const alloc of allocations) {
         if ((alloc.cashAmount || 0) < 0 || (alloc.freeBetAmount || 0) < 0) {
             await client.query('ROLLBACK');
-            client.release();
             return res.status(400).json({ error: 'Allocation amounts cannot be negative.' });
         }
         await client.query(
@@ -117,19 +115,18 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
     );
     
     await client.query('COMMIT');
-    client.release();
 
-    return res.status(201).json({
-        ...newBankroll,
-        initialBalance: parseFloat(newBankroll.initialBalance),
-        currentBalance: parseFloat(newBankroll.currentBalance),
-        freeBetCredits: parseFloat(newBankroll.freeBetCredits),
-    });
+    newBankroll.initialBalance = parseFloat(newBankroll.initialBalance);
+    newBankroll.currentBalance = parseFloat(newBankroll.currentBalance);
+    newBankroll.freeBetCredits = parseFloat(newBankroll.freeBetCredits);
+
+    return res.status(201).json(newBankroll);
   } catch (err: any) {
-    await client.query('ROLLBACK');
-    client.release();
+    if (client) await client.query('ROLLBACK').catch(() => {});
     console.error('Error creating bankroll:', err);
     return res.status(500).json({ error: 'Failed to create bankroll.' });
+  } finally {
+    client.release();
   }
 });
 
@@ -215,12 +212,11 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
     }
 
     const updated = result.rows[0];
-    return res.json({
-      ...updated,
-      initialBalance: parseFloat(updated.initialBalance),
-      currentBalance: parseFloat(updated.currentBalance),
-      freeBetCredits: parseFloat(updated.freeBetCredits),
-    });
+    updated.initialBalance = parseFloat(updated.initialBalance);
+    updated.currentBalance = parseFloat(updated.currentBalance);
+    updated.freeBetCredits = parseFloat(updated.freeBetCredits);
+
+    return res.json(updated);
   } catch (err: any) {
     console.error('Error updating bankroll:', err);
     return res.status(500).json({ error: 'Failed to update bankroll.' });
@@ -387,12 +383,13 @@ router.get('/:id/transactions', authenticateToken as any, async (req: Authentica
       }
     }
 
-    const transactions = rows.map((t) => ({
-      ...t,
-      amount: parseFloat(t.amount || 0),
-    }));
+    // Optimize by modifying in-place to reduce memory pressure
+    for (let i = 0; i < rows.length; i++) {
+      const t = rows[i];
+      t.amount = parseFloat(t.amount || 0);
+    }
 
-    return res.json(transactions);
+    return res.json(rows);
   } catch (err: any) {
     console.error('Error fetching bankroll transactions:', err);
     return res.status(500).json({ error: err.message || 'Failed to retrieve bankroll transactions.' });

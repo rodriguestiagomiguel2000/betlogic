@@ -1028,8 +1028,8 @@ export function getDbPool(): pg.Pool {
       ssl: {
         rejectUnauthorized: false, // Required for secure connections to Aiven, Supabase, Neon, Cloud SQL, etc.
       },
-      max: 10,
-      idleTimeoutMillis: 30000,
+      max: 5,
+      idleTimeoutMillis: 10000,
       connectionTimeoutMillis: 5000,
     });
 
