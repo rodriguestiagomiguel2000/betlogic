@@ -238,7 +238,7 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
       return res.json({
         bets,
         totalPages,
-        currentPage: pageNum,
+        currentPage: page,
         totalBets,
       });
     }

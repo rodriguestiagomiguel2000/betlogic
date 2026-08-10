@@ -135,9 +135,9 @@ Special parsing & Extraction Rules:
      * Map the pick answer into 'selection' (e.g. "Sim", "Não", "Over 2.5").
      * NEVER omit 'market' or leave it empty when a market descriptor header is visible on the slip.`;
 
-      // Enforce JSON Schema structured outputs using Gemini 3.1 Flash Lite
+      // Enforce JSON Schema structured outputs using Gemini 3.5 Flash Lite
       const response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite',
+        model: 'gemini-3.5-flash-lite',
         contents: [
           {
             inlineData: {
