@@ -75,21 +75,28 @@ export function App() {
     }
     setError(null);
     try {
-      // Serialize calls to avoid peak memory usage on the server
-      const betsData = await betsApi.list();
-      const bankrollsData = await bankrollsApi.list();
-      const bookmakersData = await bookmakersApi.list();
-      const transfersData = await transfersApi.list();
-      const tagsData = await tagsApi.list();
-      const tipstersData = await tipstersApi.list().catch(() => []);
-      const profileData = await authApi.getProfile();
-      
-      // Transactions are typically large, only fetch if we don't have them or as needed
-      // For now, we'll still fetch them but separately from the main batch
-      let transactionsData = transactions;
-      if (activeTab === 'analytics' || activeTab === 'bankrolls' || transactions.length === 0) {
-        transactionsData = await bankrollsApi.allTransactions().catch(() => []);
-      }
+      // Run all independent requests in parallel using Promise.all
+      const [
+        betsData,
+        bankrollsData,
+        bookmakersData,
+        transfersData,
+        tagsData,
+        tipstersData,
+        profileData,
+        transactionsData
+      ] = await Promise.all([
+        betsApi.list(),
+        bankrollsApi.list(),
+        bookmakersApi.list(),
+        transfersApi.list(),
+        tagsApi.list(),
+        tipstersApi.list().catch(() => []),
+        authApi.getProfile(),
+        (activeTab === 'analytics' || activeTab === 'bankrolls' || transactions.length === 0)
+          ? bankrollsApi.allTransactions().catch(() => [])
+          : Promise.resolve(transactions)
+      ]);
 
       setBets(betsData);
       setBankrolls(bankrollsData);
@@ -321,9 +328,20 @@ export function App() {
         }
       }
 
-      await betsApi.updateLegStatus(betId, legId, newLegStatus);
-      // Background reload (silent)
-      loadData(false);
+      const res = await betsApi.updateLegStatus(betId, legId, newLegStatus);
+      
+      if (res && (res.status !== undefined || res.totalOdds !== undefined || res.potentialPayout !== undefined || res.actualReturn !== undefined)) {
+        setBets(prev => prev.map(b => {
+          if (b.id !== betId) return b;
+          return {
+            ...b,
+            status: res.status !== undefined ? res.status : b.status,
+            totalOdds: res.totalOdds !== undefined ? Number(res.totalOdds) : b.totalOdds,
+            potentialPayout: res.potentialPayout !== undefined ? Number(res.potentialPayout) : b.potentialPayout,
+            actualReturn: res.actualReturn !== undefined ? Number(res.actualReturn) : b.actualReturn,
+          };
+        }));
+      }
     } catch (err: any) {
       alert(`Failed to update leg status: ${err.message}`);
       // Revert on error

@@ -174,6 +174,12 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
       queryText += ` LIMIT $${dataParams.length}`;
       dataParams.push(offset);
       queryText += ` OFFSET $${dataParams.length}`;
+    } else {
+      console.warn(`[WARN] Unpaginated GET /api/bets request from user ${userId}. Capping response to 200 bets.`);
+      dataParams.push(200);
+      queryText += ` LIMIT $${dataParams.length}`;
+      dataParams.push(0);
+      queryText += ` OFFSET $${dataParams.length}`;
     }
 
     const betsResult = await query(queryText, dataParams);

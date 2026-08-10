@@ -153,6 +153,41 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
     setCurrentPage(1);
   }, [bankrollFilter, dateRange]);
 
+  // Synchronize optimistic updates from parent `bets` prop into local `serverBets`, `lightboxBet`, and `settlementBet`
+  useEffect(() => {
+    if (!serverBets) return;
+
+    const betsMap = new Map(bets.map((b) => [b.id, b]));
+
+    let hasChanges = false;
+    const updatedServerBets = serverBets.map((sb) => {
+      const parentBet = betsMap.get(sb.id);
+      if (parentBet && parentBet !== sb) {
+        hasChanges = true;
+        return parentBet;
+      }
+      return sb;
+    });
+
+    if (hasChanges) {
+      setServerBets(updatedServerBets);
+    }
+
+    if (lightboxBet) {
+      const updatedLightbox = betsMap.get(lightboxBet.id);
+      if (updatedLightbox && updatedLightbox !== lightboxBet) {
+        setLightboxBet(updatedLightbox);
+      }
+    }
+
+    if (settlementBet) {
+      const updatedSettlement = betsMap.get(settlementBet.id);
+      if (updatedSettlement && updatedSettlement !== settlementBet) {
+        setSettlementBet(updatedSettlement);
+      }
+    }
+  }, [bets]);
+
   useEffect(() => {
     if (!lightboxBet) {
       setLightboxImage(null);
