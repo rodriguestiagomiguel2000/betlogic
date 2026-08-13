@@ -200,10 +200,9 @@ export function computeBetFinancialImpact(bet: Bet): { realCashDelta: number; fr
           freeBetDelta: -stake + payout
         };
       } else {
-        // Default SNR: Stake Not Returned (Only net profit credited to real cash)
-        const netProfit = payout - stake;
+        // Free bet converted to real cash: full return is credited to real cash without subtracting stake
         return {
-          realCashDelta: netProfit > 0 ? netProfit : 0,
+          realCashDelta: payout,
           freeBetDelta: -stake
         };
       }
@@ -245,6 +244,34 @@ export function computeBetFinancialImpact(bet: Bet): { realCashDelta: number; fr
   }
 
   return { realCashDelta: 0, freeBetDelta: 0 };
+}
+
+/**
+ * Calculates net profit for a single bet.
+ * When a bet is won using a free bet converting to real money, the profit is the full return (stake is not subtracted).
+ */
+export function calculateBetProfit(bet: {
+  status: string;
+  stake: number;
+  potentialPayout: number;
+  actualReturn?: number | null;
+  isFreeBet?: boolean;
+  freeBetDestination?: string;
+}): number {
+  const isFreeBetCash = !!bet.isFreeBet && (bet.freeBetDestination === 'cash' || !bet.freeBetDestination);
+
+  if (bet.status === 'won') {
+    const returnAmt = bet.actualReturn !== undefined && bet.actualReturn !== null ? bet.actualReturn : bet.potentialPayout;
+    return isFreeBetCash ? returnAmt : returnAmt - bet.stake;
+  }
+  if (bet.status === 'lost') {
+    return -bet.stake;
+  }
+  if (bet.status === 'cashout') {
+    const returnAmt = bet.actualReturn !== undefined && bet.actualReturn !== null ? bet.actualReturn : 0;
+    return isFreeBetCash ? returnAmt : returnAmt - bet.stake;
+  }
+  return 0;
 }
 
 // Utility calculations

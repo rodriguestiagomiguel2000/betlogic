@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Bet, Bankroll, Bookmaker, TagDefinition } from '../types';
-import { getCurrencySymbol, formatCurrency, formatOdds } from '../utils/storage';
+import { getCurrencySymbol, formatCurrency, formatOdds, calculateBetProfit } from '../utils/storage';
 import { formatEventDate, formatLegSelection, getBetLatestEventDate } from '../utils/dateUtils';
 import { BookmakerLogo } from './BookmakerLogo';
 import { 
@@ -98,17 +98,7 @@ export const PLCalendarView: React.FC<PLCalendarViewProps> = ({
   // Calculate day net Profit/Loss
   const getDayPnL = (dayBets: Bet[]) => {
     return dayBets.reduce((sum, b) => {
-      if (b.status === 'won') {
-        return sum + ((b.actualReturn || b.potentialPayout) - b.stake);
-      }
-      if (b.status === 'lost') {
-        return sum - b.stake;
-      }
-      if (b.status === 'cashout') {
-        return sum + ((b.actualReturn || 0) - b.stake);
-      }
-      // Void / Pending have 0 financial impact
-      return sum;
+      return sum + calculateBetProfit(b);
     }, 0);
   };
 
@@ -479,10 +469,7 @@ export const PLCalendarView: React.FC<PLCalendarViewProps> = ({
                 const isVoid = bet.status === 'void';
 
                 // Calculate Net Profit/Loss of this individual bet
-                let betProfit = 0;
-                if (isWin) betProfit = (bet.actualReturn || bet.potentialPayout) - bet.stake;
-                else if (isLoss) betProfit = -bet.stake;
-                else if (isCashout) betProfit = (bet.actualReturn || 0) - bet.stake;
+                const betProfit = calculateBetProfit(bet);
 
                 const bmaker = bookmakers.find(bm => bm.id === bet.bookmakerId);
                 const bmakerObj = bmaker || { name: getBookmakerName(bet.bookmakerId) };

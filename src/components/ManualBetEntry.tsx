@@ -982,10 +982,10 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
                   }`}
                 >
                   <span className="font-bold text-xs flex items-center gap-1.5 text-white">
-                    💵 Real Cash Balance <span className="text-[10px] text-[#4edea3] font-mono">(SNR Default)</span>
+                    💵 Real Cash Balance <span className="text-[10px] text-[#4edea3] font-mono">(Convert to Cash)</span>
                   </span>
                   <span className="text-[10px] leading-tight text-[#dae2fd]">
-                    Net profit <span className="font-mono text-white font-bold">(Payout - Stake)</span> is credited to real cash balance upon winning.
+                    Full return <span className="font-mono text-white font-bold">(Return)</span> is credited to real cash balance upon winning without deducting the stake.
                   </span>
                 </label>
 

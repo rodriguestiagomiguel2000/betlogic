@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Bet, Bankroll, Bookmaker, BetStatus } from '../types';
-import { formatCurrency, formatOdds, calculateWinStreak, getBookmakerBalanceForBankroll, getCurrencySymbol } from '../utils/storage';
+import { formatCurrency, formatOdds, calculateWinStreak, getBookmakerBalanceForBankroll, getCurrencySymbol, calculateBetProfit } from '../utils/storage';
 import { formatEventDate, getRepresentativeEventDateTimestamp, formatLegSelection, formatBetDateTime, getBetLatestEventDate } from '../utils/dateUtils';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { TrendingUp, Flame, ShieldAlert, Zap, Filter, CheckCircle2, XCircle, Clock, Plus, ScanLine, ArrowUpRight, Camera, Loader2 } from 'lucide-react';
@@ -105,8 +105,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const dashboardStats = useMemo(() => {
     const settled = filteredBets.filter((b: Bet) => b.status === 'won' || b.status === 'lost' || b.status === 'cashout');
     const staked = settled.reduce((sum: number, b: Bet) => sum + b.stake, 0);
-    const returns = settled.reduce((sum: number, b: Bet) => sum + (b.actualReturn || 0), 0);
-    const net = returns - staked;
+    const returns = settled.reduce((sum: number, b: Bet) => sum + (b.actualReturn || (b.status === 'won' ? b.potentialPayout : 0)), 0);
+    const net = settled.reduce((sum: number, b: Bet) => sum + calculateBetProfit(b), 0);
     const roi = staked > 0 ? (net / staked) * 100 : 0;
     
     const won = settled.filter((b: Bet) => b.status === 'won').length;
@@ -146,7 +146,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     let runningProfit = 0;
     return settledWithKeys.map((item: any, index: number) => {
       const bet = item.bet;
-      const profit = (bet.actualReturn || 0) - bet.stake;
+      const profit = calculateBetProfit(bet);
       runningProfit += profit;
       return {
         index: `#${index + 1}`,

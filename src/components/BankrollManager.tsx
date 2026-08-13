@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bankroll, Bookmaker, BankrollTransfer, Bet, BankrollTransaction } from '../types';
-import { formatCurrency, formatOdds, getBookmakerBalanceForBankroll, getCurrencySymbol } from '../utils/storage';
+import { formatCurrency, formatOdds, getBookmakerBalanceForBankroll, getCurrencySymbol, calculateBetProfit } from '../utils/storage';
 import { formatEventDate, formatLegSelection, formatBetDateTime, getBetLatestEventDate } from '../utils/dateUtils';
 import { bookmakersApi, bankrollsApi } from '../utils/api';
 import {
@@ -310,13 +310,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
     const data = [{ date: 'Start', profit: 0 }];
 
     sortedBets.forEach((bet) => {
-      if (bet.status === 'won') {
-        cumulativeProfit += (bet.actualReturn ?? bet.potentialPayout) - bet.stake;
-      } else if (bet.status === 'lost') {
-        cumulativeProfit -= bet.stake;
-      } else if (bet.status === 'cashout') {
-        cumulativeProfit += (bet.actualReturn ?? 0) - bet.stake;
-      }
+      cumulativeProfit += calculateBetProfit(bet);
       if (bet.status !== 'pending') {
         data.push({
           date: getBetLatestEventDate(bet).toLocaleDateString([], { month: 'short', day: 'numeric' }),
@@ -911,12 +905,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {bankrolls.map((b, idx) => {
             const scopedBets = bets.filter((bet) => bet.bankrollId === b.id);
-            const netPnL = scopedBets.reduce((acc, bet) => {
-              if (bet.status === 'won') return acc + ((bet.actualReturn ?? bet.potentialPayout) - bet.stake);
-              if (bet.status === 'lost') return acc - bet.stake;
-              if (bet.status === 'cashout') return acc + ((bet.actualReturn ?? 0) - bet.stake);
-              return acc;
-            }, 0);
+            const netPnL = scopedBets.reduce((acc, bet) => acc + calculateBetProfit(bet), 0);
 
             const isActivePrimary = b.id === activeBankrollId;
             const bTotalCash = b.currentBalance;

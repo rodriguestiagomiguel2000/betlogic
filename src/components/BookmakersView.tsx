@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bookmaker, Bet, Bankroll } from '../types';
-import { formatCurrency, formatOdds, getBookmakerBalanceForBankroll, parseCurrency, getCurrencySymbol } from '../utils/storage';
+import { formatCurrency, formatOdds, getBookmakerBalanceForBankroll, parseCurrency, getCurrencySymbol, calculateBetProfit } from '../utils/storage';
 import { formatEventDate, formatLegSelection, formatBetDateTime } from '../utils/dateUtils';
 import { BookmakerLogo } from './BookmakerLogo';
 import {
@@ -303,9 +303,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
     overviewBookmakers.forEach((bm) => {
       const bmBets = bets.filter((b) => b.bookmakerId === bm.id && (overviewBankrollId === 'all' || b.bankrollId === overviewBankrollId));
       bmBets.forEach((b) => {
-        if (b.status === 'won') totalProfit += (b.actualReturn ?? b.potentialPayout) - b.stake;
-        else if (b.status === 'lost') totalProfit -= b.stake;
-        else if (b.status === 'cashout') totalProfit += (b.actualReturn ?? 0) - b.stake;
+        totalProfit += calculateBetProfit(b);
       });
     });
 
@@ -354,8 +352,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
     });
 
     const settledCount = wonCount + lostCount;
-    const settledStaked = scopedBets.filter((b) => b.status !== 'pending').reduce((acc, b) => acc + b.stake, 0);
-    const netProfit = totalReturns - settledStaked;
+    const netProfit = scopedBets.filter((b) => b.status !== 'pending').reduce((acc, b) => acc + calculateBetProfit(b), 0);
     const roi = totalStaked > 0 ? (netProfit / totalStaked) * 100 : 0;
     const winRate = settledCount > 0 ? (wonCount / settledCount) * 100 : 0;
     const avgOdds = scopedBets.length > 0 ? sumOdds / scopedBets.length : 0;
@@ -401,13 +398,13 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
       if (b.status === 'won') {
         item.wonCount += 1;
         item.settledCount += 1;
-        item.netPnL += (b.actualReturn ?? b.potentialPayout) - b.stake;
+        item.netPnL += calculateBetProfit(b);
       } else if (b.status === 'lost') {
         item.settledCount += 1;
-        item.netPnL -= b.stake;
+        item.netPnL += calculateBetProfit(b);
       } else if (b.status === 'cashout') {
         item.settledCount += 1;
-        item.netPnL += (b.actualReturn ?? 0) - b.stake;
+        item.netPnL += calculateBetProfit(b);
       }
     });
 
@@ -941,7 +938,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                       recentBets.map((rb) => {
                         let impactTxt = '';
                         if (rb.status === 'won') {
-                          const profit = (rb.actualReturn ?? rb.potentialPayout) - rb.stake;
+                          const profit = calculateBetProfit(rb);
                           impactTxt = `+${formatCurrency(profit, cardCur)} (Won)`;
                         } else if (rb.status === 'lost') {
                           impactTxt = `-${formatCurrency(rb.stake, cardCur)} (Lost)`;

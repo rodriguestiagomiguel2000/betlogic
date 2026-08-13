@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bet, Bankroll, Bookmaker, BetStatus, SportType, BetType, TagDefinition, Tipster } from '../types';
-import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
+import { formatCurrency, formatOdds, getCurrencySymbol, calculateBetProfit } from '../utils/storage';
 import { formatEventDate, getRepresentativeEventDateTimestamp, formatLegSelection, formatBetDateTime } from '../utils/dateUtils';
 import { betsApi } from '../utils/api';
 import { BookmakerLogo } from './BookmakerLogo';
@@ -332,12 +332,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
     const betsWithKeys = filtered.map(bet => ({
       bet,
       timestamp: getRepresentativeEventDateTimestamp(bet),
-      profit: (() => {
-        if (bet.status === 'won') return (bet.actualReturn ?? bet.potentialPayout) - bet.stake;
-        if (bet.status === 'lost') return -bet.stake;
-        if (bet.status === 'cashout') return (bet.actualReturn ?? 0) - bet.stake;
-        return 0;
-      })()
+      profit: calculateBetProfit(bet)
     }));
 
     betsWithKeys.sort((a, b) => {
@@ -948,10 +943,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                   const isExpanded = expandedBetIds.has(bet.id);
                   const mainLeg = bet.legs[0];
 
-                  let profitLoss = 0;
-                  if (bet.status === 'won') profitLoss = (bet.actualReturn ?? bet.potentialPayout) - bet.stake;
-                  else if (bet.status === 'lost') profitLoss = -bet.stake;
-                  else if (bet.status === 'cashout') profitLoss = (bet.actualReturn ?? 0) - bet.stake;
+                  const profitLoss = calculateBetProfit(bet);
 
                   return (
                     <React.Fragment key={bet.id}>
@@ -1201,10 +1193,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
             const bm = bookmakers.find((b) => b.id === bet.bookmakerId);
             const mainLeg = bet.legs[0];
 
-            let profitLoss = 0;
-            if (bet.status === 'won') profitLoss = (bet.actualReturn ?? bet.potentialPayout) - bet.stake;
-            else if (bet.status === 'lost') profitLoss = -bet.stake;
-            else if (bet.status === 'cashout') profitLoss = (bet.actualReturn ?? 0) - bet.stake;
+            const profitLoss = calculateBetProfit(bet);
 
             return (
               <div key={bet.id} className="bg-[#171f33] p-5 rounded-xl border border-[#27314a] space-y-4 flex flex-col justify-between hover:border-[#2563eb]/50 transition-all">

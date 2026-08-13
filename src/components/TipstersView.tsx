@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Tipster, Bet } from '../types';
-import { formatCurrency, getCurrencySymbol } from '../utils/storage';
+import { formatCurrency, getCurrencySymbol, calculateBetProfit } from '../utils/storage';
 import {
   Users,
   Plus,
@@ -190,15 +190,15 @@ export const TipstersView: React.FC<TipstersViewProps> = ({
         item.wonBets += 1;
         const ret = b.actualReturn !== undefined ? b.actualReturn : b.potentialPayout;
         item.returned += ret;
-        item.profit += (ret - b.stake);
+        item.profit += calculateBetProfit(b);
       } else if (b.status === 'lost') {
         item.lostBets += 1;
-        item.profit -= b.stake;
+        item.profit += calculateBetProfit(b);
       } else if (b.status === 'pending') {
         item.pendingBets += 1;
-      } else if (b.status === 'cashout' && b.actualReturn !== undefined) {
-        item.returned += b.actualReturn;
-        item.profit += (b.actualReturn - b.stake);
+      } else if (b.status === 'cashout') {
+        if (b.actualReturn !== undefined) item.returned += b.actualReturn;
+        item.profit += calculateBetProfit(b);
       }
     });
 

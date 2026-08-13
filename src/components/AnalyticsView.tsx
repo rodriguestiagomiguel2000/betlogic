@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Bet, Bookmaker, BankrollTransaction, Tipster } from '../types';
-import { formatCurrency, calculateWinStreak, getCurrencySymbol } from '../utils/storage';
+import { formatCurrency, calculateWinStreak, getCurrencySymbol, calculateBetProfit } from '../utils/storage';
 import { getBetLatestEventDate } from '../utils/dateUtils';
 import {
   ResponsiveContainer,
@@ -149,12 +149,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
     const settled = bets.filter((b) => b.status === 'won' || b.status === 'lost' || b.status === 'cashout');
     const wonCount = settled.filter((b) => b.status === 'won').length;
     
-    const profit = settled.reduce((sum, b) => {
-      if (b.status === 'won') return sum + ((b.actualReturn || b.potentialPayout) - b.stake);
-      if (b.status === 'lost') return sum - b.stake;
-      if (b.status === 'cashout') return sum + ((b.actualReturn || 0) - b.stake);
-      return sum;
-    }, 0);
+    const profit = settled.reduce((sum, b) => sum + calculateBetProfit(b), 0);
 
     const staked = settled.reduce((sum, b) => sum + b.stake, 0);
     const roi = staked > 0 ? (profit / staked) * 100 : null;
@@ -169,7 +164,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
 
   // Sport ROI Breakdown (Only settled bets)
   const sportRoiData = useMemo(() => {
-    const sportStatsMap: Record<string, { staked: number; returned: number; wins: number; total: number }> = {};
+    const sportStatsMap: Record<string, { staked: number; returned: number; profit: number; wins: number; total: number }> = {};
     bets.forEach((bet) => {
       if (bet.status !== 'won' && bet.status !== 'lost' && bet.status !== 'cashout') return;
       
@@ -179,11 +174,12 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
       validLegs.forEach((leg) => {
         const sport = leg.sport || 'Football';
         if (!sportStatsMap[sport]) {
-          sportStatsMap[sport] = { staked: 0, returned: 0, wins: 0, total: 0 };
+          sportStatsMap[sport] = { staked: 0, returned: 0, profit: 0, wins: 0, total: 0 };
         }
         
         const proportion = 1 / legCount;
         sportStatsMap[sport].staked += bet.stake * proportion;
+        sportStatsMap[sport].profit += calculateBetProfit(bet) * proportion;
         
         let returnedAmt = 0;
         if (bet.status === 'won') {
@@ -200,7 +196,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
 
     return Object.keys(sportStatsMap).map((sport) => {
       const data = sportStatsMap[sport];
-      const profit = data.returned - data.staked;
+      const profit = data.profit;
       const roi = data.staked > 0 ? (profit / data.staked) * 100 : 0;
       const winRate = data.total > 0 ? (data.wins / data.total) * 100 : 0;
       return {
@@ -291,14 +287,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
       if (isNaN(d.getTime())) return;
       const rawDate = d.toISOString().slice(0, 10);
 
-      let profit = 0;
-      if (bet.status === 'won') {
-        profit = (bet.actualReturn || bet.potentialPayout) - bet.stake;
-      } else if (bet.status === 'lost') {
-        profit = -bet.stake;
-      } else if (bet.status === 'cashout') {
-        profit = (bet.actualReturn || 0) - bet.stake;
-      }
+      let profit = calculateBetProfit(bet);
 
       if (!timelineMap[rawDate]) {
         timelineMap[rawDate] = {
@@ -357,24 +346,20 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
 
   // Dynamic ROI by Bookmaker calculation
   const bookmakerRoiData = useMemo(() => {
-    const bmRoiMap: Record<string, { staked: number; returned: number }> = {};
+    const bmRoiMap: Record<string, { staked: number; profit: number }> = {};
     bets.forEach((bet) => {
       if (bet.status !== 'won' && bet.status !== 'lost' && bet.status !== 'cashout') return;
       const bmName = bookmakers.find((b) => b.id === bet.bookmakerId)?.name || 'Other';
       if (!bmRoiMap[bmName]) {
-        bmRoiMap[bmName] = { staked: 0, returned: 0 };
+        bmRoiMap[bmName] = { staked: 0, profit: 0 };
       }
       bmRoiMap[bmName].staked += bet.stake;
-      if (bet.status === 'won') {
-        bmRoiMap[bmName].returned += bet.actualReturn || bet.potentialPayout;
-      } else if (bet.status === 'cashout') {
-        bmRoiMap[bmName].returned += bet.actualReturn || 0;
-      }
+      bmRoiMap[bmName].profit += calculateBetProfit(bet);
     });
 
     return Object.keys(bmRoiMap).map((bmName) => {
       const data = bmRoiMap[bmName];
-      const profit = data.returned - data.staked;
+      const profit = data.profit;
       const roi = data.staked > 0 ? (profit / data.staked) * 100 : 0;
       return {
         name: bmName,
@@ -422,46 +407,44 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
 
   // Tag / Strategy Performance Analytics
   const tagPerformanceData = useMemo(() => {
-    const tagStatsMap: Record<string, { staked: number; returned: number; wins: number; total: number; settled: number }> = {};
+    const tagStatsMap: Record<string, { staked: number; returned: number; profit: number; wins: number; total: number; settled: number }> = {};
     
     bets.forEach((bet) => {
       const betTags = bet.tags && bet.tags.length > 0 ? bet.tags : ['Untagged'];
       
       betTags.forEach((tag) => {
         if (!tagStatsMap[tag]) {
-          tagStatsMap[tag] = { staked: 0, returned: 0, wins: 0, total: 0, settled: 0 };
+          tagStatsMap[tag] = { staked: 0, returned: 0, profit: 0, wins: 0, total: 0, settled: 0 };
         }
         
         tagStatsMap[tag].staked += bet.stake;
-        
-        if (bet.status === 'won') {
-          tagStatsMap[tag].returned += bet.actualReturn ?? bet.potentialPayout;
-          tagStatsMap[tag].wins += 1;
-          tagStatsMap[tag].settled += 1;
-        } else if (bet.status === 'lost') {
-          tagStatsMap[tag].returned += 0;
-          tagStatsMap[tag].settled += 1;
-        } else if (bet.status === 'cashout') {
-          tagStatsMap[tag].returned += bet.actualReturn ?? 0;
-          tagStatsMap[tag].settled += 1;
-        } else if (bet.status === 'void') {
-          tagStatsMap[tag].returned += bet.stake;
-          tagStatsMap[tag].settled += 1;
-        }
-        
         tagStatsMap[tag].total += 1;
+        
+        if (bet.status !== 'pending') {
+          tagStatsMap[tag].settled += 1;
+          tagStatsMap[tag].profit += calculateBetProfit(bet);
+          if (bet.status === 'won') {
+            tagStatsMap[tag].wins += 1;
+            tagStatsMap[tag].returned += bet.actualReturn ?? bet.potentialPayout;
+          } else if (bet.status === 'cashout') {
+            tagStatsMap[tag].returned += bet.actualReturn ?? 0;
+          } else if (bet.status === 'void') {
+            tagStatsMap[tag].returned += bet.stake;
+          }
+        }
       });
     });
 
     return Object.keys(tagStatsMap).map((tagName) => {
       const data = tagStatsMap[tagName];
-      const profitLoss = data.returned - data.staked;
+      const profitLoss = data.profit;
       const roi = data.staked > 0 ? (profitLoss / data.staked) * 100 : 0;
       const winRate = data.settled > 0 ? (data.wins / data.settled) * 100 : 0;
       
       return {
         tag: tagName,
         staked: data.staked,
+        returned: data.returned,
         profit: Number(profitLoss.toFixed(2)),
         roi: Number(roi.toFixed(1)),
         winRate: Number(winRate.toFixed(1)),
@@ -480,6 +463,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
       color?: string;
       staked: number;
       returned: number;
+      profit: number;
       wins: number;
       total: number;
       settled: number;
@@ -499,6 +483,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
           color: key === '__MY_OWN_PICKS__' ? '#10b981' : (matchTipster?.color || '#3b82f6'),
           staked: 0,
           returned: 0,
+          profit: 0,
           wins: 0,
           total: 0,
           settled: 0,
@@ -510,24 +495,22 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
       stat.staked += bet.stake;
       stat.total += 1;
 
-      if (bet.status === 'won') {
-        stat.returned += bet.actualReturn ?? bet.potentialPayout;
-        stat.wins += 1;
+      if (bet.status !== 'pending') {
         stat.settled += 1;
-      } else if (bet.status === 'lost') {
-        stat.returned += 0;
-        stat.settled += 1;
-      } else if (bet.status === 'cashout') {
-        stat.returned += bet.actualReturn ?? 0;
-        stat.settled += 1;
-      } else if (bet.status === 'void') {
-        stat.returned += bet.stake;
-        stat.settled += 1;
+        stat.profit += calculateBetProfit(bet);
+        if (bet.status === 'won') {
+          stat.wins += 1;
+          stat.returned += bet.actualReturn ?? bet.potentialPayout;
+        } else if (bet.status === 'cashout') {
+          stat.returned += bet.actualReturn ?? 0;
+        } else if (bet.status === 'void') {
+          stat.returned += bet.stake;
+        }
       }
     });
 
     return Object.values(tipsterStatsMap).map((stat) => {
-      const profit = stat.returned - stat.staked;
+      const profit = stat.profit;
       const roi = stat.staked > 0 ? (profit / stat.staked) * 100 : 0;
       const winRate = stat.settled > 0 ? (stat.wins / stat.settled) * 100 : 0;
 

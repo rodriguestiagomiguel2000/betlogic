@@ -59,10 +59,9 @@ function computeBetFinancialImpact(bet: {
           freeBetDelta: -stake + payout
         };
       } else {
-        // Default SNR: Stake Not Returned (Only net profit credited to real cash)
-        const netProfit = payout - stake;
+        // Free bet converted to real cash: full return is credited to real cash without subtracting stake
         return {
-          realCashDelta: netProfit > 0 ? netProfit : 0,
+          realCashDelta: payout,
           freeBetDelta: -stake
         };
       }
