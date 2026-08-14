@@ -193,10 +193,12 @@ export function App() {
   // Action handlers
   const handleAddBet = async (newBetData: Omit<Bet, 'id'>) => {
     try {
-      await betsApi.create(newBetData as any);
+      const res = await betsApi.create(newBetData as any);
       await loadData();
+      return res;
     } catch (err: any) {
       alert(`Failed to add bet: ${err.message}`);
+      throw err;
     }
   };
 

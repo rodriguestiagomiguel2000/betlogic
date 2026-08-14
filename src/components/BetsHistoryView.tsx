@@ -73,14 +73,14 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [sportFilter, setSportFilter] = useState<string>('all');
   const [bookmakerFilter, setBookmakerFilter] = useState<string>('all');
-  const [bankrollFilter, setBankrollFilter] = useState<string>(activeBankrollId || bankrolls[0]?.id || 'all');
+  const [bankrollFilter, setBankrollFilter] = useState<string>('all');
   const [userChangedBankroll, setUserChangedBankroll] = useState<boolean>(false);
 
   useEffect(() => {
     if (activeBankrollId && !userChangedBankroll) {
       setBankrollFilter(activeBankrollId);
     }
-  }, [activeBankrollId]);
+  }, [activeBankrollId, userChangedBankroll]);
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [liveFilter, setLiveFilter] = useState<string>('all');
   const [dateRange, setDateRange] = useState<string>('all');
@@ -154,7 +154,15 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
   }, [bankrollFilter, dateRange]);
 
   // Synchronize optimistic updates from parent `bets` prop into local `serverBets`, `lightboxBet`, and `settlementBet`
+  const prevBetsLengthRef = React.useRef<number>(bets.length);
   useEffect(() => {
+    // If a new bet was added or deleted in parent, refetch the current page to ensure fresh paginated state
+    if (bets.length !== prevBetsLengthRef.current) {
+      prevBetsLengthRef.current = bets.length;
+      fetchPaginatedBets(currentPage);
+      return;
+    }
+
     if (!serverBets) return;
 
     const betsMap = new Map(bets.map((b) => [b.id, b]));
@@ -186,7 +194,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
         setSettlementBet(updatedSettlement);
       }
     }
-  }, [bets]);
+  }, [bets, currentPage, fetchPaginatedBets]);
 
   useEffect(() => {
     if (!lightboxBet) {

@@ -30,7 +30,7 @@ interface BetslipScannerProps {
   bets?: Bet[];
   activeBankrollId?: string;
   userCurrency?: string;
-  onAddBet: (bet: Omit<Bet, 'id'>) => void;
+  onAddBet: (bet: Omit<Bet, 'id'>) => Promise<any> | void;
   onNavigate: (tab: string) => void;
   tagDefinitions: TagDefinition[];
   onAddTagDefinition?: (tag: TagDefinition) => void;
@@ -62,6 +62,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   const [inlineTipsterPlatform, setInlineTipsterPlatform] = useState<string>('Telegram');
   const [inlineTipsterColor, setInlineTipsterColor] = useState<string>('#3b82f6');
   const [isCreatingTipster, setIsCreatingTipster] = useState<boolean>(false);
+  const [isSubmittingBet, setIsSubmittingBet] = useState<boolean>(false);
   const [scanningState, setScanningState] = useState<'idle' | 'scanning' | 'scanned' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<{
@@ -657,7 +658,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     }
   };
 
-  const handleSaveScannedBet = () => {
+  const handleSaveScannedBet = async () => {
     if (!selectedBankroll) {
       alert("Please select a target bankroll.");
       return;
@@ -667,41 +668,48 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
       return;
     }
 
-    const calculatedReturn = betStatus === 'won'
-      ? Number(potentialPayout.toFixed(2))
-      : betStatus === 'lost'
-      ? 0
-      : undefined;
+    setIsSubmittingBet(true);
+    try {
+      const calculatedReturn = betStatus === 'won'
+        ? Number(potentialPayout.toFixed(2))
+        : betStatus === 'lost'
+        ? 0
+        : undefined;
 
-    const latestLegTimes = legs && legs.length > 0
-      ? legs.map((l) => (l.eventDate ? parseDateString(l.eventDate)?.getTime() || NaN : NaN)).filter((t) => !isNaN(t))
-      : [];
-    const calculatedBetDate = latestLegTimes.length > 0
-      ? formatToLocalISOString(new Date(Math.max(...latestLegTimes)))
-      : formatToLocalISOString(new Date());
+      const latestLegTimes = legs && legs.length > 0
+        ? legs.map((l) => (l.eventDate ? parseDateString(l.eventDate)?.getTime() || NaN : NaN)).filter((t) => !isNaN(t))
+        : [];
+      const calculatedBetDate = latestLegTimes.length > 0
+        ? formatToLocalISOString(new Date(Math.max(...latestLegTimes)))
+        : formatToLocalISOString(new Date());
 
-    onAddBet({
-      date: calculatedBetDate,
-      type: betType,
-      legs,
-      totalOdds: Number(effectiveTotalOdds.toFixed(3)),
-      stake,
-      potentialPayout: Number(potentialPayout.toFixed(2)),
-      actualReturn: calculatedReturn,
-      status: betStatus,
-      bookmakerId: selectedBookmaker,
-      bankrollId: selectedBankroll,
-      tipsterId: selectedTipsterId || undefined,
-      isLive,
-      isFreeBet,
-      freeBetDestination: isFreeBet ? freeBetDestination : 'cash',
-      notes,
-      scannedSlipUrl: uploadedImage || undefined,
-      imageUrl: uploadedImage || undefined,
-      tags: selectedTags
-    });
+      await onAddBet({
+        date: calculatedBetDate,
+        type: betType,
+        legs,
+        totalOdds: Number(effectiveTotalOdds.toFixed(3)),
+        stake,
+        potentialPayout: Number(potentialPayout.toFixed(2)),
+        actualReturn: calculatedReturn,
+        status: betStatus,
+        bookmakerId: selectedBookmaker,
+        bankrollId: selectedBankroll,
+        tipsterId: selectedTipsterId || undefined,
+        isLive,
+        isFreeBet,
+        freeBetDestination: isFreeBet ? freeBetDestination : 'cash',
+        notes,
+        scannedSlipUrl: uploadedImage || undefined,
+        imageUrl: uploadedImage || undefined,
+        tags: selectedTags
+      });
 
-    onNavigate('dashboard');
+      onNavigate('dashboard');
+    } catch (err: any) {
+      console.error('Failed to commit scanned bet:', err);
+    } finally {
+      setIsSubmittingBet(false);
+    }
   };
 
   const activeBankroll = bankrolls.find((b) => b.id === selectedBankroll);
@@ -2046,10 +2054,22 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
 
                     <button
                       onClick={handleSaveScannedBet}
-                      className="w-full sm:w-auto px-7 py-3 bg-[#2563eb] hover:bg-[#1d4ed8] text-white font-bold text-sm rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer"
+                      disabled={isSubmittingBet}
+                      className={`w-full sm:w-auto px-7 py-3 bg-[#2563eb] hover:bg-[#1d4ed8] text-white font-bold text-sm rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all ${
+                        isSubmittingBet ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'
+                      }`}
                     >
-                      <span>Commit to Bankroll</span>
-                      <ArrowRight size={16} />
+                      {isSubmittingBet ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          <span>Logging Wager...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>Commit to Bankroll</span>
+                          <ArrowRight size={16} />
+                        </>
+                      )}
                     </button>
                   </div>
                 </div>

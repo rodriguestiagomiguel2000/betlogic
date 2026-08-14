@@ -30,14 +30,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
 }) => {
   // Filters
   const [filterMode, setFilterMode] = useState<'all' | 'live' | 'prematch'>('all');
-  const [selectedBankroll, setSelectedBankroll] = useState<string>(activeBankrollId || bankrolls[0]?.id || 'all');
+  const [selectedBankroll, setSelectedBankroll] = useState<string>('all');
   const [userChangedBankroll, setUserChangedBankroll] = useState<boolean>(false);
 
   React.useEffect(() => {
     if (activeBankrollId && !userChangedBankroll) {
       setSelectedBankroll(activeBankrollId);
     }
-  }, [activeBankrollId]);
+  }, [activeBankrollId, userChangedBankroll]);
   const [selectedSport, setSelectedSport] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
 

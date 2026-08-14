@@ -358,6 +358,18 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
 
     // 2. Insert Bet Legs
     for (const leg of legs) {
+      let eventDateIso: string | null = null;
+      if (leg.eventDate) {
+        try {
+          const d = new Date(leg.eventDate);
+          if (!isNaN(d.getTime())) {
+            eventDateIso = d.toISOString();
+          }
+        } catch {
+          eventDateIso = null;
+        }
+      }
+
       await client.query(
         `INSERT INTO bet_legs (bet_id, sport, league, event, market, selection, odds, status, event_date)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
@@ -370,7 +382,7 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
           leg.selection,
           leg.odds || 1.0,
           leg.status || status || 'pending',
-          leg.eventDate ? new Date(leg.eventDate).toISOString() : null,
+          eventDateIso,
         ]
       );
     }
@@ -497,6 +509,18 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
     // 4. Update Bet Legs (Clear & re-insert is safest for variable count legs)
     await client.query('DELETE FROM bet_legs WHERE bet_id = $1', [betId]);
     for (const leg of legs) {
+      let eventDateIso: string | null = null;
+      if (leg.eventDate) {
+        try {
+          const d = new Date(leg.eventDate);
+          if (!isNaN(d.getTime())) {
+            eventDateIso = d.toISOString();
+          }
+        } catch {
+          eventDateIso = null;
+        }
+      }
+
       await client.query(
         `INSERT INTO bet_legs (bet_id, sport, league, event, market, selection, odds, status, event_date)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
@@ -509,7 +533,7 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
           leg.selection,
           leg.odds || 1.0,
           leg.status || status || 'pending',
-          leg.eventDate ? new Date(leg.eventDate).toISOString() : null,
+          eventDateIso,
         ]
       );
     }
