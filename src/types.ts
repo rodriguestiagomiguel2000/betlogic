@@ -47,6 +47,8 @@ export interface PaginatedBets {
   totalPages: number;
   currentPage: number;
   totalBets: number;
+  totalCount?: number;
+  limit?: number;
 }
 
 export interface Tipster {

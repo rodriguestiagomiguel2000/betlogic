@@ -112,46 +112,74 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
     setLoadingPaginated(true);
     try {
       const bankrollId = bankrollFilter !== 'all' ? bankrollFilter : undefined;
-      let startDate: string | undefined;
-      let endDate: string | undefined;
-
-      if (dateRange !== 'all') {
-        const now = new Date();
-        if (dateRange === 'today') {
-          startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-        } else if (dateRange === '7days') {
-          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-        } else if (dateRange === '30days') {
-          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
-        }
-      }
+      const status = statusFilter !== 'all' ? statusFilter : undefined;
+      const sport = sportFilter !== 'all' ? sportFilter : undefined;
+      const bookmakerId = bookmakerFilter !== 'all' ? bookmakerFilter : undefined;
+      const type = typeFilter !== 'all' ? typeFilter : undefined;
+      const isLive = liveFilter !== 'all' ? liveFilter : undefined;
+      const search = searchTerm.trim() ? searchTerm.trim() : undefined;
+      const tag = selectedTagsFilter.length > 0 ? selectedTagsFilter.join(',') : undefined;
+      const tipsterId = tipsterFilter !== 'all' ? tipsterFilter : undefined;
 
       const res = await betsApi.listPaginated({
         page,
         limit: 8,
+        status,
+        sport,
+        bookmakerId,
         bankrollId,
-        startDate,
-        endDate,
+        type,
+        isLive,
+        search,
+        tag,
+        tipsterId,
+        dateRange: dateRange !== 'all' ? dateRange : undefined,
+        sortBy,
       });
 
       setServerBets(res.bets || []);
       setTotalPages(res.totalPages || 1);
-      setTotalBets(res.totalBets || 0);
+      setTotalBets(res.totalCount !== undefined ? res.totalCount : (res.totalBets || 0));
       setCurrentPage(res.currentPage || page);
     } catch (err) {
       console.error('Error fetching paginated bets:', err);
     } finally {
       setLoadingPaginated(false);
     }
-  }, [bankrollFilter, dateRange]);
+  }, [
+    bankrollFilter,
+    statusFilter,
+    sportFilter,
+    bookmakerFilter,
+    typeFilter,
+    liveFilter,
+    searchTerm,
+    selectedTagsFilter,
+    tipsterFilter,
+    dateRange,
+    sortBy,
+  ]);
 
   useEffect(() => {
     fetchPaginatedBets(currentPage);
-  }, [currentPage, bankrollFilter, dateRange, fetchPaginatedBets]);
+  }, [currentPage, fetchPaginatedBets]);
 
+  // Reset page to 1 whenever any filter state changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [bankrollFilter, dateRange]);
+  }, [
+    searchTerm,
+    statusFilter,
+    sportFilter,
+    bookmakerFilter,
+    bankrollFilter,
+    typeFilter,
+    liveFilter,
+    dateRange,
+    selectedTagsFilter,
+    tipsterFilter,
+    sortBy,
+  ]);
 
   // Synchronize optimistic updates from parent `bets` prop into local `serverBets`, `lightboxBet`, and `settlementBet`
   const prevBetsLengthRef = React.useRef<number>(bets.length);
@@ -238,172 +266,17 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
     });
   };
 
-  // Filtered Bets Computation
-  const filteredBets = useMemo(() => {
-    const sourceList = serverBets !== null ? serverBets : bets;
-    const filtered = sourceList.filter((bet) => {
-      // Search term filter
-      if (searchTerm) {
-        const query = searchTerm.toLowerCase();
-        const matchesLeg = bet.legs.some(
-          (leg) =>
-            leg.event.toLowerCase().includes(query) ||
-            leg.selection.toLowerCase().includes(query) ||
-            leg.market.toLowerCase().includes(query) ||
-            (leg.league && leg.league.toLowerCase().includes(query))
-        );
-        const matchesNotes = bet.notes?.toLowerCase().includes(query);
-        const matchesBookmaker = bookmakers.find((bm) => bm.id === bet.bookmakerId)?.name.toLowerCase().includes(query);
-
-        if (!matchesLeg && !matchesNotes && !matchesBookmaker) return false;
-      }
-
-      // Status filter
-      if (statusFilter !== 'all' && bet.status !== statusFilter) return false;
-
-      // Sport filter
-      if (sportFilter !== 'all') {
-        const hasSport = bet.legs.some((leg) => leg.sport === sportFilter);
-        if (!hasSport) return false;
-      }
-
-      // Bookmaker filter
-      if (bookmakerFilter !== 'all' && bet.bookmakerId !== bookmakerFilter) return false;
-
-      // Bankroll filter
-      if (bankrollFilter !== 'all' && bet.bankrollId !== bankrollFilter) return false;
-
-      // Type filter
-      if (typeFilter !== 'all' && bet.type !== typeFilter) return false;
-
-      // Live filter
-      if (liveFilter === 'live' && !bet.isLive) return false;
-      if (liveFilter === 'pre' && bet.isLive) return false;
-
-      // Date range filter
-      if (dateRange !== 'all') {
-        const betDate = getRepresentativeEventDateTimestamp(bet);
-        const now = Date.now();
-        const dayMs = 24 * 60 * 60 * 1000;
-
-        if (dateRange === 'today') {
-          if (now - betDate > dayMs) return false;
-        } else if (dateRange === '7days') {
-          if (now - betDate > 7 * dayMs) return false;
-        } else if (dateRange === '30days') {
-          if (now - betDate > 30 * dayMs) return false;
-        }
-      }
-
-      // Tipster filter
-      if (tipsterFilter !== 'all') {
-        if (tipsterFilter === '__MY_OWN_PICKS__') {
-          if (bet.tipsterId) return false;
-        } else {
-          if (bet.tipsterId !== tipsterFilter) return false;
-        }
-      }
-
-      // Tag filter
-      if (selectedTagsFilter.length > 0) {
-        if (!bet.tags) return false;
-        
-        let tagsList: string[] = [];
-        if (Array.isArray(bet.tags)) {
-          tagsList = bet.tags.map(t => typeof t === 'string' ? t : (t as any)?.name || String(t));
-        } else if (typeof bet.tags === 'string') {
-          try {
-            const parsed = JSON.parse(bet.tags);
-            if (Array.isArray(parsed)) {
-              tagsList = parsed.map(t => typeof t === 'string' ? t : (t as any)?.name || String(t));
-            } else {
-              tagsList = [bet.tags];
-            }
-          } catch {
-            tagsList = [bet.tags];
-          }
-        }
-
-        const matchesTag = tagsList.some((t) => {
-          if (!t) return false;
-          const cleanT = String(t).trim().toLowerCase();
-          return selectedTagsFilter.some((ft) => ft.trim().toLowerCase() === cleanT);
-        });
-
-        if (!matchesTag) return false;
-      }
-
-      return true;
-    });
-
-    // Pre-calculate sort keys to avoid expensive calls during sort
-    const betsWithKeys = filtered.map(bet => ({
-      bet,
-      timestamp: getRepresentativeEventDateTimestamp(bet),
-      profit: calculateBetProfit(bet)
-    }));
-
-    betsWithKeys.sort((a, b) => {
-      if (sortBy === 'date-desc') return b.timestamp - a.timestamp;
-      if (sortBy === 'date-asc') return a.timestamp - b.timestamp;
-      if (sortBy === 'event-date-asc') return a.timestamp - b.timestamp;
-      if (sortBy === 'event-date-desc') return b.timestamp - a.timestamp;
-      if (sortBy === 'stake-desc') return b.bet.stake - a.bet.stake;
-      if (sortBy === 'odds-desc') return b.bet.totalOdds - a.bet.totalOdds;
-      if (sortBy === 'profit-desc') return b.profit - a.profit;
-      return 0;
-    });
-
-    return betsWithKeys.map((bk: any) => bk.bet);
-  }, [
-    serverBets,
-    bets,
-    searchTerm,
-    statusFilter,
-    sportFilter,
-    bookmakerFilter,
-    bankrollFilter,
-    typeFilter,
-    liveFilter,
-    dateRange,
-    selectedTagsFilter,
-    tipsterFilter,
-    sortBy,
-    bookmakers,
-    tagDefinitions,
-    tipsters
-  ]);
-
-  // Derived metrics for pagination and displayed slice
-  const hasClientFilters =
-    Boolean(searchTerm) ||
-    statusFilter !== 'all' ||
-    sportFilter !== 'all' ||
-    bookmakerFilter !== 'all' ||
-    typeFilter !== 'all' ||
-    liveFilter !== 'all' ||
-    tipsterFilter !== 'all' ||
-    selectedTagsFilter.length > 0;
-
-  const effectiveTotalBets =
-    serverBets !== null && !hasClientFilters
-      ? totalBets || serverBets.length
-      : filteredBets.length;
-
-  const effectiveTotalPages = Math.ceil(effectiveTotalBets / 8) || 1;
-
-  // Sliced bets array for current page view display
+  // Filtered / Displayed Bets Computation (Server-side authoritative)
   const displayedBets = useMemo(() => {
-    // If backend provided a server-paginated array for current page and no extra client filters are active, use directly
-    if (serverBets !== null && !hasClientFilters && filteredBets.length <= 8) {
-      return filteredBets;
-    }
-    // Perform exact client-side array slice: bets.slice((currentPage - 1) * limit, currentPage * limit)
+    if (serverBets !== null) return serverBets;
     const start = (currentPage - 1) * 8;
-    return filteredBets.slice(start, start + 8);
-  }, [filteredBets, serverBets, currentPage, hasClientFilters]);
+    return bets.slice(start, start + 8);
+  }, [serverBets, bets, currentPage]);
 
-  // Statistics for filtered list
+  const effectiveTotalBets = serverBets !== null ? totalBets : bets.length;
+  const effectiveTotalPages = serverBets !== null ? totalPages : (Math.ceil(bets.length / 8) || 1);
+
+  // Statistics for active list
   const metrics = useMemo(() => {
     let totalStaked = 0;
     let totalReturns = 0;
@@ -412,7 +285,9 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
     let lostCount = 0;
     let settledCount = 0;
 
-    filteredBets.forEach((bet) => {
+    const list = displayedBets;
+
+    list.forEach((bet) => {
       totalStaked += bet.stake;
       if (bet.status === 'pending') {
         pendingStake += bet.stake;
@@ -438,7 +313,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
     const winRate = settledCount > 0 ? (wonCount / settledCount) * 100 : 0;
 
     return {
-      totalWagers: filteredBets.length,
+      totalWagers: effectiveTotalBets,
       totalStaked,
       totalReturns,
       pendingStake,
@@ -449,7 +324,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
       lostCount,
       settledCount
     };
-  }, [filteredBets]);
+  }, [displayedBets, effectiveTotalBets]);
 
   const handleOpenSettlement = (bet: Bet) => {
     setSettlementBet(bet);
@@ -471,36 +346,54 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
     }, 150);
   };
 
-  const exportFilteredCSV = () => {
-    const headers = ['Date', 'Type', 'Sport', 'Event/Selection', 'Odds', 'Stake', 'Potential Payout', 'Actual Return', 'Status', 'Bookmaker', 'Live', 'Free Bet', 'Notes'];
-    const rows = filteredBets.map((b) => {
-      const bmName = bookmakers.find((bm) => bm.id === b.bookmakerId)?.name || 'Unknown';
-      const eventDesc = b.legs.map((l: any) => `${l.event} (${l.selection} @ ${l.odds})`).join(' | ');
-      return [
-        formatBetDateTime(b),
-        b.type.toUpperCase(),
-        b.legs[0]?.sport || 'Other',
-        `"${eventDesc.replace(/"/g, '""')}"`,
-        b.totalOdds,
-        b.stake,
-        b.potentialPayout,
-        b.actualReturn ?? (b.status === 'won' ? b.potentialPayout : 0),
-        b.status.toUpperCase(),
-        `"${bmName}"`,
-        b.isLive ? 'YES' : 'NO',
-        b.isFreeBet ? 'YES' : 'NO',
-        `"${(b.notes || '').replace(/"/g, '""')}"`
-      ];
-    });
+  const exportFilteredCSV = async () => {
+    try {
+      const exportList = await betsApi.list({
+        status: statusFilter !== 'all' ? statusFilter : undefined,
+        sport: sportFilter !== 'all' ? sportFilter : undefined,
+        bookmakerId: bookmakerFilter !== 'all' ? bookmakerFilter : undefined,
+        bankrollId: bankrollFilter !== 'all' ? bankrollFilter : undefined,
+        type: typeFilter !== 'all' ? typeFilter : undefined,
+        isLive: liveFilter !== 'all' ? liveFilter : undefined,
+        search: searchTerm.trim() || undefined,
+        tag: selectedTagsFilter.length > 0 ? selectedTagsFilter.join(',') : undefined,
+        tipsterId: tipsterFilter !== 'all' ? tipsterFilter : undefined,
+        dateRange: dateRange !== 'all' ? dateRange : undefined,
+        sortBy,
+      });
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `BetLogic_History_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+      const headers = ['Date', 'Type', 'Sport', 'Event/Selection', 'Odds', 'Stake', 'Potential Payout', 'Actual Return', 'Status', 'Bookmaker', 'Live', 'Free Bet', 'Notes'];
+      const rows = (exportList || []).map((b) => {
+        const bmName = bookmakers.find((bm) => bm.id === b.bookmakerId)?.name || 'Unknown';
+        const eventDesc = b.legs.map((l: any) => `${l.event} (${l.selection} @ ${l.odds})`).join(' | ');
+        return [
+          formatBetDateTime(b),
+          b.type.toUpperCase(),
+          b.legs[0]?.sport || 'Other',
+          `"${eventDesc.replace(/"/g, '""')}"`,
+          b.totalOdds,
+          b.stake,
+          b.potentialPayout,
+          b.actualReturn ?? (b.status === 'won' ? b.potentialPayout : 0),
+          b.status.toUpperCase(),
+          `"${bmName}"`,
+          b.isLive ? 'YES' : 'NO',
+          b.isFreeBet ? 'YES' : 'NO',
+          `"${(b.notes || '').replace(/"/g, '""')}"`
+        ];
+      });
+
+      const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement('a');
+      link.setAttribute('href', encodedUri);
+      link.setAttribute('download', `BetLogic_History_${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error('Failed to export CSV:', err);
+    }
   };
 
   return (
@@ -903,7 +796,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
       </div>
 
       {/* Bets List Content */}
-      {filteredBets.length === 0 ? (
+      {displayedBets.length === 0 ? (
         <div className="bg-[#171f33] p-12 rounded-xl border border-[#27314a] text-center space-y-3">
           <Layers size={40} className="mx-auto text-[#8d90a0] opacity-50" />
           <h3 className="text-base font-bold text-white">No wagers found</h3>

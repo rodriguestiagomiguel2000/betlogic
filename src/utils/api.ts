@@ -281,16 +281,34 @@ export const tipstersApi = {
 // BETS CRUD ENDPOINTS
 // ==========================================
 
+export interface ListPaginatedFilters {
+  page?: number;
+  limit?: number;
+  status?: string;
+  sport?: string;
+  bookmakerId?: string;
+  bankrollId?: string;
+  type?: string;
+  isLive?: string;
+  search?: string;
+  tag?: string;
+  tipsterId?: string;
+  dateRange?: string;
+  startDate?: string;
+  endDate?: string;
+  sortBy?: string;
+}
+
 export const betsApi = {
-  async list(filters?: { startDate?: string; endDate?: string; bankrollId?: string; page?: number; limit?: number }): Promise<Bet[]> {
+  async list(filters?: ListPaginatedFilters): Promise<Bet[]> {
     let query = '';
     if (filters) {
       const params = new URLSearchParams();
-      if (filters.startDate) params.append('startDate', filters.startDate);
-      if (filters.endDate) params.append('endDate', filters.endDate);
-      if (filters.bankrollId) params.append('bankrollId', filters.bankrollId);
-      if (filters.page) params.append('page', filters.page.toString());
-      if (filters.limit) params.append('limit', filters.limit.toString());
+      Object.entries(filters).forEach(([key, val]) => {
+        if (val !== undefined && val !== null && val !== '') {
+          params.append(key, val.toString());
+        }
+      });
       query = `?${params.toString()}`;
     }
     const res = await apiRequest<any>(`/bets${query}`);
@@ -300,15 +318,20 @@ export const betsApi = {
     return res as Bet[];
   },
 
-  async listPaginated(filters?: { startDate?: string; endDate?: string; bankrollId?: string; page?: number; limit?: number }): Promise<PaginatedBets> {
+  async listPaginated(filters?: ListPaginatedFilters): Promise<PaginatedBets> {
     const page = filters?.page || 1;
     const limit = filters?.limit || 8;
     const params = new URLSearchParams();
     params.append('page', page.toString());
     params.append('limit', limit.toString());
-    if (filters?.startDate) params.append('startDate', filters.startDate);
-    if (filters?.endDate) params.append('endDate', filters.endDate);
-    if (filters?.bankrollId) params.append('bankrollId', filters.bankrollId);
+
+    if (filters) {
+      Object.entries(filters).forEach(([key, val]) => {
+        if (key !== 'page' && key !== 'limit' && val !== undefined && val !== null && val !== '') {
+          params.append(key, val.toString());
+        }
+      });
+    }
 
     const res = await apiRequest<any>(`/bets?${params.toString()}`);
     if (Array.isArray(res)) {
@@ -318,9 +341,19 @@ export const betsApi = {
         totalPages: Math.ceil(res.length / limit) || 1,
         currentPage: page,
         totalBets: res.length,
+        totalCount: res.length,
+        limit,
       };
     }
-    return res as PaginatedBets;
+    const totalCount = res.totalCount !== undefined ? res.totalCount : (res.totalBets || 0);
+    return {
+      bets: res.bets || [],
+      totalPages: res.totalPages || 1,
+      currentPage: res.currentPage || page,
+      totalBets: totalCount,
+      totalCount: totalCount,
+      limit: res.limit || limit,
+    };
   },
 
   async create(bet: Omit<Bet, 'id'>): Promise<{ id: string; message: string }> {

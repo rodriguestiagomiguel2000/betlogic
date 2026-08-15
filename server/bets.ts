@@ -116,16 +116,97 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
     const userId = req.user?.id;
     const page = parseInt((req.query.page as string) || '1', 10) || 1;
     const limit = parseInt((req.query.limit as string) || '8', 10) || 8;
-    const offset = (page - 1) * limit;
+    const offset = Math.max(0, (page - 1) * limit);
 
-    const startDate = req.query.startDate as string | undefined;
-    const endDate = req.query.endDate as string | undefined;
-    const bankrollId = req.query.bankrollId as string | undefined;
+    const status = req.query.status as string | undefined;
+    const sport = req.query.sport as string | undefined;
+    const bookmakerId = (req.query.bookmakerId || req.query.bookmaker_id || req.query.bookmaker) as string | undefined;
+    const bankrollId = (req.query.bankrollId || req.query.bankroll_id || req.query.bankroll) as string | undefined;
+    const type = req.query.type as string | undefined;
+    const liveFilter = (req.query.isLive || req.query.live || req.query.is_live) as string | undefined;
+    const search = (req.query.search || req.query.searchQuery || req.query.searchTerm || req.query.q) as string | undefined;
+    const tag = (req.query.tag || req.query.tags) as string | undefined;
+    const tipsterId = (req.query.tipsterId || req.query.tipster) as string | undefined;
+    const dateRange = req.query.dateRange as string | undefined;
+    let startDate = (req.query.startDate || req.query.dateFrom || req.query.date_from) as string | undefined;
+    let endDate = (req.query.endDate || req.query.dateTo || req.query.date_to) as string | undefined;
+    const sortBy = (req.query.sortBy || req.query.sort_by) as string | undefined;
 
     const usePagination = req.query.page !== undefined || req.query.limit !== undefined;
 
+    // Evaluate preset dateRange if explicit startDate/endDate are not supplied
+    if (dateRange && dateRange !== 'all' && !startDate && !endDate) {
+      const now = new Date();
+      if (dateRange === 'today') {
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      } else if (dateRange === 'yesterday') {
+        const yestStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+        const yestEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59, 999);
+        startDate = yestStart.toISOString();
+        endDate = yestEnd.toISOString();
+      } else if (dateRange === '7days' || dateRange === 'this_week') {
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      } else if (dateRange === '30days' || dateRange === 'this_month') {
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      } else if (dateRange === 'last_month') {
+        const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+        startDate = lastMonthStart.toISOString();
+        endDate = lastMonthEnd.toISOString();
+      } else if (dateRange === 'this_year') {
+        startDate = new Date(now.getFullYear(), 0, 1).toISOString();
+      }
+    }
+
     let whereClause = ` WHERE b.user_id = $1`;
     const queryParams: any[] = [userId];
+
+    if (status && status !== 'all') {
+      queryParams.push(status);
+      whereClause += ` AND b.status = $${queryParams.length}`;
+    }
+
+    if (sport && sport !== 'all') {
+      queryParams.push(sport);
+      whereClause += ` AND EXISTS (SELECT 1 FROM bet_legs bl WHERE bl.bet_id = b.id AND bl.sport = $${queryParams.length})`;
+    }
+
+    if (bookmakerId && bookmakerId !== 'all') {
+      queryParams.push(bookmakerId);
+      whereClause += ` AND b.bookmaker_id = $${queryParams.length}`;
+    }
+
+    if (bankrollId && bankrollId !== 'all') {
+      queryParams.push(bankrollId);
+      whereClause += ` AND b.bankroll_id = $${queryParams.length}`;
+    }
+
+    if (type && type !== 'all') {
+      queryParams.push(type);
+      whereClause += ` AND b.type = $${queryParams.length}`;
+    }
+
+    if (liveFilter && liveFilter !== 'all') {
+      if (liveFilter === 'live' || liveFilter === 'true') {
+        whereClause += ` AND b.is_live = TRUE`;
+      } else if (liveFilter === 'pre' || liveFilter === 'prematch' || liveFilter === 'false') {
+        whereClause += ` AND b.is_live = FALSE`;
+      }
+    }
+
+    if (tipsterId && tipsterId !== 'all') {
+      if (tipsterId === '__MY_OWN_PICKS__' || tipsterId === 'personal' || tipsterId === 'none') {
+        whereClause += ` AND b.tipster_id IS NULL`;
+      } else {
+        queryParams.push(tipsterId);
+        whereClause += ` AND b.tipster_id = $${queryParams.length}`;
+      }
+    }
+
+    if (tag && tag !== 'all' && tag.trim() !== '') {
+      queryParams.push(`%${tag.trim()}%`);
+      whereClause += ` AND b.tags::text ILIKE $${queryParams.length}`;
+    }
 
     if (startDate) {
       queryParams.push(startDate);
@@ -133,13 +214,31 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
     }
 
     if (endDate) {
-      queryParams.push(endDate);
+      let formattedEnd = endDate;
+      if (formattedEnd.length === 10) {
+        formattedEnd = `${formattedEnd}T23:59:59.999Z`;
+      }
+      queryParams.push(formattedEnd);
       whereClause += ` AND b.date <= $${queryParams.length}`;
     }
 
-    if (bankrollId) {
-      queryParams.push(bankrollId);
-      whereClause += ` AND b.bankroll_id = $${queryParams.length}`;
+    if (search && search.trim() !== '') {
+      const searchPattern = `%${search.trim()}%`;
+      queryParams.push(searchPattern);
+      const searchIdx = queryParams.length;
+      whereClause += ` AND (
+        b.notes ILIKE $${searchIdx} OR
+        EXISTS (
+          SELECT 1 FROM bet_legs bl 
+          WHERE bl.bet_id = b.id 
+          AND (bl.event ILIKE $${searchIdx} OR bl.selection ILIKE $${searchIdx} OR bl.market ILIKE $${searchIdx} OR bl.league ILIKE $${searchIdx})
+        ) OR
+        EXISTS (
+          SELECT 1 FROM bookmakers bm 
+          WHERE bm.id = b.bookmaker_id 
+          AND bm.name ILIKE $${searchIdx}
+        )
+      )`;
     }
 
     // 1. Get total count
@@ -147,8 +246,27 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
       `SELECT COUNT(*)::int as total FROM bets b ${whereClause}`,
       queryParams
     );
-    const totalBets = countResult.rows[0]?.total || 0;
-    const totalPages = Math.ceil(totalBets / limit) || 1;
+    const totalCount = countResult.rows[0]?.total || 0;
+    const totalBets = totalCount;
+    const totalPages = Math.ceil(totalCount / limit) || 1;
+
+    // Determine sort ordering
+    let orderSql = `ORDER BY b.date DESC, b.created_at DESC`;
+    if (sortBy === 'date-asc') {
+      orderSql = `ORDER BY b.date ASC, b.created_at ASC`;
+    } else if (sortBy === 'stake-desc') {
+      orderSql = `ORDER BY b.stake DESC, b.date DESC`;
+    } else if (sortBy === 'stake-asc') {
+      orderSql = `ORDER BY b.stake ASC, b.date DESC`;
+    } else if (sortBy === 'odds-desc') {
+      orderSql = `ORDER BY b.total_odds DESC, b.date DESC`;
+    } else if (sortBy === 'profit-desc') {
+      orderSql = `ORDER BY (COALESCE(b.actual_return, 0) - b.stake) DESC, b.date DESC`;
+    } else if (sortBy === 'event-date-asc') {
+      orderSql = `ORDER BY b.date ASC`;
+    } else if (sortBy === 'event-date-desc') {
+      orderSql = `ORDER BY b.date DESC`;
+    }
 
     // 2. Fetch records
     let queryText = `
@@ -164,7 +282,7 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
       FROM bets b
       LEFT JOIN tipsters t ON b.tipster_id = t.id
       ${whereClause}
-      ORDER BY b.date DESC, b.created_at DESC
+      ${orderSql}
     `;
 
     const dataParams = [...queryParams];
@@ -188,9 +306,11 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
       if (usePagination) {
         return res.json({
           bets: [],
+          totalCount,
+          totalBets: totalCount,
           totalPages,
           currentPage: page,
-          totalBets,
+          limit,
         });
       }
       return res.json([]);
@@ -224,7 +344,7 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
       });
     });
 
-    // Merge legs into bets - Optimize by modifying in-place to reduce memory pressure
+    // Merge legs into bets
     for (let i = 0; i < bets.length; i++) {
       const bet = bets[i];
       bet.totalOdds = parseFloat(bet.totalOdds);
@@ -242,9 +362,11 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
     if (usePagination) {
       return res.json({
         bets,
+        totalCount,
+        totalBets: totalCount,
         totalPages,
         currentPage: page,
-        totalBets,
+        limit,
       });
     }
 
