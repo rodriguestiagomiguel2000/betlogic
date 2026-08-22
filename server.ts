@@ -116,21 +116,21 @@ Special parsing & Extraction Rules:
    - Dates on these slips are in European format DD/MM (day first, then month) — e.g. a printed "05/11" means day 5, month 11 (5th November), NOT May 11th. Apply this rule to whatever DD/MM digits are actually visible on the slip, whatever they are.
    - When a date is shown without an explicit year, assume the current year is ${currentYear}, and combine it with the DD/MM (and time, if shown) you actually read from the image into ISO format YYYY-MM-DDTHH:mm.
    - NEVER output past years unless explicitly printed on the physical slip.
-   - If no date/time is visible anywhere on the slip for a given field, leave that field null/omitted. Do NOT guess, and do NOT fall back to today's date or to any date used as an example in this prompt.
+   - If no date/time is visible anywhere on the slip for the top-level 'placed_at' field, output an empty string "" for it. Do NOT guess, and do NOT fall back to today's date or to any date used as an example in this prompt.
 
 2b. 'placed_at' vs 'event_date' ARE DIFFERENT FIELDS, EVEN WHEN THEY ARE VISUALLY CLOSE (CRITICAL):
    - 'placed_at' (top-level) is the timestamp of the TICKET/SLIP ITSELF — where the bet was placed. It is normally found in ONE of these specific structural positions, and NOWHERE else:
      * In the slip's top header, next to words like "Combo", "Múltipla", "Acumulador a partir", "Aposta realizada", or next to the ticket/bet type label.
      * In the slip's footer/bottom area, next to "Ticket ID", "ID:", a bet reference number, or alongside Total Odds / Total Stake / Total Win summary rows.
-   - 'event_date' (per leg) is the KICKOFF date/time of that specific match. It is ALWAYS printed INSIDE or DIRECTLY ABOVE that leg's own block/card/row, immediately next to (or just above) that leg's team names, league name, or sport icon. It is NEVER found in the ticket's global header or footer area.
+   - 'event_date' (per leg, REQUIRED on every leg) is the KICKOFF date/time of that specific match. It is ALWAYS printed INSIDE or DIRECTLY ABOVE that leg's own block/card/row, immediately next to (or just above) that leg's team names, league name, or sport icon. It is NEVER found in the ticket's global header or footer area.
    - DO NOT be misled by proximity or similarity: on many real slips, 'placed_at' and the FIRST leg's 'event_date' fall on the same calendar date and can be only minutes apart in printed time (e.g. slip placed at 20:19 for a match kicking off at 19:30 the same day — a live/in-play bet). Being close in time or on the same date does NOT make them the same field. Judge strictly by WHERE on the slip each timestamp is printed (global ticket area vs. inside a specific leg's block), never by which value seems more "sensible" as a default.
    - Extract 'placed_at' ONLY from the global ticket header/footer position described above. Never copy a per-leg kickoff time into 'placed_at', and never copy 'placed_at' into any leg's 'event_date'.
    - Extract EACH leg's 'event_date' independently by re-reading the timestamp printed inside that specific leg's own block. Do not reuse the ticket's global placed_at value, and do not reuse one leg's date/time for a different leg unless that exact same date/time is separately and explicitly printed inside that other leg's own block too.
-   - RELATIVE DAY LABELS ON A LEG (e.g. "Today", "Hoje", "Live", "Ao Vivo", an in-play match clock like "70' 2nd half", or a live score like "0:0"): these still belong to that leg's own 'event_date', combined with whatever explicit clock time is printed in that same leg's block (e.g. "Today, 16:30" -> today's date + 16:30). If a leg shows a live match clock/live score instead of a clock time, and no separate kickoff time is printed for it, you may leave that leg's time portion off and use just the date if inferable, or omit event_date entirely for that leg if genuinely no date/time is printed there.
+   - RELATIVE DAY LABELS ON A LEG (e.g. "Today", "Hoje", "Live", "Ao Vivo", an in-play match clock like "70' 2nd half", or a live score like "0:0"): these still belong to that leg's own 'event_date', combined with whatever explicit clock time is printed in that same leg's block (e.g. "Today, 16:30" -> today's date + 16:30).
    - BARE TIME WITH NO DATE ON A LEG (e.g. a leg block shows only "19:30" or "20:30" without any date, common on compact multi-leg summaries): the date for that leg is the same calendar date as the slip's own placed_at/ticket date (unless a different day is explicitly labeled next to that leg, e.g. "Amanhã"/"Tomorrow"). Combine that inferred date with the TIME actually printed inside that leg's block — never with the placed_at TIME.
    - WORKED EXAMPLE (bare time, no date, ticket has its own global timestamp): a leg block shows "Dortmund  19:30  Bayern Munique" with no date printed inside that block, while the ticket's global footer shows a placement timestamp like "22/08/26, 17:46". In this case: event_date = ticket's own date (22/08/2026) + that leg's own printed time (19:30) -> "2026-08-22T19:30". The placed_at TIME (17:46) must NEVER appear in any leg's event_date, even though the placed_at DATE may be reused when a leg has no date of its own. Apply this same logic independently to every leg in the ticket, using each leg's own printed time (e.g. 19:30, 19:45, 20:30), never the placed_at time repeated across legs.
-   - SELF-CHECK BEFORE FINALIZING (CRITICAL): before producing your final JSON output, re-scan the 'legs' array you are about to return. For every leg where event_date is missing, go back to that leg's own block in the image and check again for a printed time (even a bare time like "19:30" with no date, per the bare-time rule above). Only leave event_date genuinely omitted after this second check confirms no time is printed anywhere in that leg's block. It is a mistake to extract event_date for some legs correctly and skip it for others on the same ticket when all legs share the same visible format — treat inconsistent extraction across legs of the same ticket as a signal to re-check, not as an acceptable outcome.
-   - If, after checking the leg's own block specifically, truly no date or time is printed there at all, leave that leg's 'event_date' null/omitted. An omitted field is always better than reusing the ticket's placed_at value.
+   - 'event_date' is a REQUIRED field on every leg and can never be omitted from the JSON. If, after checking the leg's own block specifically, truly no date or time is printed there at all AND the ticket-level placed_at date cannot reasonably apply either, output an empty string "" for that leg's event_date. Never leave the field out of the JSON, and never fill it with the placed_at TIME as a substitute.
+   - SELF-CHECK BEFORE FINALIZING (CRITICAL): before producing your final JSON output, re-scan the 'legs' array you are about to return. For every leg where you were about to output an empty event_date, go back to that leg's own block in the image and check again for a printed time (even a bare time like "19:30" with no date, per the bare-time rule above). Only output an empty string after this second check confirms no time is printed anywhere in that leg's block. It is a mistake to extract event_date for some legs correctly and leave others empty on the same ticket when all legs share the same visible time format — treat inconsistent extraction across legs of the same ticket as a signal to re-check, not as an acceptable outcome.
 
 3. LIVE / IN-PLAY BETS:
    - Look for "LIVE", "Halftime", red dots ((•)), active live scores (e.g. "0:0", "1:2"), or match clocks. Set is_live: true if present.
@@ -177,6 +177,7 @@ Special parsing & Extraction Rules:
         ],
         config: {
           responseMimeType: 'application/json',
+          temperature: 0,
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -227,7 +228,7 @@ Special parsing & Extraction Rules:
               },
               placed_at: {
                 type: Type.STRING,
-                description: `The bet-slip's own placement/issue timestamp ONLY (e.g. a receipt or "ticket generated" line), NOT any match kickoff time — see rule 2b. ISO string YYYY-MM-DD or YYYY-MM-DDTHH:mm using current year ${currentYear}. Omit entirely if no distinct placement timestamp is visible on the slip; do not default to today's date.`,
+                description: `The bet-slip's own placement/issue timestamp ONLY (e.g. a receipt or "ticket generated" line), NOT any match kickoff time — see rule 2b. ISO string YYYY-MM-DD or YYYY-MM-DDTHH:mm using current year ${currentYear}. If no distinct placement timestamp is visible on the slip, output an empty string "" — do not default to today's date.`,
               },
               bet_id: {
                 type: Type.STRING,
@@ -278,10 +279,10 @@ Special parsing & Extraction Rules:
                     },
                     event_date: {
                       type: Type.STRING,
-                      description: `Kickoff date/time exactly as printed on THIS slip, in ISO format YYYY-MM-DDTHH:mm, using current year ${currentYear} if no year is shown. Read the actual digits from the image — never reuse a date from these instructions or from another leg. Omit this field entirely if no date/time is visible for this leg.`,
+                      description: `Kickoff date/time exactly as printed on THIS slip, in ISO format YYYY-MM-DDTHH:mm, using current year ${currentYear} if no year is shown. Read the actual digits from the image — never reuse a date from these instructions or from another leg. This field is REQUIRED and must always be present in the JSON. If, after a careful second check of this specific leg's own block, truly no date or time is printed there, output an empty string "" — never omit the field entirely.`,
                     },
                   },
-                  required: ['event', 'selection'],
+                  required: ['event', 'selection', 'event_date'],
                 },
               },
             },
