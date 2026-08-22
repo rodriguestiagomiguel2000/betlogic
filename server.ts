@@ -112,15 +112,27 @@ Special parsing & Extraction Rules:
 
 2. CURRENT YEAR & DATE HANDLING (IMPORTANT):
    - The current year is ${currentYear}.
-   - When dates like "02/08" or "02/08 • 20:00" or "02 Aug" are shown without an explicit year, ALWAYS assume the current year is ${currentYear} (e.g. "${currentYear}-08-02T20:00:00").
-   - European date format "02/08" is August 2nd (08-02), NOT February 8th.
+   - Read the day and month EXACTLY as printed on THIS slip. Do not reuse or default to any date mentioned elsewhere in these instructions — every slip has its own date, and copying a previous example would be a factual error.
+   - Dates on these slips are in European format DD/MM (day first, then month) — e.g. a printed "05/11" means day 5, month 11 (5th November), NOT May 11th. Apply this rule to whatever DD/MM digits are actually visible on the slip, whatever they are.
+   - When a date is shown without an explicit year, assume the current year is ${currentYear}, and combine it with the DD/MM (and time, if shown) you actually read from the image into ISO format YYYY-MM-DDTHH:mm.
    - NEVER output past years unless explicitly printed on the physical slip.
+   - If no date/time is visible anywhere on the slip for a given field, leave that field null/omitted. Do NOT guess, and do NOT fall back to today's date or to any date used as an example in this prompt.
+
+2b. 'placed_at' vs 'event_date' ARE DIFFERENT FIELDS — DO NOT CONFUSE THEM (CRITICAL):
+   - 'placed_at' (top-level) means ONLY the date/time the BET SLIP ITSELF was placed or issued — a distinct timestamp sometimes printed near the ticket/reference number (e.g. "Aposta realizada em", "Ticket generated", "Bet placed"). It is NOT the kickoff time of any match.
+   - 'event_date' (per leg, inside 'legs') means the KICKOFF date/time of that specific match/fixture — usually printed directly next to or below that leg's team names/event line.
+   - These two fields commonly have completely different values (a bet can be placed days before the match). NEVER copy one into the other, and NEVER use one as a substitute for the other.
+   - If the slip does not show a distinct "bet placed" timestamp separate from kickoff times, leave 'placed_at' null/omitted. Do NOT default it to today's date or the upload time.
+   - For 'event_date', check near EACH individual leg for its own kickoff date/time and extract it independently per leg, even if it means repeating the same date across multiple legs of a same-day parlay. If a specific leg genuinely has no visible kickoff date/time, leave that leg's 'event_date' null/omitted rather than reusing another leg's date or the placed_at value.
 
 3. LIVE / IN-PLAY BETS:
    - Look for "LIVE", "Halftime", red dots ((•)), active live scores (e.g. "0:0", "1:2"), or match clocks. Set is_live: true if present.
 
-4. BOOKMAKER:
-   - Identify sportsbook name (e.g., ReloadBet, Bet365, Pinnacle, BC.GAME). Return clean name.
+4. BOOKMAKER (CRITICAL):
+   - Identify the sportsbook/operator name printed on the slip. Check ALL of these locations, in order of reliability: (a) any logo or brand wordmark at the top or bottom of the slip, (b) header/footer text or watermark, (c) app-specific layout cues or color scheme you recognize, (d) any "shared via" / "powered by" / URL text.
+   - Return the bookmaker's clean, canonical brand name (correct casing and spacing), e.g. "Bet365", "Pinnacle", "ReloadBet", "BC.GAME", "1xBet", "Betano", "Betway" — not an abbreviation, a mis-cased guess, or a translated/localized variant.
+   - If you can visually identify a known logo/wordmark but the text is partially obscured or stylized, still return your best-confidence canonical name rather than leaving it blank.
+   - Only leave 'bookmaker' null/omitted if there is genuinely no visible brand indicator anywhere on the slip (logo, text, or watermark). Do not invent a bookmaker name if none is visible.
 
 5. LEGS ARRAY, BET BUILDERS & CONDENSED MARKETS (CRITICAL):
    - 'legs' array MUST NOT be empty. EVERY sub-selection MUST be extracted as a leg.
@@ -201,7 +213,7 @@ Special parsing & Extraction Rules:
               },
               placed_at: {
                 type: Type.STRING,
-                description: `Date or timestamp when the bet was placed (ISO string YYYY-MM-DD or YYYY-MM-DDTHH:mm using current year ${currentYear}).`,
+                description: `The bet-slip's own placement/issue timestamp ONLY (e.g. a receipt or "ticket generated" line), NOT any match kickoff time — see rule 2b. ISO string YYYY-MM-DD or YYYY-MM-DDTHH:mm using current year ${currentYear}. Omit entirely if no distinct placement timestamp is visible on the slip; do not default to today's date.`,
               },
               bet_id: {
                 type: Type.STRING,
@@ -252,7 +264,7 @@ Special parsing & Extraction Rules:
                     },
                     event_date: {
                       type: Type.STRING,
-                      description: `Kickoff date/time if visible on slip (e.g. ${currentYear}-08-02T20:00:00). ALWAYS use current year ${currentYear} if no year is shown.`,
+                      description: `Kickoff date/time exactly as printed on THIS slip, in ISO format YYYY-MM-DDTHH:mm, using current year ${currentYear} if no year is shown. Read the actual digits from the image — never reuse a date from these instructions or from another leg. Omit this field entirely if no date/time is visible for this leg.`,
                     },
                   },
                   required: ['event', 'selection'],
