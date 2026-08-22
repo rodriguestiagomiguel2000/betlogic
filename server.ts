@@ -128,6 +128,7 @@ Special parsing & Extraction Rules:
    - Extract EACH leg's 'event_date' independently by re-reading the timestamp printed inside that specific leg's own block. Do not reuse the ticket's global placed_at value, and do not reuse one leg's date/time for a different leg unless that exact same date/time is separately and explicitly printed inside that other leg's own block too.
    - RELATIVE DAY LABELS ON A LEG (e.g. "Today", "Hoje", "Live", "Ao Vivo", an in-play match clock like "70' 2nd half", or a live score like "0:0"): these still belong to that leg's own 'event_date', combined with whatever explicit clock time is printed in that same leg's block (e.g. "Today, 16:30" -> today's date + 16:30). If a leg shows a live match clock/live score instead of a clock time, and no separate kickoff time is printed for it, you may leave that leg's time portion off and use just the date if inferable, or omit event_date entirely for that leg if genuinely no date/time is printed there.
    - BARE TIME WITH NO DATE ON A LEG (e.g. a leg block shows only "19:30" or "20:30" without any date, common on compact multi-leg summaries): the date for that leg is the same calendar date as the slip's own placed_at/ticket date (unless a different day is explicitly labeled next to that leg, e.g. "Amanhã"/"Tomorrow"). Combine that inferred date with the TIME actually printed inside that leg's block — never with the placed_at TIME.
+   - WORKED EXAMPLE (bare time, no date, ticket has its own global timestamp): a leg block shows "Dortmund  19:30  Bayern Munique" with no date printed inside that block, while the ticket's global footer shows a placement timestamp like "22/08/26, 17:46". In this case: event_date = ticket's own date (22/08/2026) + that leg's own printed time (19:30) -> "2026-08-22T19:30". The placed_at TIME (17:46) must NEVER appear in any leg's event_date, even though the placed_at DATE may be reused when a leg has no date of its own. Apply this same logic independently to every leg in the ticket, using each leg's own printed time (e.g. 19:30, 19:45, 20:30), never the placed_at time repeated across legs.
    - If, after checking the leg's own block specifically, truly no date or time is printed there at all, leave that leg's 'event_date' null/omitted. An omitted field is always better than reusing the ticket's placed_at value.
 
 3. LIVE / IN-PLAY BETS:
@@ -135,12 +136,14 @@ Special parsing & Extraction Rules:
 
 4. BOOKMAKER (CRITICAL):
    - Identify the sportsbook/operator name printed on the slip. Check ALL of these locations, in order of reliability: (a) any logo or brand wordmark at the top or bottom of the slip, (b) header/footer text or watermark, (c) distinctive color scheme/UI style you recognize, (d) any "shared via" / "powered by" / URL text.
-   - Recognize these visual signatures if present (non-exhaustive; still read the actual printed name first):
+   - PRIORITY: always read the literal brand wordmark/text first (e.g. the actual letters "Betclic" or "22BET" printed on the slip). Only use color scheme or layout as a secondary, lower-confidence confirmation signal — never let color alone override a clearly legible wordmark.
+   - Distinguish these commonly confused operators by their literal wordmark text, not just color (both can appear on red/dark backgrounds):
+     * Betclic: the literal word "Betclic" (bold, rounded lowercase-style lettering) at the very top of the slip, Portuguese labels like "Múltipla", "Cota total", "Ganhos potenciais", "Se acertar, ganho".
+     * 22Bet: the literal characters "22BET" or "22Bet" as a distinct logo/wordmark, Portuguese labels like "Identificação do bol", "Acumulador a partir", "Estado: Aceite".
      * BC.GAME: dark navy background, green accent color, green shield/coin logo, "BC.GAME" wordmark near the ticket ID, status labels like "OPEN".
      * ReloadBet: black/yellow theme, lightning-bolt "R" icon, "RELOADBET" wordmark, "Bet Builder" terminology.
-     * 22Bet: red-and-blue "22BET" wordmark/logo at the top, Portuguese labels like "Aceite", "Estado", "Acumulador a partir".
-     * Betclic: solid red background, white "Betclic" wordmark at the top, Portuguese labels like "Múltipla", "Cota total", "Ganhos potenciais".
    - Return the bookmaker's clean, canonical brand name with correct casing, e.g. "BC.GAME", "ReloadBet", "22Bet", "Betclic", "Bet365", "Pinnacle" — not an abbreviation, a mis-cased guess, or a translated/localized variant.
+   - If the wordmark text is not clearly legible, only then fall back to color/layout pattern-matching, and in that case return your best-confidence answer rather than guessing a different operator with a superficially similar color.
    - If you can visually identify a known logo/wordmark but the text is partially obscured, cropped, or stylized, still return your best-confidence canonical name rather than leaving it blank.
    - Only leave 'bookmaker' null/omitted if there is genuinely no visible brand indicator anywhere on the slip (logo, text, or watermark) — this happens on tightly cropped screenshots that only show the bets/results table without any header or footer branding.
 
