@@ -118,21 +118,31 @@ Special parsing & Extraction Rules:
    - NEVER output past years unless explicitly printed on the physical slip.
    - If no date/time is visible anywhere on the slip for a given field, leave that field null/omitted. Do NOT guess, and do NOT fall back to today's date or to any date used as an example in this prompt.
 
-2b. 'placed_at' vs 'event_date' ARE DIFFERENT FIELDS — DO NOT CONFUSE THEM (CRITICAL):
-   - 'placed_at' (top-level) means ONLY the date/time the BET SLIP ITSELF was placed or issued — a distinct timestamp sometimes printed near the ticket/reference number (e.g. "Aposta realizada em", "Ticket generated", "Bet placed"). It is NOT the kickoff time of any match.
-   - 'event_date' (per leg, inside 'legs') means the KICKOFF date/time of that specific match/fixture — usually printed directly next to or below that leg's team names/event line.
-   - These two fields commonly have completely different values (a bet can be placed days before the match). NEVER copy one into the other, and NEVER use one as a substitute for the other.
-   - If the slip does not show a distinct "bet placed" timestamp separate from kickoff times, leave 'placed_at' null/omitted. Do NOT default it to today's date or the upload time.
-   - For 'event_date', check near EACH individual leg for its own kickoff date/time and extract it independently per leg, even if it means repeating the same date across multiple legs of a same-day parlay. If a specific leg genuinely has no visible kickoff date/time, leave that leg's 'event_date' null/omitted rather than reusing another leg's date or the placed_at value.
+2b. 'placed_at' vs 'event_date' ARE DIFFERENT FIELDS, EVEN WHEN THEY ARE VISUALLY CLOSE (CRITICAL):
+   - 'placed_at' (top-level) is the timestamp of the TICKET/SLIP ITSELF — where the bet was placed. It is normally found in ONE of these specific structural positions, and NOWHERE else:
+     * In the slip's top header, next to words like "Combo", "Múltipla", "Acumulador a partir", "Aposta realizada", or next to the ticket/bet type label.
+     * In the slip's footer/bottom area, next to "Ticket ID", "ID:", a bet reference number, or alongside Total Odds / Total Stake / Total Win summary rows.
+   - 'event_date' (per leg) is the KICKOFF date/time of that specific match. It is ALWAYS printed INSIDE or DIRECTLY ABOVE that leg's own block/card/row, immediately next to (or just above) that leg's team names, league name, or sport icon. It is NEVER found in the ticket's global header or footer area.
+   - DO NOT be misled by proximity or similarity: on many real slips, 'placed_at' and the FIRST leg's 'event_date' fall on the same calendar date and can be only minutes apart in printed time (e.g. slip placed at 20:19 for a match kicking off at 19:30 the same day — a live/in-play bet). Being close in time or on the same date does NOT make them the same field. Judge strictly by WHERE on the slip each timestamp is printed (global ticket area vs. inside a specific leg's block), never by which value seems more "sensible" as a default.
+   - Extract 'placed_at' ONLY from the global ticket header/footer position described above. Never copy a per-leg kickoff time into 'placed_at', and never copy 'placed_at' into any leg's 'event_date'.
+   - Extract EACH leg's 'event_date' independently by re-reading the timestamp printed inside that specific leg's own block. Do not reuse the ticket's global placed_at value, and do not reuse one leg's date/time for a different leg unless that exact same date/time is separately and explicitly printed inside that other leg's own block too.
+   - RELATIVE DAY LABELS ON A LEG (e.g. "Today", "Hoje", "Live", "Ao Vivo", an in-play match clock like "70' 2nd half", or a live score like "0:0"): these still belong to that leg's own 'event_date', combined with whatever explicit clock time is printed in that same leg's block (e.g. "Today, 16:30" -> today's date + 16:30). If a leg shows a live match clock/live score instead of a clock time, and no separate kickoff time is printed for it, you may leave that leg's time portion off and use just the date if inferable, or omit event_date entirely for that leg if genuinely no date/time is printed there.
+   - BARE TIME WITH NO DATE ON A LEG (e.g. a leg block shows only "19:30" or "20:30" without any date, common on compact multi-leg summaries): the date for that leg is the same calendar date as the slip's own placed_at/ticket date (unless a different day is explicitly labeled next to that leg, e.g. "Amanhã"/"Tomorrow"). Combine that inferred date with the TIME actually printed inside that leg's block — never with the placed_at TIME.
+   - If, after checking the leg's own block specifically, truly no date or time is printed there at all, leave that leg's 'event_date' null/omitted. An omitted field is always better than reusing the ticket's placed_at value.
 
 3. LIVE / IN-PLAY BETS:
    - Look for "LIVE", "Halftime", red dots ((•)), active live scores (e.g. "0:0", "1:2"), or match clocks. Set is_live: true if present.
 
 4. BOOKMAKER (CRITICAL):
-   - Identify the sportsbook/operator name printed on the slip. Check ALL of these locations, in order of reliability: (a) any logo or brand wordmark at the top or bottom of the slip, (b) header/footer text or watermark, (c) app-specific layout cues or color scheme you recognize, (d) any "shared via" / "powered by" / URL text.
-   - Return the bookmaker's clean, canonical brand name (correct casing and spacing), e.g. "Bet365", "Pinnacle", "ReloadBet", "BC.GAME", "1xBet", "Betano", "Betway" — not an abbreviation, a mis-cased guess, or a translated/localized variant.
-   - If you can visually identify a known logo/wordmark but the text is partially obscured or stylized, still return your best-confidence canonical name rather than leaving it blank.
-   - Only leave 'bookmaker' null/omitted if there is genuinely no visible brand indicator anywhere on the slip (logo, text, or watermark). Do not invent a bookmaker name if none is visible.
+   - Identify the sportsbook/operator name printed on the slip. Check ALL of these locations, in order of reliability: (a) any logo or brand wordmark at the top or bottom of the slip, (b) header/footer text or watermark, (c) distinctive color scheme/UI style you recognize, (d) any "shared via" / "powered by" / URL text.
+   - Recognize these visual signatures if present (non-exhaustive; still read the actual printed name first):
+     * BC.GAME: dark navy background, green accent color, green shield/coin logo, "BC.GAME" wordmark near the ticket ID, status labels like "OPEN".
+     * ReloadBet: black/yellow theme, lightning-bolt "R" icon, "RELOADBET" wordmark, "Bet Builder" terminology.
+     * 22Bet: red-and-blue "22BET" wordmark/logo at the top, Portuguese labels like "Aceite", "Estado", "Acumulador a partir".
+     * Betclic: solid red background, white "Betclic" wordmark at the top, Portuguese labels like "Múltipla", "Cota total", "Ganhos potenciais".
+   - Return the bookmaker's clean, canonical brand name with correct casing, e.g. "BC.GAME", "ReloadBet", "22Bet", "Betclic", "Bet365", "Pinnacle" — not an abbreviation, a mis-cased guess, or a translated/localized variant.
+   - If you can visually identify a known logo/wordmark but the text is partially obscured, cropped, or stylized, still return your best-confidence canonical name rather than leaving it blank.
+   - Only leave 'bookmaker' null/omitted if there is genuinely no visible brand indicator anywhere on the slip (logo, text, or watermark) — this happens on tightly cropped screenshots that only show the bets/results table without any header or footer branding.
 
 5. LEGS ARRAY, BET BUILDERS & CONDENSED MARKETS (CRITICAL):
    - 'legs' array MUST NOT be empty. EVERY sub-selection MUST be extracted as a leg.
