@@ -37,7 +37,24 @@ async function startServer() {
   const PORT = process.env.PORT || (process.env.NODE_ENV === 'production' ? 3001 : 3000);
 
   // Configure JSON parser with higher limits for large image payloads
-  app.use(express.json({ limit: '15mb' }));
+  app.use(express.json({ limit: '25mb' }));
+
+  // Middleware to catch body-parser errors (like PayloadTooLargeError or malformed JSON) and return JSON
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err && req.path.startsWith('/api')) {
+      const status = err.status || err.statusCode || 400;
+      console.error(`[API MIDDLEWARE ERROR] ${req.method} ${req.path} failed with status ${status}:`, err.message);
+      res.setHeader('Content-Type', 'application/json');
+      return res.status(status).json({
+        error: err.type === 'entity.too.large' 
+          ? 'Image payload is too large. Please upload an image under 15MB.'
+          : err.message || 'Invalid request payload format.',
+        code: err.type === 'entity.too.large' ? 'PAYLOAD_TOO_LARGE' : 'INVALID_REQUEST',
+        retryable: err.type === 'entity.too.large',
+      });
+    }
+    next(err);
+  });
 
   // Register Database API Routes
   app.use('/api/auth', authRouter);
@@ -53,32 +70,60 @@ async function startServer() {
   // Run database table verification check on startup
   await verifyDatabaseSchema();
 
-  // Initialize Gemini client on the server side
+  // Initialize Gemini client on the server side with strict timeout options
   const ai = new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY,
     httpOptions: {
       headers: {
         'User-Agent': 'aistudio-build',
       },
+      timeout: 45000,
     },
   });
 
-  // TASK 2: Secure Betslip Scanner Server Endpoint
+  // TASK 2: Secure Betslip Scanner Server Endpoint with AbortController, Timeout, and Structured Logging
   app.post('/api/scan-betslip', async (req, res) => {
-    // Keep reference to image outside try block for cleanup in finally if needed
+    res.setHeader('Content-Type', 'application/json');
+    const startTime = Date.now();
+    let currentStage = 'request_received';
     let imageData: string | null = req.body.image;
-    
+    let mimeType: string = req.body.mimeType || 'image/jpeg';
+    let abortTimeout: NodeJS.Timeout | null = null;
+
     try {
-      const mimeType = req.body.mimeType;
-      
-      if (!imageData) {
-        return res.status(400).json({ error: 'Missing image base64 data' });
+      console.log(`[BETSLIP OCR] [stage=${currentStage}] HTTP request received from ${req.ip} (content-length: ${req.headers['content-length'] || 'unknown'})`);
+
+      currentStage = 'request_validation';
+      if (!imageData || typeof imageData !== 'string' || !imageData.trim()) {
+        console.warn(`[BETSLIP OCR] [stage=${currentStage}] ❌ Rejected: Missing or invalid image data`);
+        return res.status(400).json({
+          error: 'Missing image base64 data.',
+          code: 'INVALID_REQUEST',
+          retryable: false,
+          stage: currentStage,
+        });
       }
+      console.log(`[BETSLIP OCR] [stage=${currentStage}] Request body validated`);
+
+      currentStage = 'image_validation';
+      // Clean base64 data in case a data-URL prefix was sent
+      if (imageData.includes(';base64,')) {
+        const parts = imageData.split(';base64,');
+        mimeType = parts[0].replace('data:', '') || mimeType;
+        imageData = parts[1];
+      }
+
+      const payloadSizeKb = Math.round((imageData.length * 0.75) / 1024);
+      console.log(`[BETSLIP OCR] [stage=${currentStage}] Image validated: ${payloadSizeKb} KB, MIME: ${mimeType}`);
 
       // Check if Gemini API key exists
       if (!process.env.GEMINI_API_KEY) {
+        console.error(`[BETSLIP OCR] [stage=${currentStage}] ❌ GEMINI_API_KEY environment variable is missing`);
         return res.status(500).json({
-          error: 'GEMINI_API_KEY environment variable is not configured. Please set it in the Settings > Secrets menu.',
+          error: 'GEMINI_API_KEY environment variable is not configured. Please set it in Settings > Secrets.',
+          code: 'GEMINI_AUTH',
+          retryable: false,
+          stage: currentStage,
         });
       }
 
@@ -161,6 +206,16 @@ Special parsing & Extraction Rules:
      * Map the pick answer into 'selection' (e.g. "Sim", "Não", "Over 2.5").
      * NEVER omit 'market' or leave it empty when a market descriptor header is visible on the slip.`;
 
+      // Set up server-side AbortController with a 45s hard safety timeout
+      const controller = new AbortController();
+      abortTimeout = setTimeout(() => {
+        console.warn(`[BETSLIP OCR] ⏱️ Timeout reached (45s) -> aborting Gemini API call`);
+        controller.abort();
+      }, 45000);
+
+      currentStage = 'gemini_request';
+      console.log(`[BETSLIP OCR] [stage=${currentStage}] Starting Gemini request to gemini-3.5-flash-lite (timeout: 45s)...`);
+
       // Enforce JSON Schema structured outputs using Gemini 3.5 Flash Lite
       const response = await ai.models.generateContent({
         model: 'gemini-3.5-flash-lite',
@@ -178,6 +233,7 @@ Special parsing & Extraction Rules:
         config: {
           responseMimeType: 'application/json',
           temperature: 0,
+          abortSignal: controller.signal,
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -291,48 +347,208 @@ Special parsing & Extraction Rules:
         },
       });
 
+      currentStage = 'gemini_response';
+      // Clear the timeout as soon as response arrives
+      if (abortTimeout) {
+        clearTimeout(abortTimeout);
+        abortTimeout = null;
+      }
+
       // CRITICAL: Immediate memory release
       req.body.image = null;
       imageData = null;
 
+      const elapsedMs = Date.now() - startTime;
       const rawText = response.text;
       if (!rawText) {
+        console.warn(`[BETSLIP OCR] [stage=${currentStage}] ⚠️ Gemini returned empty text after ${elapsedMs} ms`);
         throw new Error('Gemini OCR returned an empty text response.');
       }
 
+      console.log(`[BETSLIP OCR] [stage=${currentStage}] Gemini response received in ${elapsedMs} ms (Text length: ${rawText.length})`);
+
+      currentStage = 'json_parse';
       // Safe parse to verify structure and log raw extraction
-      let parsedData = JSON.parse(rawText.trim());
-      console.log('\n=================== [RAW GEMINI OCR RESPONSE FROM SERVER] ===================');
-      console.log(JSON.stringify(parsedData, null, 2));
-      console.log('=============================================================================\n');
-      
-      const resData = res.json(parsedData);
-      
-      // Cleanup local references
-      (parsedData as any) = null;
-      
-      return resData;
+      const parsedData = JSON.parse(rawText.trim());
+      console.log(`[BETSLIP OCR] [stage=${currentStage}] Gemini response parsed successfully`);
+
+      currentStage = 'http_response';
+      const legsCount = Array.isArray(parsedData.legs) ? parsedData.legs.length : 0;
+      console.log(`[BETSLIP OCR] [stage=${currentStage}] Sending JSON response (${legsCount} legs, bookmaker: "${parsedData.bookmaker}", stake: ${parsedData.stake})`);
+
+      return res.json(parsedData);
     } catch (err: any) {
+      if (abortTimeout) {
+        clearTimeout(abortTimeout);
+        abortTimeout = null;
+      }
+
       // Ensure memory is released even on error
       req.body.image = null;
       imageData = null;
-      
-      console.error('Betslip scanner error on backend:', err);
+
+      const elapsedMs = Date.now() - startTime;
       const errMsg = (err.message || '').toLowerCase();
-      if (errMsg.includes('resource_exhausted') || errMsg.includes('quota') || errMsg.includes('limit exceeded') || errMsg.includes('429')) {
-        return res.status(429).json({
-          error: 'Gemini API Quota Exceeded (429 RESOURCE_EXHAUSTED): You have exceeded your free Google AI Studio rate limits of 15 RPM or daily token budget. Please wait 60 seconds and retry.',
+      console.error(`[BETSLIP OCR] FAILURE stage=${currentStage} elapsed=${elapsedMs}ms error=${err.message || err}`);
+
+      // Handle Timeout / Abort
+      if (err.name === 'AbortError' || errMsg.includes('abort') || errMsg.includes('deadline') || errMsg.includes('timeout') || errMsg.includes('504')) {
+        return res.status(504).json({
+          error: 'Gemini OCR analysis timed out after 45 seconds. The image processing took too long to complete.',
+          code: 'GEMINI_TIMEOUT',
+          stage: currentStage,
+          retryable: true,
+          details: err.message,
         });
       }
+
+      // Handle Quota / Rate Limit (429)
+      if (errMsg.includes('resource_exhausted') || errMsg.includes('quota') || errMsg.includes('limit exceeded') || errMsg.includes('429')) {
+        return res.status(429).json({
+          error: 'Gemini API Rate Limit Exceeded (429 RESOURCE_EXHAUSTED). Free tier allows 15 Requests Per Minute. Please wait 30 seconds and retry.',
+          code: 'GEMINI_QUOTA',
+          stage: currentStage,
+          retryable: true,
+          details: err.message,
+        });
+      }
+
+      // Handle Permission / API Key / Auth (401, 403)
+      if (errMsg.includes('permission_denied') || errMsg.includes('api_key') || errMsg.includes('unauthenticated') || errMsg.includes('401') || errMsg.includes('403')) {
+        return res.status(403).json({
+          error: 'Gemini API Authentication Failed (403 PERMISSION_DENIED). Please verify that GEMINI_API_KEY is configured in Settings > Secrets.',
+          code: 'GEMINI_AUTH',
+          stage: currentStage,
+          retryable: false,
+          details: err.message,
+        });
+      }
+
+      // Handle Payload Too Large (413)
+      if (errMsg.includes('payload') || errMsg.includes('too large') || errMsg.includes('413')) {
+        return res.status(413).json({
+          error: 'Image payload is too large. Please upload an image under 15MB.',
+          code: 'PAYLOAD_TOO_LARGE',
+          stage: currentStage,
+          retryable: true,
+          details: err.message,
+        });
+      }
+
       return res.status(500).json({
         error: err.message || 'Failed to scan and parse the betslip using server-side Gemini OCR.',
+        code: 'SERVER_ERROR',
+        stage: currentStage,
+        retryable: true,
+        details: err.message,
       });
     } finally {
-      // Final attempt to help GC
+      if (abortTimeout) {
+        clearTimeout(abortTimeout);
+      }
       if (global.gc) {
         global.gc();
       }
     }
+  });
+
+  // Diagnostic Endpoint: Check Gemini Model Status
+  app.get('/api/diagnostics/gemini-status', async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({
+        available: false,
+        model: 'gemini-3.5-flash-lite',
+        error: 'GEMINI_API_KEY environment variable is missing.',
+        code: 'GEMINI_KEY_MISSING'
+      });
+    }
+
+    try {
+      const ping = await ai.models.generateContent({
+        model: 'gemini-3.5-flash-lite',
+        contents: ['Return the word PONG in plain text.'],
+      });
+      return res.json({
+        available: true,
+        model: 'gemini-3.5-flash-lite',
+        response: (ping.text || '').trim(),
+        timestamp: new Date().toISOString()
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        available: false,
+        model: 'gemini-3.5-flash-lite',
+        error: err.message || 'Failed to reach Gemini API',
+        code: 'GEMINI_MODEL_UNAVAILABLE',
+        details: err
+      });
+    }
+  });
+
+  // Diagnostic Endpoint: Test A, B, and C matrix on an image
+  app.post('/api/diagnostics/gemini-ocr-test', async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    const imageData = req.body.image;
+    const mimeType = req.body.mimeType || 'image/jpeg';
+
+    if (!imageData) {
+      return res.status(400).json({ error: 'Missing image in body', code: 'INVALID_REQUEST' });
+    }
+
+    const results: any = { model: 'gemini-3.5-flash-lite' };
+
+    // Test A: Plain text
+    try {
+      const resA = await ai.models.generateContent({
+        model: 'gemini-3.5-flash-lite',
+        contents: [
+          { inlineData: { mimeType, data: imageData } },
+          'Describe what is visible on this betting slip in plain text.'
+        ],
+      });
+      results.testA_plainText = { success: true, text: resA.text };
+    } catch (errA: any) {
+      results.testA_plainText = { success: false, error: errA.message };
+    }
+
+    // Test B: Simple JSON
+    try {
+      const resB = await ai.models.generateContent({
+        model: 'gemini-3.5-flash-lite',
+        contents: [
+          { inlineData: { mimeType, data: imageData } },
+          'Look at this image and return JSON object with description.'
+        ],
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              description: { type: Type.STRING }
+            },
+            required: ['description']
+          }
+        }
+      });
+      results.testB_simpleJson = { success: true, text: resB.text };
+    } catch (errB: any) {
+      results.testB_simpleJson = { success: false, error: errB.message };
+    }
+
+    return res.json(results);
+  });
+
+  // CRITICAL: Dedicated catch-all 404 handler for any unhandled /api/* routes
+  // This guarantees /api/* requests ALWAYS return JSON and NEVER fall through to Vite SPA index.html
+  app.all('/api/*all', (req, res) => {
+    console.warn(`[API 404] Unhandled API route requested: ${req.method} ${req.originalUrl}`);
+    res.setHeader('Content-Type', 'application/json');
+    res.status(404).json({
+      error: `API endpoint not found: ${req.method} ${req.originalUrl}`,
+      code: 'API_NOT_FOUND',
+      retryable: false,
+    });
   });
   // Vite middleware setup for Development
   if (process.env.NODE_ENV !== 'production') {

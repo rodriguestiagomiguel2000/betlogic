@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Bet, BetLeg, Bankroll, Bookmaker, BetType, SportType, BetStatus, TagDefinition, Tipster } from '../types';
 import {
   ScanLine,
@@ -19,7 +19,9 @@ import {
   ShieldAlert,
   Key,
   UserCheck,
-  X
+  X,
+  StopCircle,
+  Clock
 } from 'lucide-react';
 import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
 import { formatLegSelection, calculateLegsOdds, parseDateString, formatToLocalISOString, formatForDateTimeLocal } from '../utils/dateUtils';
@@ -66,14 +68,76 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   const [scanningState, setScanningState] = useState<'idle' | 'scanning' | 'scanned' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<{
-    is403: boolean;
-    isQuotaExceeded: boolean;
+    is403?: boolean;
+    isQuotaExceeded?: boolean;
+    isTimeout?: boolean;
+    isSizeError?: boolean;
+    isHtmlResponse?: boolean;
+    code?: string;
     attemptedModels: string[];
     message: string;
   } | null>(null);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [rawOcrJson, setRawOcrJson] = useState<string | null>(null);
   const [showRawDrawer, setShowRawDrawer] = useState<boolean>(false);
+  const [scanElapsedSec, setScanElapsedSec] = useState<number>(0);
+
+  // Active in-flight request refs for cancellation and timeout control
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const timeoutTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const scanTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isManuallyCancelledRef = useRef<boolean>(false);
+
+  // Clean up timers and in-flight fetch requests on component unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      if (timeoutTimerRef.current) {
+        clearTimeout(timeoutTimerRef.current);
+      }
+      if (scanTimerRef.current) {
+        clearInterval(scanTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Track scan duration counter while scanning
+  useEffect(() => {
+    if (scanningState === 'scanning') {
+      setScanElapsedSec(0);
+      scanTimerRef.current = setInterval(() => {
+        setScanElapsedSec((prev) => prev + 1);
+      }, 1000);
+    } else {
+      if (scanTimerRef.current) {
+        clearInterval(scanTimerRef.current);
+        scanTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (scanTimerRef.current) {
+        clearInterval(scanTimerRef.current);
+      }
+    };
+  }, [scanningState]);
+
+  // Cancel in-flight scan
+  const handleCancelScan = () => {
+    isManuallyCancelledRef.current = true;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    if (timeoutTimerRef.current) {
+      clearTimeout(timeoutTimerRef.current);
+      timeoutTimerRef.current = null;
+    }
+    setScanningState('idle');
+    setErrorMessage(null);
+    setErrorDetails(null);
+  };
 
   // Extracted fields state
   const [betType, setBetType] = useState<BetType>('parlay');
@@ -166,29 +230,87 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   const potentialPayout = stake * effectiveTotalOdds;
   const hasVoidLegs = legs.some((l) => l.status === 'void');
 
+  // Client-side image pre-processing and compression helper to prevent huge network payload timeouts
+  const processAndCompressImage = (file: File): Promise<{ base64: string; mimeType: string; dataUrl: string }> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Failed to read image file from disk.'));
+      reader.onload = (e) => {
+        const rawDataUrl = e.target?.result as string;
+        if (!rawDataUrl) {
+          return reject(new Error('Could not parse image data URL.'));
+        }
+
+        const img = new Image();
+        img.onerror = () => {
+          // Fallback to raw dataUrl if HTMLImageElement rendering fails
+          const mime = rawDataUrl.split(';')[0].replace('data:', '') || 'image/jpeg';
+          const base64 = rawDataUrl.split(',')[1] || '';
+          resolve({ base64, mimeType: mime, dataUrl: rawDataUrl });
+        };
+        img.onload = () => {
+          const MAX_DIM = 2048;
+          let { width, height } = img;
+          
+          if (width > MAX_DIM || height > MAX_DIM) {
+            if (width > height) {
+              height = Math.round((height * MAX_DIM) / width);
+              width = MAX_DIM;
+            } else {
+              width = Math.round((width * MAX_DIM) / height);
+              height = MAX_DIM;
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, width, height);
+              const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+              const base64 = compressedDataUrl.split(',')[1] || '';
+              resolve({ base64, mimeType: 'image/jpeg', dataUrl: compressedDataUrl });
+              return;
+            }
+          }
+
+          const mime = rawDataUrl.split(';')[0].replace('data:', '') || 'image/jpeg';
+          const base64 = rawDataUrl.split(',')[1] || '';
+          resolve({ base64, mimeType: mime, dataUrl: rawDataUrl });
+        };
+        img.src = rawDataUrl;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
   const handleProcessImage = async (file: File) => {
     if (!selectedBankroll) {
       alert("Please select a target bankroll before scanning.");
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const dataUrl = e.target?.result as string;
+    if (scanningState === 'scanning') {
+      return; // Prevent duplicate concurrent scans
+    }
+
+    try {
+      const { base64, mimeType, dataUrl } = await processAndCompressImage(file);
       setUploadedImage(dataUrl);
-
-      // Extract mime type and base64
-      const mimeType = dataUrl.split(';')[0].replace('data:', '') || 'image/jpeg';
-      const base64Data = dataUrl.split(',')[1] || '';
-
-      await runGeminiOcr(base64Data, mimeType, dataUrl);
-    };
-    reader.readAsDataURL(file);
+      await runGeminiOcr(base64, mimeType, dataUrl);
+    } catch (err: any) {
+      console.error('Image compression/read error:', err);
+      setErrorMessage(err.message || 'Failed to read image file');
+      setScanningState('error');
+    }
   };
 
   const handleSimulateSampleScan = (sampleType: 'parlay' | 'single') => {
     if (!selectedBankroll) {
       alert("Please select a target bankroll before scanning.");
+      return;
+    }
+
+    if (scanningState === 'scanning') {
       return;
     }
 
@@ -209,9 +331,19 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     isSample: boolean = false,
     sampleType: 'parlay' | 'single' = 'parlay'
   ) => {
+    isManuallyCancelledRef.current = false;
     setScanningState('scanning');
     setErrorMessage(null);
     setErrorDetails(null);
+
+    // Cancel any previous active in-flight request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    if (timeoutTimerRef.current) {
+      clearTimeout(timeoutTimerRef.current);
+      timeoutTimerRef.current = null;
+    }
 
     if (isSample) {
       // Simulation mode if sample clicked
@@ -269,9 +401,18 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
         applyParsedData(sampleResult);
         setNotes('Scanned via Demo Sample OCR');
         setScanningState('scanned');
-      }, 1500);
+      }, 1200);
       return;
     }
+
+    // Set up AbortController with a 50s frontend safety timeout
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    timeoutTimerRef.current = setTimeout(() => {
+      console.warn('Frontend OCR safety timeout reached (50s) - aborting request');
+      controller.abort();
+    }, 50000);
 
     try {
       const response = await fetch('/api/scan-betslip', {
@@ -282,36 +423,112 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
         body: JSON.stringify({
           image: base64Data,
           mimeType: mimeType || 'image/jpeg'
-        })
+        }),
+        signal: controller.signal
       });
 
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `Server-side scanning failed with status ${response.status}`);
+      if (timeoutTimerRef.current) {
+        clearTimeout(timeoutTimerRef.current);
+        timeoutTimerRef.current = null;
       }
 
-      const result = await response.json();
-      setRawOcrJson(JSON.stringify(result, null, 2));
+      const contentType = response.headers.get('content-type') || '';
+      const status = response.status;
+      const statusText = response.statusText;
+
+      // Handle non-JSON responses (such as unexpected HTML 404/500 pages or proxy fallback)
+      if (!contentType.includes('application/json')) {
+        const rawText = await response.text();
+        console.error('[BETSLIP OCR] Non-JSON response received from server', {
+          status,
+          statusText,
+          contentType,
+          bodyPreview: rawText.slice(0, 1000)
+        });
+
+        const isHtml = rawText.trim().toLowerCase().startsWith('<!doctype') || rawText.trim().toLowerCase().startsWith('<html');
+        const hint = isHtml
+          ? 'The server or proxy returned an HTML page (likely an SPA index.html fallback or reverse-proxy error) instead of JSON.'
+          : `Expected application/json but received "${contentType || 'unknown'}".`;
+
+        const err: any = new Error(`OCR endpoint returned ${contentType || 'non-JSON'} (HTTP ${status} ${statusText}). ${hint}`);
+        err.status = status;
+        err.isHtmlResponse = isHtml;
+        err.code = isHtml ? 'NON_JSON_RESPONSE' : 'INVALID_CONTENT_TYPE';
+        err.bodyPreview = rawText.slice(0, 300);
+        throw err;
+      }
+
+      // Parse JSON payload safely
+      let result: any;
+      try {
+        result = await response.json();
+      } catch (jsonErr: any) {
+        const err: any = new Error(`Failed to parse JSON response from OCR endpoint: ${jsonErr.message}`);
+        err.status = status;
+        err.code = 'JSON_PARSE_ERROR';
+        throw err;
+      }
+
+      if (!response.ok) {
+        const msg = result.error || `Server-side OCR scan failed with status ${status}`;
+        const code = result.code || (status === 504 ? 'GEMINI_TIMEOUT' : status === 429 ? 'GEMINI_QUOTA' : status === 403 ? 'GEMINI_AUTH' : 'SERVER_ERROR');
+
+        const err: any = new Error(msg);
+        err.status = status;
+        err.code = code;
+        err.details = result.details;
+        err.stage = result.stage;
+        throw err;
+      }
+
+      // Validate response structure
+      if (!result || typeof result !== 'object') {
+        throw new Error('Server returned an invalid or empty OCR structure.');
+      }
+
+      const jsonStr = JSON.stringify(result, null, 2);
+      setRawOcrJson(jsonStr);
       applyParsedData(result);
-      setNotes(`Scanned via secure server-side Gemini 3.5 Flash Lite`);
+      setNotes(`Scanned via Gemini 3.5 Flash Lite OCR engine`);
       setScanningState('scanned');
     } catch (err: any) {
-      console.error("Gemini OCR Parsing Error:", err);
-      const finalErrorMessage = err.message || "Failed to scan and analyze betslip image.";
-      setErrorMessage(finalErrorMessage);
-      
-      const is403 = finalErrorMessage.includes('403') || finalErrorMessage.includes('API key');
-      const isQuotaExceeded = finalErrorMessage.toLowerCase().includes('quota') || 
-                               finalErrorMessage.toLowerCase().includes('exhausted') || 
-                               finalErrorMessage.includes('429');
+      if (timeoutTimerRef.current) {
+        clearTimeout(timeoutTimerRef.current);
+        timeoutTimerRef.current = null;
+      }
 
+      // If user explicitly cancelled via "Cancel Scan" button, return cleanly to idle state
+      if (isManuallyCancelledRef.current) {
+        return;
+      }
+
+      console.error("Gemini OCR Parsing Error:", err);
+      const isAbort = err.name === 'AbortError' || (err.message || '').toLowerCase().includes('abort');
+      const isTimeout = isAbort || err.status === 504 || err.code === 'GEMINI_TIMEOUT' || (err.message || '').toLowerCase().includes('time');
+      const is403 = err.status === 403 || err.code === 'GEMINI_AUTH' || (err.message || '').includes('403') || (err.message || '').toLowerCase().includes('api key');
+      const isQuotaExceeded = err.status === 429 || err.code === 'GEMINI_QUOTA' || (err.message || '').toLowerCase().includes('quota') || (err.message || '').toLowerCase().includes('exhausted') || (err.message || '').includes('429');
+      const isSizeError = err.status === 413 || err.code === 'PAYLOAD_TOO_LARGE' || (err.message || '').toLowerCase().includes('too large');
+
+      let finalErrorMessage = err.message || "Failed to scan and analyze betslip image.";
+      if (isTimeout) {
+        finalErrorMessage = "The betslip scan timed out after 50 seconds. The server took too long to analyze the image or your network connection stalled.";
+      }
+
+      setErrorMessage(finalErrorMessage);
       setErrorDetails({
         is403,
         isQuotaExceeded,
+        isTimeout,
+        isSizeError,
+        isHtmlResponse: Boolean(err.isHtmlResponse),
+        code: err.code || (isTimeout ? 'GEMINI_TIMEOUT' : isQuotaExceeded ? 'GEMINI_QUOTA' : is403 ? 'GEMINI_AUTH' : 'SERVER_ERROR'),
         attemptedModels: ['gemini-3.5-flash-lite (server-side)'],
         message: finalErrorMessage
       });
       setScanningState('error');
+    } finally {
+      abortControllerRef.current = null;
     }
   };
 
@@ -319,9 +536,9 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     if (!dateStr || typeof dateStr !== 'string' || !dateStr.trim()) return undefined;
 
     let cleaned = dateStr.trim();
-    const currentYear = new Date().getFullYear(); // 2026
+    const currentYear = new Date().getFullYear();
 
-    // Replace past years 2024/2025 with current year 2026 when inferred incorrectly by model
+    // Replace past years 2024/2025 with current year when inferred incorrectly by model
     cleaned = cleaned.replace(/\b202[0-5]\b/g, String(currentYear));
 
     // If format is "DD/MM • HH:mm" or "DD/MM HH:mm" or "DD/MM" (e.g. "02/08 • 20:00" -> 2nd August 2026)
@@ -412,41 +629,56 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
 
     const overallSport = parseSportStr(parsed.sport || '');
 
-    // Legs
+    // Legs extraction and validation without fake fabricated odds
+    const legConfs: { [index: number]: any } = {};
+
     if (Array.isArray(parsed.legs) && parsed.legs.length > 0) {
       const isMultiLeg = parsed.legs.length > 1;
       const isBetBuilderSlip = mType.includes('builder') || mType.includes('criar aposta');
 
       const extractedLegs: BetLeg[] = parsed.legs.map((leg: any, idx: number) => {
-        const legSelection = leg.selection || leg.team || (!isMultiLeg ? parsed.selection : '') || leg.market || 'Selection';
-        const legMarket = leg.market || (!isMultiLeg ? parsed.market : '') || 'Match Odds';
-        const legEvent = leg.event || (!isMultiLeg ? parsed.event : '') || leg.team || 'Match Event';
+        const legSelection = leg.selection || leg.team || (!isMultiLeg ? parsed.selection : '') || leg.market || '';
+        const legMarket = leg.market || (!isMultiLeg ? parsed.market : '') || '';
+        const legEvent = leg.event || (!isMultiLeg ? parsed.event : '') || leg.team || '';
 
         let bId = leg.builder_id ? String(leg.builder_id).trim() : undefined;
         let bOdds = leg.builder_odds ? Number(leg.builder_odds) : undefined;
 
         if (isBetBuilderSlip && !bId) {
-          bId = `builder-${legEvent.toLowerCase().replace(/[^a-z0-9]/g, '') || '1'}`;
-          bOdds = Number(parsed.total_odds || parsed.odds || 2.05);
+          bId = `builder-${(legEvent || '1').toLowerCase().replace(/[^a-z0-9]/g, '') || '1'}`;
+          bOdds = Number(parsed.total_odds || parsed.odds) || 0;
         }
 
         let legOdds = leg.odds_decimal ? Number(leg.odds_decimal) : (leg.odds ? Number(leg.odds) : NaN);
+        let isOddsDetected = true;
+
         if (bOdds && bOdds > 0) {
           legOdds = bOdds;
         } else if (isNaN(legOdds) || legOdds <= 0) {
-          legOdds = !isMultiLeg ? Number(parsed.odds || parsed.total_odds || 1.85) : 1.85;
+          // If odds were not detected from slip, use top-level odds for single or 0 (never fabricate 1.85 / 2.05)
+          legOdds = !isMultiLeg ? (Number(parsed.odds || parsed.total_odds) || 0) : 0;
+          isOddsDetected = false;
         }
 
         const rawLegDate = leg.event_date || leg.eventDate || parsed.placed_at || undefined;
         const legSport = parseSportStr(leg.sport) || overallSport || '';
 
+        // Calculate realistic confidence scores based on detection quality
+        legConfs[idx] = {
+          event: legEvent ? 94 : 45,
+          market: legMarket ? 92 : 50,
+          selection: legSelection ? 93 : 40,
+          odds: isOddsDetected && legOdds > 1.0 ? 95 : 40,
+          eventDate: rawLegDate ? 90 : 50
+        };
+
         return {
           id: `scanned-leg-${Date.now()}-${idx}`,
           sport: legSport,
-          event: legEvent,
-          market: legMarket,
-          selection: legSelection,
-          odds: legOdds,
+          event: legEvent || 'Match Event',
+          market: legMarket || 'Market',
+          selection: legSelection || 'Selection',
+          odds: legOdds > 0 ? legOdds : 1.0,
           builderId: bId,
           builderOdds: bOdds,
           status: status === 'won' ? 'won' : status === 'lost' ? 'lost' : status === 'void' ? 'void' : 'pending',
@@ -474,84 +706,33 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
       setLegs(extractedLegs);
     } else if (parsed.event || parsed.selection || parsed.odds || parsed.market) {
       // Fallback: If legs array was omitted or empty, build a single leg from top-level fields
+      const fallbackOdds = Number(parsed.odds || parsed.total_odds) || 0;
+      legConfs[0] = {
+        event: parsed.event ? 92 : 45,
+        market: parsed.market ? 94 : 50,
+        selection: parsed.selection ? 90 : 40,
+        odds: fallbackOdds > 1.0 ? 95 : 40,
+        eventDate: parsed.event_date || parsed.placed_at ? 92 : 50
+      };
+
       const singleLeg: BetLeg = {
         id: `scanned-leg-${Date.now()}-0`,
         sport: overallSport,
         event: parsed.event || 'Match Event',
         market: parsed.market || 'Match Odds',
-        selection: parsed.selection || parsed.team || parsed.event || 'Selection',
-        odds: parsed.odds ? Number(parsed.odds) : (parsed.total_odds ? Number(parsed.total_odds) : 1.85),
+        selection: parsed.selection || parsed.team || 'Selection',
+        odds: fallbackOdds > 0 ? fallbackOdds : 1.0,
         status: status === 'won' ? 'won' : status === 'lost' ? 'lost' : status === 'void' ? 'void' : 'pending',
         eventDate: normalizeScannedDate(parsed.event_date || parsed.placed_at || undefined),
       };
       setLegs([singleLeg]);
     }
 
-    // Generate simulated OCR confidence scores (Feature 3)
-    const legConfs: { [index: number]: any } = {};
-    const hasLegsArray = Array.isArray(parsed.legs) && parsed.legs.length > 0;
-    const isSampleSingle = parsed.bookmaker === "Pinnacle" || (parsed.bookmaker === bookmakers[0]?.name && parsed.market_type === "Single");
-    const isSampleParlay = parsed.bookmaker === "Bet365" || (parsed.bookmaker === bookmakers[0]?.name && parsed.market_type === "Multiple");
-
-    if (hasLegsArray) {
-      parsed.legs.forEach((leg: any, idx: number) => {
-        if (isSampleParlay) {
-          // Parlay sample: second leg's odds 79%, kickoff date 81%
-          if (idx === 1) {
-            legConfs[idx] = {
-              event: 94,
-              market: 89,
-              selection: 91,
-              odds: 79,
-              eventDate: 81
-            };
-          } else {
-            legConfs[idx] = {
-              event: 96,
-              market: 93,
-              selection: 95,
-              odds: 98,
-              eventDate: 92
-            };
-          }
-        } else if (isSampleSingle) {
-          // Single sample: selection 82%
-          legConfs[idx] = {
-            event: 92,
-            market: 94,
-            selection: 82,
-            odds: 94,
-            eventDate: 91
-          };
-        } else {
-          // Real Scan: generate highly realistic scores, occasionally setting a field slightly low to represent real OCR issues
-          const isLegOddsLow = Math.random() > 0.85;
-          const isLegSelectionLow = Math.random() > 0.90;
-          legConfs[idx] = {
-            event: Math.floor(Math.random() * 15 + 83), // 83% - 98%
-            market: Math.floor(Math.random() * 10 + 89), // 89% - 99%
-            selection: isLegSelectionLow ? 82 : Math.floor(Math.random() * 12 + 87), // occasionally 82%
-            odds: isLegOddsLow ? 78 : Math.floor(Math.random() * 15 + 84), // occasionally 78%
-            eventDate: Math.floor(Math.random() * 14 + 79) // 79% - 93%
-          };
-        }
-      });
-    } else {
-      // Fallback single leg
-      legConfs[0] = {
-        event: 91,
-        market: 95,
-        selection: 82, // Low!
-        odds: 97,
-        eventDate: 93
-      };
-    }
-
     setOcrConfidences({
-      bookmaker: isSampleSingle ? 94 : isSampleParlay ? 96 : Math.floor(Math.random() * 12 + 87),
-      stake: isSampleSingle ? 98 : isSampleParlay ? 99 : Math.floor(Math.random() * 8 + 92),
+      bookmaker: parsed.bookmaker ? 96 : 50,
+      stake: parsed.stake ? 98 : 50,
       status: 95,
-      totalOdds: isSampleParlay ? 84 : Math.floor(Math.random() * 15 + 84),
+      totalOdds: parsed.total_odds || parsed.odds ? 94 : 45,
       legs: legConfs
     });
   };
@@ -850,7 +1031,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
               </div>
               <div>
                 <h3 className="text-base font-bold text-white">Upload Betslip Image</h3>
-                <p className="text-xs text-[#8d90a0] mt-1">Supports PNG, JPG, WEBP formats (Max 10MB)</p>
+                <p className="text-xs text-[#8d90a0] mt-1">Supports PNG, JPG, WEBP formats (Auto-optimized for OCR)</p>
               </div>
               <span className={`px-4 py-2 rounded-lg text-white text-xs font-semibold transition-colors ${
                 !selectedBankroll ? 'bg-slate-700' : 'bg-[#2563eb] group-hover:bg-[#1d4ed8]'
@@ -919,20 +1100,48 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
         </div>
       )}
 
-      {/* Loading State */}
+      {/* Loading / Active Scanning State with Cancel Support & Progress */}
       {scanningState === 'scanning' && (
-        <div className="bg-[#171f33] p-12 rounded-xl border border-[#27314a] text-center space-y-4">
-          <RefreshCw size={44} className="animate-spin text-[#2563eb] mx-auto" />
-          <h3 className="text-lg font-bold text-white flex items-center justify-center gap-2">
-            <span>Analyzing Betslip with Gemini 3.5 Flash Lite OCR...</span>
-          </h3>
-          <p className="text-xs text-[#8d90a0] max-w-md mx-auto">
-            Extracting sportsbook metadata, fixture legs, selections, decimal odds, stake values, and payout structures.
-          </p>
+        <div className="bg-[#171f33] p-10 rounded-xl border border-[#2563eb]/40 text-center space-y-6 shadow-xl relative overflow-hidden">
+          {/* Subtle animated top gradient bar */}
+          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-600 via-emerald-400 to-indigo-600 animate-pulse" />
+
+          <div className="relative flex justify-center">
+            <div className="relative">
+              <div className="w-16 h-16 rounded-full bg-blue-500/10 border border-blue-500/30 flex items-center justify-center">
+                <RefreshCw size={32} className="animate-spin text-[#2563eb]" />
+              </div>
+              <div className="absolute -bottom-1 -right-1 bg-[#0b1326] border border-[#27314a] px-2 py-0.5 rounded-full text-[10px] font-mono font-bold text-blue-400 flex items-center gap-1">
+                <Clock size={10} />
+                <span>{scanElapsedSec}s</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2 max-w-md mx-auto">
+            <h3 className="text-base font-bold text-white flex items-center justify-center gap-2">
+              <span>Analyzing Betslip with Gemini 3.5 Flash Lite OCR...</span>
+            </h3>
+            <p className="text-xs text-[#8d90a0] leading-relaxed">
+              Extracting sportsbook metadata, fixture legs, selections, decimal odds, stake values, and payout structures.
+            </p>
+          </div>
+
+          {/* Cancel button */}
+          <div className="pt-2 flex justify-center">
+            <button
+              onClick={handleCancelScan}
+              type="button"
+              className="px-5 py-2.5 bg-[#0b1326] hover:bg-rose-950/60 border border-rose-900/50 hover:border-rose-500/80 text-rose-300 hover:text-rose-100 text-xs font-bold rounded-lg transition-all flex items-center gap-2 shadow-sm cursor-pointer"
+            >
+              <StopCircle size={15} />
+              <span>Cancel Scan</span>
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Error State with 403 Diagnostics */}
+      {/* Error State with Structured Diagnostics & Solutions */}
       {scanningState === 'error' && (
         <div className="bg-[#171f33] border border-rose-800/80 rounded-xl p-6 space-y-6 shadow-xl text-left">
           <div className="flex items-start gap-4">
@@ -942,20 +1151,41 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
             <div className="space-y-1.5 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-base font-bold text-white">
-                  {errorDetails?.isQuotaExceeded 
+                  {errorDetails?.isTimeout
+                    ? '504 GATEWAY_TIMEOUT: Gemini OCR Request Timed Out'
+                    : errorDetails?.isQuotaExceeded 
                     ? '429 RESOURCE_EXHAUSTED: Gemini API Quota Limit Reached'
                     : errorDetails?.is403 
                     ? '403 PERMISSION_DENIED: Gemini API Access Restricted' 
+                    : errorDetails?.isSizeError
+                    ? '413 PAYLOAD_TOO_LARGE: Betslip Image Exceeds Size Limits'
+                    : errorDetails?.isHtmlResponse
+                    ? 'NON_JSON_RESPONSE: Server Returned HTML Instead of JSON'
                     : 'Gemini OCR Parsing Failed'}
                 </h3>
+                {errorDetails?.isTimeout && (
+                  <span className="bg-amber-500/20 text-amber-400 border border-amber-500/40 text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase">
+                    HTTP 504 TIMEOUT
+                  </span>
+                )}
                 {errorDetails?.isQuotaExceeded && (
                   <span className="bg-amber-500/20 text-amber-400 border border-amber-500/40 text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase">
-                    HTTP 429
+                    HTTP 429 QUOTA
                   </span>
                 )}
                 {errorDetails?.is403 && (
                   <span className="bg-rose-500/20 text-rose-400 border border-rose-500/40 text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase">
-                    HTTP 403
+                    HTTP 403 AUTH
+                  </span>
+                )}
+                {errorDetails?.isSizeError && (
+                  <span className="bg-purple-500/20 text-purple-400 border border-purple-500/40 text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase">
+                    HTTP 413 SIZE
+                  </span>
+                )}
+                {errorDetails?.isHtmlResponse && (
+                  <span className="bg-indigo-500/20 text-indigo-400 border border-indigo-500/40 text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase">
+                    HTML DETECTED
                   </span>
                 )}
               </div>
@@ -964,11 +1194,54 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
               </p>
               {errorDetails?.attemptedModels && errorDetails.attemptedModels.length > 0 && (
                 <p className="text-[11px] text-[#8d90a0] pt-1">
-                  Fallback Models Evaluated: <span className="text-slate-300 font-mono font-semibold">{errorDetails.attemptedModels.join(' → ')}</span>
+                  Active Model Engine: <span className="text-slate-300 font-mono font-semibold">{errorDetails.attemptedModels.join(' → ')}</span>
                 </p>
               )}
             </div>
           </div>
+
+          {/* HTML Response Diagnostics */}
+          {errorDetails?.isHtmlResponse && (
+            <div className="bg-[#0b1326] border border-[#27314a] p-4.5 rounded-xl space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-2">
+                <AlertTriangle size={15} /> Non-JSON / HTML Response Diagnostics
+              </h4>
+              <ul className="space-y-2.5 text-xs text-[#8d90a0]">
+                <li className="flex items-start gap-2.5">
+                  <div className="w-5 h-5 rounded-full bg-indigo-950 text-indigo-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-indigo-800">1</div>
+                  <div>
+                    <strong className="text-white block font-semibold">SPA Fallback or Proxy Interception</strong>
+                    <span>An HTML payload beginning with &lt;!doctype html&gt; was received. The dedicated API route guard now ensures all <code>/api/*</code> requests return structured JSON.</span>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          )}
+
+          {/* Timeout Diagnostics */}
+          {errorDetails?.isTimeout && (
+            <div className="bg-[#0b1326] border border-[#27314a] p-4.5 rounded-xl space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+                <Clock size={15} /> Timeout Mitigation & Solutions
+              </h4>
+              <ul className="space-y-2.5 text-xs text-[#8d90a0]">
+                <li className="flex items-start gap-2.5">
+                  <div className="w-5 h-5 rounded-full bg-amber-950 text-amber-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-amber-800">1</div>
+                  <div>
+                    <strong className="text-white block font-semibold">Automatic Image Compression Active</strong>
+                    <span>High-resolution photos are now automatically pre-scaled before upload to keep payload sizes small.</span>
+                  </div>
+                </li>
+                <li className="flex items-start gap-2.5">
+                  <div className="w-5 h-5 rounded-full bg-amber-950 text-amber-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-amber-800">2</div>
+                  <div>
+                    <strong className="text-white block font-semibold">Network Latency or Slow Upstream Response</strong>
+                    <span>Google's multimodal vision API may occasionally take longer under heavy load. You can retry immediately with the button below.</span>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          )}
 
           {errorDetails?.is403 && (
             <div className="bg-[#0b1326] border border-[#27314a] p-4.5 rounded-xl space-y-3">
@@ -980,21 +1253,14 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                   <div className="w-5 h-5 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">1</div>
                   <div>
                     <strong className="text-white block font-semibold">Server-Side API Key Validation</strong>
-                    <span>Ensure <code className="text-[#4edea3] bg-[#171f33] px-1.5 py-0.5 rounded font-mono">GEMINI_API_KEY</code> is configured in your server environment variables without whitespace or extra quotes.</span>
+                    <span>Ensure <code className="text-[#4edea3] bg-[#171f33] px-1.5 py-0.5 rounded font-mono">GEMINI_API_KEY</code> is configured in your server environment variables.</span>
                   </div>
                 </li>
                 <li className="flex items-start gap-2.5">
                   <div className="w-5 h-5 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">2</div>
                   <div>
                     <strong className="text-white block font-semibold">Enable Generative Language API</strong>
-                    <span>Verify that the <strong>Generative Language API</strong> service is enabled in your Google Cloud Console / Google AI Studio project.</span>
-                  </div>
-                </li>
-                <li className="flex items-start gap-2.5">
-                  <div className="w-5 h-5 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">3</div>
-                  <div>
-                    <strong className="text-white block font-semibold">Check API Key HTTP / Referrer Restrictions</strong>
-                    <span>Verify that your API Key does not have strict IP address or HTTP referrer restrictions blocking client-side browser requests from this app's preview domain.</span>
+                    <span>Verify that the <strong>Generative Language API</strong> is enabled in your Google AI Studio / Google Cloud project.</span>
                   </div>
                 </li>
               </ul>
@@ -1011,21 +1277,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                   <div className="w-5 h-5 rounded-full bg-amber-950 text-amber-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-amber-800">1</div>
                   <div>
                     <strong className="text-white block font-semibold">Free-Tier Requests Per Minute Limit</strong>
-                    <span>Free Google AI Studio API Keys have a rate limit of 15 Requests Per Minute (RPM). If you perform multiple uploads or re-scans in short succession, you will encounter a rate-limiting block.</span>
-                  </div>
-                </li>
-                <li className="flex items-start gap-2.5">
-                  <div className="w-5 h-5 rounded-full bg-amber-950 text-amber-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-amber-800">2</div>
-                  <div>
-                    <strong className="text-white block font-semibold">Daily Token Limit</strong>
-                    <span>Free-tier accounts also have a daily token usage quota of 25 million tokens. Scanning very large, high-resolution images multiple times can consume this budget quickly.</span>
-                  </div>
-                </li>
-                <li className="flex items-start gap-2.5">
-                  <div className="w-5 h-5 rounded-full bg-amber-950 text-amber-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-amber-800">3</div>
-                  <div>
-                    <strong className="text-white block font-semibold">Immediate Mitigation</strong>
-                    <span>Please wait at least 60 seconds before uploading again. If your token quota is fully exhausted, you can still use the <strong>Run Instant Demo Sample</strong> option below to test the full parsing interface.</span>
+                    <span>Free Google AI Studio API Keys have a rate limit of 15 Requests Per Minute (RPM). Please wait 30-60 seconds before retrying.</span>
                   </div>
                 </li>
               </ul>
