@@ -152,8 +152,12 @@ Special parsing & Extraction Rules:
      * Middle line = 'market' (e.g. "1x2").
      * Third line next to sport/ball icon = 'event' / match fixture (e.g. "Deportivo Madryn vs. All Boys", "Ciudad de Bolivar vs. Mitre").
    - Set 'market_type' to "Multiple" or "Parlay".
-   - Set top-level 'total_odds' to the combined payout odds on the ticket (e.g. 2.79).
-   - Set top-level 'odds' to the combined total odds (e.g. 2.79) for multiple bets.
+   - TOTAL ODDS / SLIP ODDS (CRITICAL - HIGHEST PRIORITY):
+     * Prioritize extracting the literal "Total odds" value printed at the summary/footer section at the bottom of the slip (e.g. "Total odds 9.01", "Total Odds: 9.01", "Cota total: 3.34", "Odds: 2.79", or "Cotação total").
+     * You MUST extract and store this exact printed total odds value visible on the slip (e.g. 9.01, 2.79, 3.34) as the official total odds.
+     * DO NOT derive or compute it by multiplying individual selection odds together, because bookmakers frequently apply accumulator boosts, combo bonuses, or promotional boosts that change the final printed value.
+     * Set top-level 'total_odds' to this exact printed total odds value from the summary footer.
+     * Set top-level 'odds' to this same printed total odds.
 
 2. CURRENT YEAR & DATE HANDLING (IMPORTANT):
    - The current year is ${currentYear}.
@@ -200,7 +204,7 @@ Special parsing & Extraction Rules:
      * Set 'builder_odds' to the combined odds of that Bet Builder block (e.g. 4.50).
      * Set 'odds_decimal' to the builder_odds for legs in that group.
    - MULTIPLE BET BUILDERS & MIXED COMBOS: A ticket can contain MULTIPLE Bet Builders (e.g., Bet Builder 1 @ 4.50, Bet Builder 2 @ 2.83) OR a mix of Bet Builders and Single bets (e.g., Bet Builder 1 @ 4.50 + Single @ 1.47 + Single @ 2.66).
-     * Ensure total_odds equals the product of each independent single leg odds AND each Bet Builder group's builder_odds (multiplying each Bet Builder odds ONCE, not per sub-selection).
+     * Extract each independent single leg with its odds, and each Bet Builder group with its builder_odds.
    - On Portuguese / European slips showing market descriptor lines above or next to match names (e.g., "[Team] para marcar em ambas as partes", "Ambas as equipas marcam", "Total de Golos", "[Team] a marcar"):
      * Map the market description text into 'market' (e.g. "Sirius para marcar em ambas as partes" or "Ambas Marcam (BTTS)").
      * Map the pick answer into 'selection' (e.g. "Sim", "Não", "Over 2.5").
@@ -260,7 +264,7 @@ Special parsing & Extraction Rules:
               },
               odds: {
                 type: Type.NUMBER,
-                description: 'Total or single decimal odds of the wager.',
+                description: 'Total combined odds directly printed on the slip footer/summary (or single bet odds). Extract printed number directly without multiplying legs.',
               },
               stake: {
                 type: Type.NUMBER,
@@ -292,7 +296,7 @@ Special parsing & Extraction Rules:
               },
               total_odds: {
                 type: Type.NUMBER,
-                description: 'Total combined odds of the betslipped ticket.',
+                description: 'Total combined odds directly printed on the ticket slip summary/footer (e.g. "Total odds", "Cota total"). Do not calculate by multiplying legs.',
               },
               legs: {
                 type: Type.ARRAY,

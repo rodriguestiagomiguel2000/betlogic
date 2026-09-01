@@ -151,6 +151,9 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [customTagInput, setCustomTagInput] = useState<string>('');
 
+  // Extracted slip total odds directly from bookmaker ticket summary/footer (e.g. Reloadbet boosted odds 9.01)
+  const [extractedSlipOdds, setExtractedSlipOdds] = useState<number | null>(3.34);
+
   // OCR Confidence Scores for low-confidence warnings
   const [ocrConfidences, setOcrConfidences] = useState<{
     bookmaker?: number;
@@ -226,9 +229,10 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   ]);
 
   const { rawTotalOdds, effectiveTotalOdds } = calculateLegsOdds(legs, betType);
-  const totalOdds = effectiveTotalOdds;
-  const potentialPayout = stake * effectiveTotalOdds;
   const hasVoidLegs = legs.some((l) => l.status === 'void');
+  const displaySlipOdds = extractedSlipOdds !== null && extractedSlipOdds > 0 ? extractedSlipOdds : effectiveTotalOdds;
+  const totalOdds = hasVoidLegs ? effectiveTotalOdds : displaySlipOdds;
+  const potentialPayout = stake * totalOdds;
 
   // Client-side image pre-processing and compression helper to prevent huge network payload timeouts
   const processAndCompressImage = (file: File): Promise<{ base64: string; mimeType: string; dataUrl: string }> => {
@@ -593,6 +597,14 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
       setStake(Number(parsed.stake));
     }
 
+    // Extracted Slip Odds (read directly from printed total odds on slip)
+    const parsedSlipOdds = Number(parsed.total_odds || parsed.odds);
+    if (!isNaN(parsedSlipOdds) && parsedSlipOdds > 0) {
+      setExtractedSlipOdds(parsedSlipOdds);
+    } else {
+      setExtractedSlipOdds(null);
+    }
+
     // Status
     let status: BetStatus = 'pending';
     const rawStatus = (parsed.status || '').toLowerCase();
@@ -868,7 +880,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
         date: calculatedBetDate,
         type: betType,
         legs,
-        totalOdds: Number(effectiveTotalOdds.toFixed(3)),
+        totalOdds: Number(totalOdds.toFixed(3)),
         stake,
         potentialPayout: Number(potentialPayout.toFixed(2)),
         actualReturn: calculatedReturn,
@@ -899,11 +911,18 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   const bankrollTotal = activeBankroll ? activeBankroll.currentBalance || activeBankroll.initialBalance : 0;
   const stakePercentage = bankrollTotal > 0 ? (stake / bankrollTotal) * 100 : 0;
 
-  // Calculate theoretical combined odds (Feature 4)
-  const multiplicativeOdds = legs.reduce((acc, leg) => {
-    if (leg.status === 'void') return acc;
-    return acc * (Number(leg.odds) || 1);
-  }, 1);
+  // Calculate theoretical cumulative combined odds by multiplying all individual leg odds together
+  const multiplicativeOdds = Number(
+    legs.reduce((acc, leg) => {
+      if (leg.status === 'void') return acc;
+      return acc * (Number(leg.odds) || 1);
+    }, 1).toFixed(3)
+  );
+
+  // Accumulator Multiplier Math Check tolerance (±5% or a fixed delta of ±0.15)
+  const oddsDelta = Math.abs(multiplicativeOdds - displaySlipOdds);
+  const pctDelta = multiplicativeOdds > 0 ? oddsDelta / multiplicativeOdds : 0;
+  const isOddsMatch = oddsDelta <= 0.15 || pctDelta <= 0.05;
 
   // Check for duplicate bets (Feature 2)
   const isPossibleDuplicate = (bets || []).some((b) => {
@@ -1481,6 +1500,31 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                         <span>⚠️ High Exposure: &gt;5% of Bankroll</span>
                       </div>
                     )}
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-xs text-[#8d90a0] font-medium">Extracted Slip Odds</label>
+                      {extractedSlipOdds !== null && Math.abs(multiplicativeOdds - extractedSlipOdds) > 0.001 && (
+                        <span className="text-[10px] text-amber-400 font-mono">
+                          (Boosted / Slip: @{formatOdds(extractedSlipOdds)})
+                        </span>
+                      )}
+                    </div>
+                    <input
+                      type="number"
+                      step="0.001"
+                      min="1.0"
+                      value={extractedSlipOdds !== null ? extractedSlipOdds : (effectiveTotalOdds > 0 ? Number(effectiveTotalOdds.toFixed(3)) : '')}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        setExtractedSlipOdds(isNaN(val) ? null : val);
+                        setOcrConfidences(prev => ({ ...prev, totalOdds: 100 }));
+                      }}
+                      placeholder="Total Odds printed on slip"
+                      className={`w-full bg-[#0b1326] border border-[#27314a] rounded-lg px-3 py-2 text-xs text-white font-mono font-bold ${getFieldBorderClass(ocrConfidences.totalOdds)}`}
+                    />
+                    {renderConfidenceWarning(ocrConfidences.totalOdds)}
                   </div>
 
                   <div>
@@ -2244,20 +2288,23 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                 )}
 
                 {/* Accumulator Multiplier Math Check */}
-                {legs.filter(l => !l.builderId || l.builderId).length > 1 && (
+                {legs.length > 1 && (
                   <div className="bg-[#11192e] border border-[#27314a] p-3 rounded-lg text-xs flex flex-wrap items-center justify-between gap-2">
                     <span className="text-gray-400 font-medium">Accumulator Multiplier Math Check:</span>
                     <div className="flex items-center gap-3 font-mono text-xs">
                       <span className="text-[#8d90a0]">Theoretical Cumulative Odds: <strong className="text-white">@{formatOdds(multiplicativeOdds)}</strong></span>
                       <span className="text-gray-600">|</span>
-                      <span className="text-[#8d90a0]">Extracted Slip Odds: <strong className="text-white">@{formatOdds(totalOdds)}</strong></span>
-                      {Math.abs(multiplicativeOdds - totalOdds) > 0.05 ? (
-                        <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded font-bold text-[10px] flex items-center gap-1">
-                          <AlertTriangle size={11} /> Slip odds differ from multiplier math
+                      <span className="text-[#8d90a0]">Extracted Slip Odds: <strong className="text-white">@{formatOdds(displaySlipOdds)}</strong></span>
+                      {isOddsMatch ? (
+                        <span className="bg-[#005236] text-[#4edea3] border border-[#008f5d] px-2 py-0.5 rounded font-bold text-[10px] flex items-center gap-1">
+                          ✓ Odds Match
                         </span>
                       ) : (
-                        <span className="bg-[#005236] text-[#4edea3] border-[#008f5d] px-1.5 py-0.5 rounded font-bold text-[10px] flex items-center gap-1">
-                          ✓ Odds Match
+                        <span
+                          className="bg-amber-500/15 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded font-bold text-[10px] flex items-center gap-1"
+                          title={`Bookmaker applied an odds boost to the accumulator (Theoretical: @${formatOdds(multiplicativeOdds)} vs Slip: @${formatOdds(displaySlipOdds)})`}
+                        >
+                          ⚠️ Odds Boosted
                         </span>
                       )}
                     </div>
