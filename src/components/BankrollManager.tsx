@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Bankroll, Bookmaker, BankrollTransfer, Bet, BankrollTransaction } from '../types';
+import { Bankroll, Bookmaker, BankrollTransfer, Bet, BankrollTransaction, TRANSACTION_TYPES } from '../types';
 import { formatCurrency, formatOdds, getBookmakerBalanceForBankroll, getCurrencySymbol, calculateBetProfit } from '../utils/storage';
 import { formatEventDate, formatLegSelection, formatBetDateTime, getBetLatestEventDate } from '../utils/dateUtils';
 import { bookmakersApi, bankrollsApi } from '../utils/api';
@@ -152,7 +152,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
   // Add Bankroll Form State & Allocations
   const [newBankrollName, setNewBankrollName] = useState<string>('');
   const [newBankrollCurrency, setNewBankrollCurrency] = useState<string>('EUR');
-  const [newBankrollAllocations, setNewBankrollAllocations] = useState<Array<{ bookmakerId: string; cashAmount: string; freeBetAmount: string }>>([{ bookmakerId: '', cashAmount: '', freeBetAmount: '' }]);
+  const [newBankrollAllocations, setNewBankrollAllocations] = useState<Array<{ bookmakerId: string; cashAmount: string; freeBetAmount: string; isRollover?: boolean }>>([{ bookmakerId: '', cashAmount: '', freeBetAmount: '', isRollover: false }]);
   const [newBankrollDesc, setNewBankrollDesc] = useState<string>('');
   const [isRollover, setIsRollover] = useState<boolean>(false);
   const [rolloverSourceId, setRolloverSourceId] = useState<string>('');
@@ -172,6 +172,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
             bookmakerId: bm.id,
             cashAmount: bal.cashBalance > 0 ? bal.cashBalance.toString() : '0',
             freeBetAmount: bal.freeBetBalance > 0 ? bal.freeBetBalance.toString() : '0',
+            isRollover: true,
           };
         })
         .filter((a) => parseFloat(a.cashAmount) > 0 || parseFloat(a.freeBetAmount) > 0);
@@ -179,7 +180,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
       if (sourceAllocs.length > 0) {
         setNewBankrollAllocations(sourceAllocs);
       } else if (bookmakers.length > 0) {
-        setNewBankrollAllocations([{ bookmakerId: bookmakers[0].id, cashAmount: '0', freeBetAmount: '0' }]);
+        setNewBankrollAllocations([{ bookmakerId: bookmakers[0].id, cashAmount: '0', freeBetAmount: '0', isRollover: true }]);
       }
     }
   };
@@ -472,7 +473,8 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
       allocations: newBankrollAllocations.map(a => ({
         bookmakerId: a.bookmakerId,
         cashAmount: parseFloat(a.cashAmount) || 0,
-        freeBetAmount: parseFloat(a.freeBetAmount) || 0
+        freeBetAmount: parseFloat(a.freeBetAmount) || 0,
+        isRollover: a.isRollover !== undefined ? a.isRollover : isRollover
       })),
       color: '#2563eb',
       description: newBankrollDesc
@@ -482,7 +484,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
     setIsRollover(false);
     setRolloverSourceId('');
     setArchiveSourceOnRollover(true);
-    setNewBankrollAllocations([{ bookmakerId: '', cashAmount: '', freeBetAmount: '' }]);
+    setNewBankrollAllocations([{ bookmakerId: '', cashAmount: '', freeBetAmount: '', isRollover: false }]);
     setShowAddBankrollModal(false);
   };
 
@@ -855,8 +857,8 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                   <tbody className="divide-y divide-[#27314a]">
                     {transactionsWithRunningBalance.map((t) => {
                       const bmName = bookmakers.find((bm) => bm.id === t.bookmakerId)?.name || '—';
-                      const isRolloverIn = t.type === 'Rollover In' || t.type === 'Opening Balance (Carried Over)' || t.type?.toLowerCase().includes('carried over');
-                      const isRolloverOut = t.type === 'Rollover Out';
+                      const isRolloverIn = t.type === TRANSACTION_TYPES.ROLLOVER_IN || t.type === TRANSACTION_TYPES.OPENING_BALANCE_CARRIED_OVER || t.type?.toLowerCase().includes('carried over');
+                      const isRolloverOut = t.type === TRANSACTION_TYPES.ROLLOVER_OUT;
                       const isRollover = isRolloverIn || isRolloverOut;
 
                       let displayDescription = t.description;
@@ -882,11 +884,11 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                                   ? 'bg-slate-800/90 text-blue-300 border border-blue-500/40'
                                   : isRolloverOut
                                   ? 'bg-slate-800/90 text-slate-300 border border-slate-600/40'
-                                  : t.type === 'Initial Balance'
+                                  : t.type === TRANSACTION_TYPES.INITIAL_BALANCE
                                   ? 'bg-blue-950 text-blue-400 border border-blue-800'
-                                  : t.type === 'Deposit'
+                                  : t.type === TRANSACTION_TYPES.DEPOSIT
                                   ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-                                  : t.type === 'Withdrawal'
+                                  : t.type === TRANSACTION_TYPES.WITHDRAWAL
                                   ? 'bg-red-950 text-red-400 border border-red-800'
                                   : 'bg-indigo-950 text-indigo-400 border border-indigo-800'
                               }`}
@@ -1650,7 +1652,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                 {!isRollover && (
                   <button
                     type="button"
-                    onClick={() => setNewBankrollAllocations([...newBankrollAllocations, { bookmakerId: '', cashAmount: '', freeBetAmount: '' }])}
+                    onClick={() => setNewBankrollAllocations([...newBankrollAllocations, { bookmakerId: '', cashAmount: '', freeBetAmount: '', isRollover: false }])}
                     className="text-xs text-[#2563eb] hover:underline cursor-pointer"
                   >
                     + Add another allocation

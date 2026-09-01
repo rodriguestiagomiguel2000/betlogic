@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Bet, Bookmaker, Bankroll, BankrollTransaction, Tipster } from '../types';
+import { Bet, Bookmaker, Bankroll, BankrollTransaction, Tipster, TRANSACTION_TYPES } from '../types';
 import { formatCurrency, calculateWinStreak, getCurrencySymbol, calculateBetProfit } from '../utils/storage';
 import { getBetLatestEventDate } from '../utils/dateUtils';
 import {
@@ -254,62 +254,73 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
 
     const timelineMap: Record<string, TimelineItem> = {};
 
-    // Determine the first ever bankroll created (for genuinely new money entering the system)
-    const sortedBankrolls = bankrolls ? [...bankrolls].sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0)) : [];
-    const firstBankrollId = sortedBankrolls.length > 0 ? sortedBankrolls[0]?.id : null;
+    // 1. Identify bankrolls that were created from a rollover
+    const rolloverBankrollIds = new Set(
+      (bankrolls || [])
+        .filter((b) => Boolean(b.rolloverFromBankrollId))
+        .map((b) => b.id)
+    );
 
-    // Also identify the earliest bankroll ID from 'Initial Balance' transactions as a robust fallback
+    // 2. Identify the earliest bankroll ID (the genuine initial seeding bankroll)
     let earliestInitialBankrollId: string | null = null;
-    let earliestInitialDate: string | null = null;
+    let earliestInitialTimestamp = Infinity;
+
     if (transactions && transactions.length > 0) {
       transactions.forEach((tx) => {
-        if (tx.type === 'Initial Balance') {
-          if (!earliestInitialDate || tx.date < earliestInitialDate) {
-            earliestInitialDate = tx.date;
+        if (tx.type === TRANSACTION_TYPES.INITIAL_BALANCE || tx.type === 'Initial Balance') {
+          const tTime = new Date(tx.date).getTime();
+          if (!isNaN(tTime) && tTime < earliestInitialTimestamp) {
+            earliestInitialTimestamp = tTime;
             earliestInitialBankrollId = tx.bankrollId;
           }
         }
       });
     }
 
-    const primaryInitialBankrollId = firstBankrollId || earliestInitialBankrollId;
+    // Fallback: if no Initial Balance transactions, pick the first bankroll that is not rollover-derived
+    const nonRolloverBankrolls = (bankrolls || []).filter((b) => !b.rolloverFromBankrollId);
+    const baselineInitialBankrollId = earliestInitialBankrollId || (nonRolloverBankrolls.length > 0 ? nonRolloverBankrolls[0]?.id : null);
 
     // 1. Process capital transactions (deposits, withdrawals, transfers, initial balances, adjustments)
     if (transactions && transactions.length > 0) {
+      // Temporary verification log to monitor all distinct transaction types
+      const distinctTypes = Array.from(new Set(transactions.map((t) => t.type)));
+      console.log('[AnalyticsView] Distinct transaction types in bankrollEvolutionData:', distinctTypes, transactions);
+
       transactions.forEach((tx) => {
         const d = new Date(tx.date);
         if (isNaN(d.getTime())) return;
         const rawDate = d.toISOString().slice(0, 10);
         const txType = (tx.type || '').trim();
 
-        // 1. Exclude Rollover In, Rollover Out, and Carried Over transactions (internal capital movement between bankrolls)
+        // 1. Exclude Rollover In, Rollover Out, Opening Balance (Carried Over), and internal Transfers
         if (
+          tx.type === TRANSACTION_TYPES.OPENING_BALANCE_CARRIED_OVER ||
+          tx.type === TRANSACTION_TYPES.ROLLOVER_IN ||
+          tx.type === TRANSACTION_TYPES.ROLLOVER_OUT ||
+          tx.type === TRANSACTION_TYPES.TRANSFER ||
+          txType === 'Opening Balance (Carried Over)' ||
           txType === 'Rollover In' ||
           txType === 'Rollover Out' ||
-          txType === 'Opening Balance (Carried Over)' ||
-          txType.toLowerCase().includes('rollover') ||
-          txType.toLowerCase().includes('carried over')
+          txType === 'Transfer' ||
+          txType.toLowerCase().includes('carried over') ||
+          txType.toLowerCase().includes('rollover')
         ) {
           return;
         }
 
-        // 2. Initial Balance: exclude by default UNLESS it is from the very first bankroll created
-        // (i.e. genuine initial capital seeding the user's betting portfolio)
-        if (txType === 'Initial Balance') {
-          const isFirstBankroll = primaryInitialBankrollId
-            ? tx.bankrollId === primaryInitialBankrollId
-            : true;
-          // Check if this bankroll was created from a rollover
-          const matchingBankroll = bankrolls?.find((b) => b.id === tx.bankrollId);
-          const isRolloverDerived = Boolean(matchingBankroll?.rolloverFromBankrollId);
+        // 2. Initial Balance: only allow genuine seed capital from the earliest non-rollover baseline bankroll
+        if (tx.type === TRANSACTION_TYPES.INITIAL_BALANCE || txType === 'Initial Balance') {
+          const isBaselineBankroll = baselineInitialBankrollId ? tx.bankrollId === baselineInitialBankrollId : true;
+          const isRolloverBankroll = rolloverBankrollIds.has(tx.bankrollId);
 
-          if (!isFirstBankroll || isRolloverDerived) {
+          if (!isBaselineBankroll || isRolloverBankroll) {
             return;
           }
         }
 
         let amt = Number(tx.amount || 0);
-        if (txType.toLowerCase().includes('withdraw') && amt > 0) {
+        if ((tx.type === TRANSACTION_TYPES.WITHDRAWAL || txType.toLowerCase().includes('withdraw')) && amt > 0) {
           amt = -amt;
         }
 

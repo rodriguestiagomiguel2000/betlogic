@@ -1,6 +1,7 @@
 import express, { Response } from 'express';
 import { query, getDbPool, recomputeBankrollBalance } from './db';
 import { authenticateToken, AuthenticatedRequest } from './middleware';
+import { TRANSACTION_TYPES } from '../src/types';
 
 const router = express.Router();
 
@@ -145,12 +146,12 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
       client.query(
         `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [userId, fromBankrollId, date, 'Transfer', `Transfer to ${toBrName}`, fromBookmakerId, -transferAmount]
+        [userId, fromBankrollId, date, TRANSACTION_TYPES.TRANSFER, `Transfer to ${toBrName}`, fromBookmakerId, -transferAmount]
       ),
       client.query(
         `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [userId, toBankrollId, date, 'Transfer', `Transfer from ${fromBrName}`, toBookmakerId, creditedAmount]
+        [userId, toBankrollId, date, TRANSACTION_TYPES.TRANSFER, `Transfer from ${fromBrName}`, toBookmakerId, creditedAmount]
       )
     ]);
 

@@ -154,7 +154,29 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
           </button>
         </form>
 
-        <div className="mt-6 text-center">
+        <div className="mt-4 pt-4 border-t border-slate-800/60">
+          <button
+            type="button"
+            disabled={loading}
+            onClick={async () => {
+              setError(null);
+              setLoading(true);
+              try {
+                await authApi.demo();
+                onAuthenticated();
+              } catch (err: any) {
+                setError(err.message || 'Demo login failed. Please try registering or signing in.');
+              } finally {
+                setLoading(false);
+              }
+            }}
+            className="w-full py-2.5 px-4 bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 hover:text-white text-xs font-semibold rounded-xl border border-slate-700/60 transition-all flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Quick Demo / Guest Access
+          </button>
+        </div>
+
+        <div className="mt-4 text-center">
           <button
             onClick={() => {
               setIsLogin(!isLogin);

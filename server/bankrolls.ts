@@ -1,6 +1,7 @@
 import express, { Response } from 'express';
 import { query, getDbPool, recomputeBankrollBalance } from './db';
 import { authenticateToken, AuthenticatedRequest } from './middleware';
+import { TRANSACTION_TYPES } from '../src/types';
 
 const router = express.Router();
 
@@ -112,22 +113,27 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
         }
 
         // In close & snapshot model, source bankroll balances are untouched.
-        if (rolloverFromBankrollId) {
-          // Log transaction: Opening Balance (Carried Over) / Rollover In on new bankroll
+        // Determine if this specific allocation is carried over from rollover or fresh capital
+        const isAllocRollover = alloc.isRollover !== undefined
+          ? Boolean(alloc.isRollover)
+          : Boolean(rolloverFromBankrollId);
+
+        if (isAllocRollover) {
+          // Log transaction: Opening Balance (Carried Over) on new bankroll
           if (cashAmount > 0) {
             await client.query(
               `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
                VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-              [userId, newBankroll.id, new Date().toISOString(), 'Opening Balance (Carried Over)', `Carried over from ${sourceBankrollName}`, alloc.bookmakerId, cashAmount]
+              [userId, newBankroll.id, new Date().toISOString(), TRANSACTION_TYPES.OPENING_BALANCE_CARRIED_OVER, `Carried over from ${sourceBankrollName || 'previous bankroll'}`, alloc.bookmakerId, cashAmount]
             ).catch(() => {});
           }
         } else {
-          // Standard creation: log Initial Balance transaction if cashAmount > 0
+          // Standard creation / fresh capital: log Initial Balance transaction if cashAmount > 0
           if (cashAmount > 0) {
             await client.query(
               `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
                VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-              [userId, newBankroll.id, new Date().toISOString(), 'Initial Balance', 'Initial bankroll allocation', alloc.bookmakerId, cashAmount]
+              [userId, newBankroll.id, new Date().toISOString(), TRANSACTION_TYPES.INITIAL_BALANCE, 'Initial bankroll allocation', alloc.bookmakerId, cashAmount]
             ).catch(() => {});
           }
         }
@@ -433,10 +439,17 @@ router.get('/all-transactions', authenticateToken as any, async (req: Authentica
         ).catch(() => ({ rows: [] }));
 
         if (txCheck.rows.length === 0) {
+          const txType = br.rollover_from_bankroll_id
+            ? TRANSACTION_TYPES.OPENING_BALANCE_CARRIED_OVER
+            : TRANSACTION_TYPES.INITIAL_BALANCE;
+          const desc = br.rollover_from_bankroll_id
+            ? 'Carried over opening balance'
+            : 'Initial bankroll creation';
+
           await query(
             `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
              VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [userId, br.id, br.created_at || new Date().toISOString(), 'Initial Balance', 'Initial bankroll creation', null, initBal]
+            [userId, br.id, br.created_at || new Date().toISOString(), txType, desc, null, initBal]
           ).catch(() => {});
         }
       }
@@ -499,7 +512,7 @@ router.get('/:id/transactions', authenticateToken as any, async (req: Authentica
 
     if (rows.length === 0) {
       const brRes = await query(
-        `SELECT id, initial_balance, created_at FROM bankrolls WHERE id = $1 AND user_id = $2`,
+        `SELECT id, initial_balance, created_at, rollover_from_bankroll_id FROM bankrolls WHERE id = $1 AND user_id = $2`,
         [bankrollId, userId]
       ).catch(() => ({ rows: [] }));
 
@@ -507,10 +520,17 @@ router.get('/:id/transactions', authenticateToken as any, async (req: Authentica
         const br = brRes.rows[0];
         const initBal = parseFloat(br.initial_balance || 0);
         if (initBal > 0) {
+          const txType = br.rollover_from_bankroll_id
+            ? TRANSACTION_TYPES.OPENING_BALANCE_CARRIED_OVER
+            : TRANSACTION_TYPES.INITIAL_BALANCE;
+          const desc = br.rollover_from_bankroll_id
+            ? 'Carried over opening balance'
+            : 'Initial bankroll creation';
+
           await query(
             `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
              VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [userId, bankrollId, br.created_at || new Date().toISOString(), 'Initial Balance', 'Initial bankroll creation', null, initBal]
+            [userId, bankrollId, br.created_at || new Date().toISOString(), txType, desc, null, initBal]
           ).catch(() => {});
 
           const retryRes = await query(queryText, [bankrollId, userId]).catch(() => ({ rows: [] }));

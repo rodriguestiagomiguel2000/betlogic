@@ -155,6 +155,102 @@ router.post('/login', async (req: any, res: any) => {
 });
 
 /**
+ * POST /api/auth/demo
+ * One-click demo login for fast exploration and preview.
+ */
+router.post('/demo', async (req: any, res: any) => {
+  const pool = getDbPool();
+  const client = await pool.connect();
+
+  try {
+    const demoEmail = 'demo@betlogic.pro';
+    let userResult = await client.query(
+      'SELECT id, name, email, currency, active_bankroll_id FROM users WHERE email = $1',
+      [demoEmail]
+    );
+
+    let user;
+
+    if (userResult.rows.length === 0) {
+      const passwordHash = await bcrypt.hash('betlogic_demo_pass', 10);
+
+      await client.query('BEGIN');
+      const newUserRes = await client.query(
+        `INSERT INTO users (name, email, password_hash, currency) 
+         VALUES ($1, $2, $3, $4) 
+         RETURNING id, name, email, currency`,
+        ['Demo User', demoEmail, passwordHash, 'EUR']
+      );
+      user = newUserRes.rows[0];
+
+      // Seed bankroll
+      const defaultBankroll = await client.query(
+        `INSERT INTO bankrolls (user_id, name, currency, initial_balance, current_balance, color, description)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id`,
+        [user.id, 'Primary Bankroll', 'EUR', 1000.00, 1000.00, '#2563eb', 'Default primary bankroll.']
+      );
+      const bankrollId = defaultBankroll.rows[0].id;
+      user.active_bankroll_id = bankrollId;
+
+      await client.query('UPDATE users SET active_bankroll_id = $1 WHERE id = $2', [bankrollId, user.id]);
+
+      // Seed bookmakers
+      const defaultBookmakers = [
+        { name: 'Bet365', color: '#10b981' },
+        { name: 'Pinnacle', color: '#f59e0b' },
+        { name: 'DraftKings', color: '#3b82f6' }
+      ];
+
+      for (const bm of defaultBookmakers) {
+        const bmRes = await client.query(
+          `INSERT INTO bookmakers (user_id, name, real_balance, free_bet_balance, average_margin, color)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id`,
+          [user.id, bm.name, 300.00, 0.00, 4.50, bm.color]
+        );
+        const bmId = bmRes.rows[0].id;
+        await client.query(
+          `INSERT INTO bankroll_bookmaker_balances (bankroll_id, bookmaker_id, cash_balance, free_bet_balance)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT DO NOTHING`,
+          [bankrollId, bmId, 300.00, 0.00]
+        );
+      }
+
+      await client.query('COMMIT');
+    } else {
+      user = userResult.rows[0];
+    }
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, name: user.name },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    return res.json({
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        currency: user.currency || 'EUR',
+        activeBankrollId: user.active_bankroll_id,
+      },
+    });
+  } catch (err: any) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {}
+    console.error('Error during demo login:', err);
+    return res.status(500).json({ error: 'Demo login failed due to a server error.' });
+  } finally {
+    client.release();
+  }
+});
+
+/**
  * GET /api/auth/me
  * Fetch authenticated user information and preference settings.
  */

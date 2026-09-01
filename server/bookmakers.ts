@@ -1,6 +1,7 @@
 import express, { Response } from 'express';
 import { query, getDbPool, recomputeBankrollBalance } from './db';
 import { authenticateToken, AuthenticatedRequest } from './middleware';
+import { TRANSACTION_TYPES } from '../src/types';
 
 const router = express.Router();
 
@@ -253,7 +254,7 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
         await client.query(
           `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [userId, targetBankrollId, new Date().toISOString(), 'Reconcile', `Balance adjustment (${cashDelta > 0 ? '+' : ''}${cashDelta.toFixed(2)})`, bookmakerId, cashDelta]
+          [userId, targetBankrollId, new Date().toISOString(), TRANSACTION_TYPES.RECONCILE, `Balance adjustment (${cashDelta > 0 ? '+' : ''}${cashDelta.toFixed(2)})`, bookmakerId, cashDelta]
         ).catch(() => {});
       }
 
@@ -443,13 +444,13 @@ router.post('/:id/transactions', authenticateToken as any, async (req: Authentic
       await client.query(
         `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [userId, bankrollId, new Date().toISOString(), 'Deposit', `Deposit to ${bookmakerName}`, bookmakerId, Math.abs(cDelta)]
+        [userId, bankrollId, new Date().toISOString(), TRANSACTION_TYPES.DEPOSIT, `Deposit to ${bookmakerName}`, bookmakerId, Math.abs(cDelta)]
       );
     } else if (cDelta < 0) {
       await client.query(
         `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [userId, bankrollId, new Date().toISOString(), 'Withdrawal', `Withdrawal to Bank Account (${bookmakerName})`, bookmakerId, -Math.abs(cDelta)]
+        [userId, bankrollId, new Date().toISOString(), TRANSACTION_TYPES.WITHDRAWAL, `Withdrawal to Bank Account (${bookmakerName})`, bookmakerId, -Math.abs(cDelta)]
       );
     }
 

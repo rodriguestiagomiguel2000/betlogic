@@ -113,6 +113,16 @@ export const authApi = {
     return res;
   },
 
+  async demo(): Promise<AuthResponse> {
+    const res = await apiRequest<AuthResponse>('/auth/demo', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    setAuthToken(res.token);
+    localStorage.setItem('betlogic_active_user', JSON.stringify(res.user));
+    return res;
+  },
+
   async getProfile(): Promise<any> {
     return apiRequest<any>('/auth/me');
   },
@@ -134,7 +144,7 @@ export const bankrollsApi = {
     return apiRequest<Bankroll[]>('/bankrolls');
   },
 
-  async create(data: { name: string; currency: string; color: string; description: string; rolloverFromBankrollId?: string; archiveSource?: boolean; allocations: Array<{ bookmakerId: string; cashAmount: number; freeBetAmount: number }> }): Promise<Bankroll> {
+  async create(data: { name: string; currency: string; color: string; description: string; rolloverFromBankrollId?: string; archiveSource?: boolean; allocations: Array<{ bookmakerId: string; cashAmount: number; freeBetAmount: number; isRollover?: boolean }> }): Promise<Bankroll> {
     return apiRequest<Bankroll>('/bankrolls', {
       method: 'POST',
       body: JSON.stringify(data),

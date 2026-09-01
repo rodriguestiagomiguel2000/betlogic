@@ -120,12 +120,26 @@ export interface BankrollTransfer {
   notes?: string;
 }
 
+export const TRANSACTION_TYPES = {
+  DEPOSIT: 'Deposit',
+  WITHDRAWAL: 'Withdrawal',
+  OPENING_BALANCE_CARRIED_OVER: 'Opening Balance (Carried Over)',
+  INITIAL_BALANCE: 'Initial Balance',
+  ADJUSTMENT: 'Adjustment',
+  RECONCILE: 'Reconcile',
+  TRANSFER: 'Transfer',
+  ROLLOVER_IN: 'Rollover In',
+  ROLLOVER_OUT: 'Rollover Out'
+} as const;
+
+export type TransactionType = typeof TRANSACTION_TYPES[keyof typeof TRANSACTION_TYPES] | string;
+
 export interface BankrollTransaction {
   id: string;
   userId: string;
   bankrollId: string;
   date: string;
-  type: string; // Initial Balance, Deposit, Withdrawal, Adjustment, Transfer
+  type: TransactionType;
   description: string;
   bookmakerId?: string;
   amount: number;

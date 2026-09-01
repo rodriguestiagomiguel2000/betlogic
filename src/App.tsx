@@ -119,11 +119,21 @@ export function App() {
       }
       setIsAuth(true);
     } catch (err: any) {
-      console.error('Failed to load application data from backend:', err);
-      setError(err.message || 'Failed to connect to backend / PostgreSQL database.');
-      if (err.message && (err.message.includes('expired') || err.message.includes('unauthorized') || err.message.includes('not found') || err.message.includes('Please log in'))) {
+      const isAuthErr = err.message && (
+        err.message.includes('expired') ||
+        err.message.includes('unauthorized') ||
+        err.message.includes('not found') ||
+        err.message.includes('Please log in') ||
+        err.message.includes('Access token is required')
+      );
+
+      if (isAuthErr) {
         logoutUser();
         setIsAuth(false);
+        setError(null);
+      } else {
+        console.error('Failed to load application data from backend:', err);
+        setError(err.message || 'Failed to connect to backend / PostgreSQL database.');
       }
     } finally {
       setLoading(false);
