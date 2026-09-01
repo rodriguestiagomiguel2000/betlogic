@@ -31,8 +31,12 @@ CREATE TABLE IF NOT EXISTS bankrolls (
     description TEXT,
     display_order INTEGER DEFAULT 0,
     rollover_from_bankroll_id UUID REFERENCES bankrolls(id) ON DELETE SET NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Ensure migration-safe columns on bankrolls
+ALTER TABLE bankrolls ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active';
 
 -- Update users table self-reference foreign key for active_bankroll_id
 ALTER TABLE users ADD CONSTRAINT fk_user_active_bankroll FOREIGN KEY (active_bankroll_id) REFERENCES bankrolls(id) ON DELETE SET NULL;

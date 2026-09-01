@@ -90,14 +90,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
   // Calculate Metrics
   const totalBankrollBalance = useMemo(() => {
     return bankrolls.reduce((sum, b) => {
-      if (selectedBankroll !== 'all' && b.id !== selectedBankroll) return sum;
+      if (selectedBankroll !== 'all') {
+        return b.id === selectedBankroll ? sum + b.currentBalance : sum;
+      }
+      if (b.status === 'archived') return sum;
       return sum + b.currentBalance;
     }, 0);
   }, [bankrolls, selectedBankroll]);
 
   const totalFreeBets = useMemo(() => {
     return bankrolls.reduce((sum, b) => {
-      if (selectedBankroll !== 'all' && b.id !== selectedBankroll) return sum;
+      if (selectedBankroll !== 'all') {
+        return b.id === selectedBankroll ? sum + b.freeBetCredits : sum;
+      }
+      if (b.status === 'archived') return sum;
       return sum + b.freeBetCredits;
     }, 0);
   }, [bankrolls, selectedBankroll]);
@@ -302,7 +308,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               {bankrolls.map((b) => {
                 return (
                   <option key={b.id} value={b.id}>
-                    {b.name} ({formatCurrency(b.currentBalance, userCurrency)})
+                    {b.name} {b.status === 'archived' ? '(Archived) ' : ''}({formatCurrency(b.currentBalance, userCurrency)})
                   </option>
                 );
               })}

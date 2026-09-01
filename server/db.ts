@@ -204,6 +204,8 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
           color: b.color,
           description: b.description || '',
           displayOrder: b.display_order || 0,
+          rolloverFromBankrollId: b.rollover_from_bankroll_id || null,
+          status: b.status || 'active',
           createdAt: b.created_at,
         };
       }),
@@ -226,6 +228,7 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
       description: description || '',
       display_order: displayOrder || 0,
       rollover_from_bankroll_id: rolloverFromBankrollId || null,
+      status: 'active',
       created_at: new Date().toISOString(),
     };
     memoryStore.bankrolls.push(newBankroll);
@@ -243,6 +246,7 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
           description: newBankroll.description,
           displayOrder: newBankroll.display_order,
           rolloverFromBankrollId: newBankroll.rollover_from_bankroll_id,
+          status: newBankroll.status,
         },
       ],
       rowCount: 1,
@@ -314,6 +318,15 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
       br.display_order = parseInt(order);
     }
     return { rows: [], rowCount: br ? 1 : 0 };
+  }
+
+  if (/UPDATE bankrolls SET status =/i.test(sql)) {
+    const [status, bankrollId, userId] = params;
+    const br = memoryStore.bankrolls.find((b) => b.id === bankrollId && (userId ? b.user_id === userId : true));
+    if (br) {
+      br.status = status;
+    }
+    return { rows: br ? [br] : [], rowCount: br ? 1 : 0 };
   }
 
   if (/UPDATE bankrolls SET/i.test(sql)) {

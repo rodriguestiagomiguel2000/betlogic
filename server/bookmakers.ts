@@ -49,28 +49,32 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
     const balancesRes = await query(
       `SELECT 
         bbb.bankroll_id as "bankrollId", bbb.bookmaker_id as "bookmakerId", 
-        bbb.cash_balance as "cashBalance", bbb.free_bet_balance as "freeBetBalance"
+        bbb.cash_balance as "cashBalance", bbb.free_bet_balance as "freeBetBalance",
+        b.status as "bankrollStatus"
        FROM bankroll_bookmaker_balances bbb
        JOIN bookmakers bm ON bm.id = bbb.bookmaker_id
+       JOIN bankrolls b ON b.id = bbb.bankroll_id
        WHERE bm.user_id = $1`,
       [userId]
     );
 
-    const balancesMap = new Map<string, Array<{ bankrollId: string; cashBalance: number; freeBetBalance: number }>>();
+    const balancesMap = new Map<string, Array<{ bankrollId: string; cashBalance: number; freeBetBalance: number; bankrollStatus?: string }>>();
     for (const row of balancesRes.rows) {
       const list = balancesMap.get(row.bookmakerId) || [];
       list.push({
         bankrollId: row.bankrollId,
         cashBalance: parseFloat(row.cashBalance),
-        freeBetBalance: parseFloat(row.freeBetBalance)
+        freeBetBalance: parseFloat(row.freeBetBalance),
+        bankrollStatus: row.bankrollStatus || 'active'
       });
       balancesMap.set(row.bookmakerId, list);
     }
 
     const bookmakers = result.rows.map((b) => {
       const balances = balancesMap.get(b.id) || [];
-      const realBalance = balances.reduce((acc, x) => acc + x.cashBalance, 0);
-      const freeBetBalance = balances.reduce((acc, x) => acc + x.freeBetBalance, 0);
+      const activeBalances = balances.filter(x => x.bankrollStatus !== 'archived');
+      const realBalance = activeBalances.reduce((acc, x) => acc + x.cashBalance, 0);
+      const freeBetBalance = activeBalances.reduce((acc, x) => acc + x.freeBetBalance, 0);
       return {
         ...b,
         realBalance,
@@ -140,8 +144,8 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
 
       await query(
         `UPDATE bookmakers SET 
-          real_balance = COALESCE((SELECT SUM(cash_balance) FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0),
-          free_bet_balance = COALESCE((SELECT SUM(free_bet_balance) FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0)
+          real_balance = COALESCE((SELECT SUM(bbb.cash_balance) FROM bankroll_bookmaker_balances bbb JOIN bankrolls b ON b.id = bbb.bankroll_id WHERE bbb.bookmaker_id = $1 AND b.status = 'active'), 0),
+          free_bet_balance = COALESCE((SELECT SUM(bbb.free_bet_balance) FROM bankroll_bookmaker_balances bbb JOIN bankrolls b ON b.id = bbb.bankroll_id WHERE bbb.bookmaker_id = $1 AND b.status = 'active'), 0)
          WHERE id = $1`,
         [b.id]
       );
@@ -157,8 +161,10 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
       [b.id]
     );
     const balancesRes = await query(
-      `SELECT bankroll_id as "bankrollId", cash_balance as "cashBalance", free_bet_balance as "freeBetBalance"
-       FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1`,
+      `SELECT bbb.bankroll_id as "bankrollId", bbb.cash_balance as "cashBalance", bbb.free_bet_balance as "freeBetBalance", b.status as "bankrollStatus"
+       FROM bankroll_bookmaker_balances bbb
+       JOIN bankrolls b ON b.id = bbb.bankroll_id
+       WHERE bbb.bookmaker_id = $1`,
       [b.id]
     );
 
@@ -166,13 +172,16 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
     const balances = balancesRes.rows.map(x => ({
       bankrollId: x.bankrollId,
       cashBalance: parseFloat(x.cashBalance),
-      freeBetBalance: parseFloat(x.freeBetBalance)
+      freeBetBalance: parseFloat(x.freeBetBalance),
+      bankrollStatus: x.bankrollStatus || 'active'
     }));
+
+    const activeBalances = balances.filter(x => x.bankrollStatus !== 'archived');
 
     return res.status(201).json({
       ...updated,
-      realBalance: balances.reduce((acc, x) => acc + x.cashBalance, 0),
-      freeBetBalance: balances.reduce((acc, x) => acc + x.freeBetBalance, 0),
+      realBalance: activeBalances.reduce((acc, x) => acc + x.cashBalance, 0),
+      freeBetBalance: activeBalances.reduce((acc, x) => acc + x.freeBetBalance, 0),
       averageMargin: parseFloat(updated.averageMargin),
       balances
     });
@@ -261,8 +270,8 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
 
       await client.query(
         `UPDATE bookmakers SET 
-          real_balance = COALESCE((SELECT SUM(cash_balance) FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0),
-          free_bet_balance = COALESCE((SELECT SUM(free_bet_balance) FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0)
+          real_balance = COALESCE((SELECT SUM(bbb.cash_balance) FROM bankroll_bookmaker_balances bbb JOIN bankrolls b ON b.id = bbb.bankroll_id WHERE bbb.bookmaker_id = $1 AND b.status = 'active'), 0),
+          free_bet_balance = COALESCE((SELECT SUM(bbb.free_bet_balance) FROM bankroll_bookmaker_balances bbb JOIN bankrolls b ON b.id = bbb.bankroll_id WHERE bbb.bookmaker_id = $1 AND b.status = 'active'), 0)
          WHERE id = $1`,
         [bookmakerId]
       );
@@ -288,22 +297,27 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
 
     const b = result.rows[0];
     const balancesRes = await client.query(
-      `SELECT bankroll_id as "bankrollId", cash_balance as "cashBalance", free_bet_balance as "freeBetBalance"
-       FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1`,
+      `SELECT bbb.bankroll_id as "bankrollId", bbb.cash_balance as "cashBalance", bbb.free_bet_balance as "freeBetBalance", b.status as "bankrollStatus"
+       FROM bankroll_bookmaker_balances bbb
+       JOIN bankrolls b ON b.id = bbb.bankroll_id
+       WHERE bbb.bookmaker_id = $1`,
       [bookmakerId]
     );
     const balances = balancesRes.rows.map(x => ({
       bankrollId: x.bankrollId,
       cashBalance: parseFloat(x.cashBalance),
-      freeBetBalance: parseFloat(x.freeBetBalance)
+      freeBetBalance: parseFloat(x.freeBetBalance),
+      bankrollStatus: x.bankrollStatus || 'active'
     }));
 
     await client.query('COMMIT');
 
+    const activeBalances = balances.filter(x => x.bankrollStatus !== 'archived');
+
     return res.json({
       ...b,
-      realBalance: balances.reduce((acc, x) => acc + x.cashBalance, 0),
-      freeBetBalance: balances.reduce((acc, x) => acc + x.freeBetBalance, 0),
+      realBalance: activeBalances.reduce((acc, x) => acc + x.cashBalance, 0),
+      freeBetBalance: activeBalances.reduce((acc, x) => acc + x.freeBetBalance, 0),
       averageMargin: parseFloat(b.averageMargin),
       balances
     });
@@ -418,8 +432,8 @@ router.post('/:id/transactions', authenticateToken as any, async (req: Authentic
     // 2. Aggregate recalculation for bookmakers table (without ::INTEGER cast)
     await client.query(
       `UPDATE bookmakers SET 
-        real_balance = COALESCE((SELECT SUM(cash_balance) FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0),
-        free_bet_balance = COALESCE((SELECT SUM(free_bet_balance) FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1), 0)
+        real_balance = COALESCE((SELECT SUM(bbb.cash_balance) FROM bankroll_bookmaker_balances bbb JOIN bankrolls b ON b.id = bbb.bankroll_id WHERE bbb.bookmaker_id = $1 AND b.status = 'active'), 0),
+        free_bet_balance = COALESCE((SELECT SUM(bbb.free_bet_balance) FROM bankroll_bookmaker_balances bbb JOIN bankrolls b ON b.id = bbb.bankroll_id WHERE bbb.bookmaker_id = $1 AND b.status = 'active'), 0)
        WHERE id = $1 AND user_id = $2`,
       [bookmakerId, userId]
     );
@@ -459,20 +473,25 @@ router.post('/:id/transactions', authenticateToken as any, async (req: Authentic
 
     const b = finalRes.rows[0];
     const balancesRes = await client.query(
-      `SELECT bankroll_id as "bankrollId", cash_balance as "cashBalance", free_bet_balance as "freeBetBalance"
-       FROM bankroll_bookmaker_balances WHERE bookmaker_id = $1`,
+      `SELECT bbb.bankroll_id as "bankrollId", bbb.cash_balance as "cashBalance", bbb.free_bet_balance as "freeBetBalance", b.status as "bankrollStatus"
+       FROM bankroll_bookmaker_balances bbb
+       JOIN bankrolls b ON b.id = bbb.bankroll_id
+       WHERE bbb.bookmaker_id = $1`,
       [bookmakerId]
     );
     const balances = balancesRes.rows.map(x => ({
       bankrollId: x.bankrollId,
       cashBalance: parseFloat(x.cashBalance),
-      freeBetBalance: parseFloat(x.freeBetBalance)
+      freeBetBalance: parseFloat(x.freeBetBalance),
+      bankrollStatus: x.bankrollStatus || 'active'
     }));
+
+    const activeBalances = balances.filter(x => x.bankrollStatus !== 'archived');
 
     return res.json({
       ...b,
-      realBalance: balances.reduce((acc, x) => acc + x.cashBalance, 0),
-      freeBetBalance: balances.reduce((acc, x) => acc + x.freeBetBalance, 0),
+      realBalance: activeBalances.reduce((acc, x) => acc + x.cashBalance, 0),
+      freeBetBalance: activeBalances.reduce((acc, x) => acc + x.freeBetBalance, 0),
       averageMargin: parseFloat(b.averageMargin),
       balances
     });

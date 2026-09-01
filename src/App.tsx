@@ -396,6 +396,15 @@ export function App() {
     }
   };
 
+  const handleUpdateBankrollStatus = async (bankrollId: string, status: 'active' | 'archived') => {
+    try {
+      await bankrollsApi.updateStatus(bankrollId, status);
+      await loadData();
+    } catch (err: any) {
+      alert(`Failed to update bankroll status: ${err.message}`);
+    }
+  };
+
   const handleAddBookmaker = async (data: Omit<Bookmaker, 'id'>) => {
     try {
       await bookmakersApi.create(data);
@@ -685,6 +694,7 @@ export function App() {
             onReconcileBookmaker={handleReconcileBookmaker}
             onBatchUpdateBookmakers={handleBatchUpdateBookmakers}
             onReorderBankrolls={handleReorderBankrolls}
+            onUpdateBankrollStatus={handleUpdateBankrollStatus}
             onRefreshData={loadData}
           />
         );

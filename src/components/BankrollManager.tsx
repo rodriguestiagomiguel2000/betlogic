@@ -30,7 +30,9 @@ import {
   AlertTriangle,
   Check,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  Archive,
+  ArchiveRestore
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 
@@ -41,7 +43,7 @@ interface BankrollManagerProps {
   transfers: BankrollTransfer[];
   activeBankrollId?: string;
   userCurrency?: string;
-  onAddBankroll: (bankroll: { name: string; currency: string; color: string; description: string; rolloverFromBankrollId?: string; allocations: Array<{ bookmakerId: string; cashAmount: number; freeBetAmount: number }> }) => string | void;
+  onAddBankroll: (bankroll: { name: string; currency: string; color: string; description: string; rolloverFromBankrollId?: string; archiveSource?: boolean; allocations: Array<{ bookmakerId: string; cashAmount: number; freeBetAmount: number }> }) => string | void;
   onUpdateBankrollBalance: (bankrollId: string, newBalance: number) => void;
   onAddTransfer: (transfer: Omit<BankrollTransfer, 'id'>) => void;
   onSetActiveBankroll?: (bankrollId: string) => void;
@@ -49,6 +51,7 @@ interface BankrollManagerProps {
   onReconcileBookmaker?: (bookmakerId: string, newRealCash: number, newFreeBet: number, notes: string, targetBankrollId?: string) => void;
   onBatchUpdateBookmakers?: (updates: Array<{ id: string; bankrollId?: string; realBalance?: number; freeBetBalance?: number }>) => void;
   onReorderBankrolls?: (reorderedIds: string[]) => void;
+  onUpdateBankrollStatus?: (bankrollId: string, status: 'active' | 'archived') => void;
   onRefreshData?: () => Promise<void>;
 }
 
@@ -67,17 +70,18 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
   onReconcileBookmaker,
   onBatchUpdateBookmakers,
   onReorderBankrolls,
+  onUpdateBankrollStatus,
   onRefreshData
 }) => {
   const handleMoveBankroll = (index: number, direction: 'up' | 'down') => {
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= bankrolls.length) return;
+    if (targetIndex < 0 || targetIndex >= activeBankrolls.length) return;
 
-    const updated = [...bankrolls];
+    const updated = [...activeBankrolls];
     const [moved] = updated.splice(index, 1);
     updated.splice(targetIndex, 0, moved);
 
-    const reorderedIds = updated.map((b) => b.id);
+    const reorderedIds = [...updated.map((b) => b.id), ...archivedBankrolls.map((b) => b.id)];
     if (onReorderBankrolls) {
       onReorderBankrolls(reorderedIds);
     }
@@ -152,6 +156,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
   const [newBankrollDesc, setNewBankrollDesc] = useState<string>('');
   const [isRollover, setIsRollover] = useState<boolean>(false);
   const [rolloverSourceId, setRolloverSourceId] = useState<string>('');
+  const [archiveSourceOnRollover, setArchiveSourceOnRollover] = useState<boolean>(true);
 
   const applyRolloverSource = (sourceId: string) => {
     setRolloverSourceId(sourceId);
@@ -182,6 +187,15 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
   // Search & Filter for Deep-Dive Bet History Table
   const [betSearchQuery, setBetSearchQuery] = useState<string>('');
   const [betStatusFilter, setBetStatusFilter] = useState<string>('all');
+
+  // Separate Active and Archived Bankrolls
+  const activeBankrolls = useMemo(() => {
+    return bankrolls.filter((b) => (b.status || 'active') === 'active');
+  }, [bankrolls]);
+
+  const archivedBankrolls = useMemo(() => {
+    return bankrolls.filter((b) => b.status === 'archived');
+  }, [bankrolls]);
 
   // Find active bankroll object
   const activeBankroll = useMemo(() => {
@@ -454,6 +468,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
       name: newBankrollName,
       currency: newBankrollCurrency,
       rolloverFromBankrollId: isRollover && rolloverSourceId ? rolloverSourceId : undefined,
+      archiveSource: isRollover ? archiveSourceOnRollover : undefined,
       allocations: newBankrollAllocations.map(a => ({
         bookmakerId: a.bookmakerId,
         cashAmount: parseFloat(a.cashAmount) || 0,
@@ -466,6 +481,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
     setNewBankrollName('');
     setIsRollover(false);
     setRolloverSourceId('');
+    setArchiveSourceOnRollover(true);
     setNewBankrollAllocations([{ bookmakerId: '', cashAmount: '', freeBetAmount: '' }]);
     setShowAddBankrollModal(false);
   };
@@ -839,7 +855,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                   <tbody className="divide-y divide-[#27314a]">
                     {transactionsWithRunningBalance.map((t) => {
                       const bmName = bookmakers.find((bm) => bm.id === t.bookmakerId)?.name || '—';
-                      const isRolloverIn = t.type === 'Rollover In';
+                      const isRolloverIn = t.type === 'Rollover In' || t.type === 'Opening Balance (Carried Over)' || t.type?.toLowerCase().includes('carried over');
                       const isRolloverOut = t.type === 'Rollover Out';
                       const isRollover = isRolloverIn || isRolloverOut;
 
@@ -967,154 +983,271 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
 
       {/* Bankroll Grid Cards */}
       <div className="space-y-3">
-        <h3 className="text-base font-bold text-white">Active Bankroll Segments ({bankrolls.length})</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {bankrolls.map((b, idx) => {
-            const scopedBets = bets.filter((bet) => bet.bankrollId === b.id);
-            const netPnL = scopedBets.reduce((acc, bet) => acc + calculateBetProfit(bet), 0);
+        <h3 className="text-base font-bold text-white">Active Bankroll Segments ({activeBankrolls.length})</h3>
+        {activeBankrolls.length === 0 ? (
+          <div className="p-8 text-center bg-[#171f33] rounded-xl border border-[#27314a] text-slate-400 text-xs">
+            No active bankrolls. Click <span className="text-white font-semibold">"New Bankroll"</span> to create one or reactivate an archived snapshot below.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {activeBankrolls.map((b, idx) => {
+              const scopedBets = bets.filter((bet) => bet.bankrollId === b.id);
+              const netPnL = scopedBets.reduce((acc, bet) => acc + calculateBetProfit(bet), 0);
 
-            const isActivePrimary = b.id === activeBankrollId;
-            const bTotalCash = b.currentBalance;
-            const bTotalFree = b.freeBetCredits;
+              const isActivePrimary = b.id === activeBankrollId;
+              const bTotalCash = b.currentBalance;
+              const bTotalFree = b.freeBetCredits;
 
-            return (
-              <div
-                key={b.id}
-                className={`bg-[#171f33] p-5 rounded-xl border ${isActivePrimary ? 'border-amber-500/80 shadow-lg shadow-amber-950/20' : 'border-[#27314a]'} space-y-4 hover:border-[#2563eb]/60 transition-all flex flex-col justify-between relative`}
-              >
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-bold text-white text-base">{b.name}</span>
-                      {isActivePrimary && (
-                        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-800/60 flex items-center gap-1">
-                          <Star size={10} className="fill-amber-400" /> ACTIVE
+              return (
+                <div
+                  key={b.id}
+                  className={`bg-[#171f33] p-5 rounded-xl border ${isActivePrimary ? 'border-amber-500/80 shadow-lg shadow-amber-950/20' : 'border-[#27314a]'} space-y-4 hover:border-[#2563eb]/60 transition-all flex flex-col justify-between relative`}
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-white text-base">{b.name}</span>
+                        {isActivePrimary && (
+                          <span className="text-[10px] font-extrabold px-2 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-800/60 flex items-center gap-1">
+                            <Star size={10} className="fill-amber-400" /> ACTIVE
+                          </span>
+                        )}
+                      </div>
+                      
+                      <div className="flex items-center gap-1">
+                        {onReorderBankrolls && activeBankrolls.length > 1 && (
+                          <div className="flex items-center bg-[#0b1326] rounded border border-[#27314a] p-0.5 mr-1">
+                            <button
+                              disabled={idx === 0}
+                              onClick={() => handleMoveBankroll(idx, 'up')}
+                              title="Move Bankroll Earlier"
+                              className="p-1 text-[#8d90a0] hover:text-white disabled:opacity-30 disabled:hover:text-[#8d90a0] cursor-pointer"
+                            >
+                              <ChevronUp size={14} />
+                            </button>
+                            <button
+                              disabled={idx === activeBankrolls.length - 1}
+                              onClick={() => handleMoveBankroll(idx, 'down')}
+                              title="Move Bankroll Later"
+                              className="p-1 text-[#8d90a0] hover:text-white disabled:opacity-30 disabled:hover:text-[#8d90a0] cursor-pointer"
+                            >
+                              <ChevronDown size={14} />
+                            </button>
+                          </div>
+                        )}
+                        {onSetActiveBankroll && (
+                          <button
+                            onClick={() => onSetActiveBankroll(b.id)}
+                            title={isActivePrimary ? 'Currently Primary Active Bankroll' : 'Set as Primary Active Bankroll'}
+                            className={`p-1.5 rounded transition-all cursor-pointer ${isActivePrimary ? 'text-amber-400 bg-amber-950/60' : 'text-[#8d90a0] hover:text-amber-400 hover:bg-[#0b1326]'}`}
+                          >
+                            <Star size={15} className={isActivePrimary ? 'fill-amber-400' : ''} />
+                          </button>
+                        )}
+                        {onUpdateBankrollStatus && (
+                          <button
+                            onClick={() => onUpdateBankrollStatus(b.id, 'archived')}
+                            title="Archive this bankroll (close & snapshot)"
+                            className="p-1.5 text-[#8d90a0] hover:text-slate-200 hover:bg-[#0b1326] rounded transition-all cursor-pointer"
+                          >
+                            <Archive size={15} />
+                          </button>
+                        )}
+                        {onDeleteBankroll && (
+                          <button
+                            onClick={() => {
+                              setBankrollToDelete(b);
+                              setDeleteStrategy('reassign');
+                              const other = bankrolls.find((item) => item.id !== b.id);
+                              setTargetReassignBankrollId(other?.id || '');
+                            }}
+                            title="Delete Bankroll"
+                            className="p-1.5 text-[#8d90a0] hover:text-red-400 hover:bg-red-950/40 rounded transition-all cursor-pointer"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="text-2xl font-extrabold text-white font-mono flex items-center justify-between">
+                        <span>{formatCurrency(bTotalCash, userCurrency)}</span>
+                        <span className="text-xs font-normal px-2 py-0.5 rounded bg-[#0b1326] text-[#b4c5ff] border border-[#27314a]">
+                          {userCurrency}
                         </span>
-                      )}
+                      </div>
+                      <div className="text-xs text-[#8d90a0]">
+                        Total: {formatCurrency(b.currentBalance, userCurrency)} • Initial: {formatCurrency(b.initialBalance, userCurrency)}
+                      </div>
                     </div>
-                    
-                    <div className="flex items-center gap-1">
-                      {onReorderBankrolls && bankrolls.length > 1 && (
-                        <div className="flex items-center bg-[#0b1326] rounded border border-[#27314a] p-0.5 mr-1">
-                          <button
-                            disabled={idx === 0}
-                            onClick={() => handleMoveBankroll(idx, 'up')}
-                            title="Move Bankroll Earlier"
-                            className="p-1 text-[#8d90a0] hover:text-white disabled:opacity-30 disabled:hover:text-[#8d90a0] cursor-pointer"
-                          >
-                            <ChevronUp size={14} />
-                          </button>
-                          <button
-                            disabled={idx === bankrolls.length - 1}
-                            onClick={() => handleMoveBankroll(idx, 'down')}
-                            title="Move Bankroll Later"
-                            className="p-1 text-[#8d90a0] hover:text-white disabled:opacity-30 disabled:hover:text-[#8d90a0] cursor-pointer"
-                          >
-                            <ChevronDown size={14} />
-                          </button>
-                        </div>
-                      )}
-                      {onSetActiveBankroll && (
-                        <button
-                          onClick={() => onSetActiveBankroll(b.id)}
-                          title={isActivePrimary ? 'Currently Primary Active Bankroll' : 'Set as Primary Active Bankroll'}
-                          className={`p-1.5 rounded transition-all cursor-pointer ${isActivePrimary ? 'text-amber-400 bg-amber-950/60' : 'text-[#8d90a0] hover:text-amber-400 hover:bg-[#0b1326]'}`}
-                        >
-                          <Star size={15} className={isActivePrimary ? 'fill-amber-400' : ''} />
-                        </button>
-                      )}
-                      {onDeleteBankroll && (
-                        <button
-                          onClick={() => {
-                            setBankrollToDelete(b);
-                            setDeleteStrategy('reassign');
-                            const other = bankrolls.find((item) => item.id !== b.id);
-                            setTargetReassignBankrollId(other?.id || '');
-                          }}
-                          title="Delete Bankroll"
-                          className="p-1.5 text-[#8d90a0] hover:text-red-400 hover:bg-red-950/40 rounded transition-all cursor-pointer"
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      )}
+
+                    <div className="pt-2 border-t border-[#27314a] grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <span className="text-[10px] text-[#8d90a0] block">Free Bet Credits</span>
+                        <span className="text-[#4edea3] font-mono font-bold">{formatCurrency(bTotalFree, userCurrency)}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-[#8d90a0] block">Net PnL</span>
+                        <span className={`font-mono font-bold ${netPnL >= 0 ? 'text-[#4edea3]' : 'text-[#ffb3ad]'}`}>
+                          {netPnL >= 0 ? '+' : ''}{formatCurrency(netPnL, userCurrency)}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="space-y-1">
-                    <div className="text-2xl font-extrabold text-white font-mono flex items-center justify-between">
-                      <span>{formatCurrency(bTotalCash, userCurrency)}</span>
-                      <span className="text-xs font-normal px-2 py-0.5 rounded bg-[#0b1326] text-[#b4c5ff] border border-[#27314a]">
-                        {userCurrency}
-                      </span>
-                    </div>
-                    <div className="text-xs text-[#8d90a0]">
-                      Total: {formatCurrency(b.currentBalance, userCurrency)} • Initial: {formatCurrency(b.initialBalance, userCurrency)}
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-[#27314a] grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <span className="text-[10px] text-[#8d90a0] block">Free Bet Credits</span>
-                      <span className="text-[#4edea3] font-mono font-bold">{formatCurrency(bTotalFree, userCurrency)}</span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-[#8d90a0] block">Net PnL</span>
-                      <span className={`font-mono font-bold ${netPnL >= 0 ? 'text-[#4edea3]' : 'text-[#ffb3ad]'}`}>
-                        {netPnL >= 0 ? '+' : ''}{formatCurrency(netPnL, userCurrency)}
-                      </span>
+                  <div className="space-y-2 pt-2">
+                    <div className="flex gap-1.5 flex-wrap">
+                      <button
+                        onClick={() => {
+                          setDwBankrollId(b.id);
+                          setDwBookmakerId(bookmakers[0]?.id || '');
+                          setDwType('deposit');
+                          setDwAmount(Math.max(1, Math.min(100, b.currentBalance)).toString());
+                          setDwError(null);
+                          setShowDepositWithdrawModal(true);
+                        }}
+                        className="flex-1 py-1.5 bg-[#10b981]/20 hover:bg-[#10b981]/30 text-[#10b981] border border-[#10b981]/40 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1 min-w-[110px]"
+                      >
+                        <ArrowUpRight size={12} /> Deposit / Withdraw
+                      </button>
+                      <button
+                        onClick={() => {
+                          setReconcileBankrollTarget(b);
+                          const bms = bookmakers.filter(bm => bm.balances?.some(bal => bal.bankrollId === b.id) || bm.bankrollId === b.id);
+                          if (bms.length > 0) {
+                            setReconcileSelectedBookmakerId(bms[0].id);
+                            const bal = getBookmakerBalanceForBankroll(bms[0], b.id);
+                            setReconcileBmCash(bal.cashBalance.toString());
+                            setReconcileBmFreeBet(bal.freeBetBalance.toString());
+                          } else {
+                            setReconcileSelectedBookmakerId('');
+                            setReconcileBmCash('0');
+                            setReconcileBmFreeBet('0');
+                          }
+                          setReconcileNotes('');
+                        }}
+                        className="py-1.5 px-2 bg-[#0b1326] hover:bg-[#1a233a] text-[#8d90a0] hover:text-white border border-[#27314a] rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1"
+                        title="Reconcile a bookmaker's balance in this bankroll"
+                      >
+                        <RefreshCw size={12} className="text-[#2563eb]" /> Reconcile
+                      </button>
+                      <button
+                        onClick={() => setSelectedBankrollId(b.id)}
+                        className="py-1.5 px-2 bg-[#2563eb] hover:bg-[#1d4ed8] text-white rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 shadow"
+                      >
+                        <BarChart2 size={13} /> Analytics
+                      </button>
                     </div>
                   </div>
                 </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
-                <div className="space-y-2 pt-2">
-                  <div className="flex gap-1.5 flex-wrap">
-                    <button
-                      onClick={() => {
-                        setDwBankrollId(b.id);
-                        setDwBookmakerId(bookmakers[0]?.id || '');
-                        setDwType('deposit');
-                        setDwAmount(Math.max(1, Math.min(100, b.currentBalance)).toString());
-                        setDwError(null);
-                        setShowDepositWithdrawModal(true);
-                      }}
-                      className="flex-1 py-1.5 bg-[#10b981]/20 hover:bg-[#10b981]/30 text-[#10b981] border border-[#10b981]/40 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1 min-w-[110px]"
-                    >
-                      <ArrowUpRight size={12} /> Deposit / Withdraw
-                    </button>
-                    <button
-                      onClick={() => {
-                        setReconcileBankrollTarget(b);
-                        const bms = bookmakers.filter(bm => bm.balances?.some(bal => bal.bankrollId === b.id) || bm.bankrollId === b.id);
-                        if (bms.length > 0) {
-                          setReconcileSelectedBookmakerId(bms[0].id);
-                          const bal = getBookmakerBalanceForBankroll(bms[0], b.id);
-                          setReconcileBmCash(bal.cashBalance.toString());
-                          setReconcileBmFreeBet(bal.freeBetBalance.toString());
-                        } else {
-                          setReconcileSelectedBookmakerId('');
-                          setReconcileBmCash('0');
-                          setReconcileBmFreeBet('0');
-                        }
-                        setReconcileNotes('');
-                      }}
-                      className="py-1.5 px-2 bg-[#0b1326] hover:bg-[#1a233a] text-[#8d90a0] hover:text-white border border-[#27314a] rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1"
-                      title="Reconcile a bookmaker's balance in this bankroll"
-                    >
-                      <RefreshCw size={12} className="text-[#2563eb]" /> Reconcile
-                    </button>
+      {/* Archived Bankroll Snapshots Section */}
+      {archivedBankrolls.length > 0 && (
+        <div className="space-y-3 pt-6 border-t border-[#27314a]">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Archive className="text-[#8d90a0]" size={18} />
+              <h3 className="text-base font-bold text-slate-300">
+                Archived Bankrolls ({archivedBankrolls.length})
+              </h3>
+            </div>
+            <span className="text-[11px] px-2.5 py-1 rounded bg-[#0b1326] text-[#8d90a0] border border-[#27314a]">
+              Historical snapshots • Excluded from live portfolio totals
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {archivedBankrolls.map((b) => {
+              const scopedBets = bets.filter((bet) => bet.bankrollId === b.id);
+              const netPnL = scopedBets.reduce((acc, bet) => acc + calculateBetProfit(bet), 0);
+              const bTotalCash = b.currentBalance;
+              const bTotalFree = b.freeBetCredits;
+
+              return (
+                <div
+                  key={b.id}
+                  className="bg-[#12192a] p-5 rounded-xl border border-[#27314a]/80 space-y-4 opacity-90 hover:opacity-100 transition-all flex flex-col justify-between"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-slate-200 text-base">{b.name}</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1">
+                          <Archive size={10} /> ARCHIVED
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {onUpdateBankrollStatus && (
+                          <button
+                            onClick={() => onUpdateBankrollStatus(b.id, 'active')}
+                            title="Reactivate bankroll (resume live tracking)"
+                            className="flex items-center gap-1 px-2.5 py-1 bg-[#2563eb]/20 hover:bg-[#2563eb]/40 text-[#b4c5ff] border border-[#2563eb]/40 rounded text-xs font-semibold transition-all cursor-pointer"
+                          >
+                            <ArchiveRestore size={13} /> Reactivate
+                          </button>
+                        )}
+                        {onDeleteBankroll && (
+                          <button
+                            onClick={() => {
+                              setBankrollToDelete(b);
+                              setDeleteStrategy('delete_all');
+                              setTargetReassignBankrollId('');
+                            }}
+                            title="Delete Bankroll"
+                            className="p-1.5 text-[#8d90a0] hover:text-red-400 hover:bg-red-950/40 rounded transition-all cursor-pointer"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="text-2xl font-extrabold text-slate-300 font-mono flex items-center justify-between">
+                        <span>{formatCurrency(bTotalCash, userCurrency)}</span>
+                        <span className="text-xs font-normal px-2 py-0.5 rounded bg-[#0b1326] text-slate-400 border border-[#27314a]">
+                          {userCurrency}
+                        </span>
+                      </div>
+                      <div className="text-xs text-[#8d90a0]">
+                        Snapshot Balance • Initial: {formatCurrency(b.initialBalance, userCurrency)}
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-[#27314a] grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <span className="text-[10px] text-[#8d90a0] block">Free Bet Credits</span>
+                        <span className="text-slate-300 font-mono font-bold">{formatCurrency(bTotalFree, userCurrency)}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-[#8d90a0] block">Net PnL</span>
+                        <span className={`font-mono font-bold ${netPnL >= 0 ? 'text-[#4edea3]' : 'text-[#ffb3ad]'}`}>
+                          {netPnL >= 0 ? '+' : ''}{formatCurrency(netPnL, userCurrency)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 pt-2">
                     <button
                       onClick={() => setSelectedBankrollId(b.id)}
-                      className="py-1.5 px-2 bg-[#2563eb] hover:bg-[#1d4ed8] text-white rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 shadow"
+                      className="w-full py-2 px-3 bg-[#171f33] hover:bg-[#222a3d] border border-[#27314a] text-white rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow"
                     >
-                      <BarChart2 size={13} /> Analytics
+                      <BarChart2 size={13} /> View Historical Analytics & Balance Sheet
                     </button>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Integrated Bookmakers Overview */}
       <div className="space-y-3 pt-4">
@@ -1381,14 +1514,24 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                         >
                           {bankrolls.map((b) => (
                             <option key={b.id} value={b.id}>
-                              {b.name} ({formatCurrency(b.currentBalance, b.currency || userCurrency)} Cash + {formatCurrency(b.freeBetCredits, b.currency || userCurrency)} Free Bets)
+                              {b.name} {b.status === 'archived' ? '(Archived) ' : ''}({formatCurrency(b.currentBalance, b.currency || userCurrency)} Cash + {formatCurrency(b.freeBetCredits, b.currency || userCurrency)} Free Bets)
                             </option>
                           ))}
                         </select>
                       </div>
 
+                      <label className="flex items-center gap-2 cursor-pointer select-none text-[11px] text-[#8d90a0] pt-1">
+                        <input
+                          type="checkbox"
+                          checked={archiveSourceOnRollover}
+                          onChange={(e) => setArchiveSourceOnRollover(e.target.checked)}
+                          className="w-3.5 h-3.5 rounded text-[#2563eb] bg-[#171f33] border-[#27314a] focus:ring-0 cursor-pointer"
+                        />
+                        <span className="text-white font-medium">Archive source bankroll upon rollover (recommended for close & snapshot model)</span>
+                      </label>
+
                       <p className="text-[11px] text-[#8d90a0] leading-relaxed">
-                        <span className="text-cyan-400 font-semibold">Rollover Mode:</span> Balances will be atomically transferred from the source bankroll to this new bankroll and recorded as <span className="text-amber-400 font-mono font-semibold">Rollover Out</span> / <span className="text-cyan-400 font-mono font-semibold">Rollover In</span> transactions on the balance sheet, preventing capital double-counting.
+                        <span className="text-cyan-400 font-semibold">Snapshot Rollover Mode:</span> Balances will be copied from the source bankroll as opening allocations without altering the source's historical ledger, recorded as <span className="text-cyan-400 font-mono font-semibold">Opening Balance (Carried Over)</span> transactions. If archived, the source bankroll becomes a read-only historical snapshot and is excluded from live portfolio totals.
                       </p>
                     </div>
                   )}

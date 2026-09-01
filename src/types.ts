@@ -79,6 +79,7 @@ export interface Bankroll {
   description?: string;
   displayOrder?: number;
   rolloverFromBankrollId?: string;
+  status?: 'active' | 'archived';
 }
 
 export interface BankrollBookmakerBalance {

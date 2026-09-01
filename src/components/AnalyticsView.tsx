@@ -282,11 +282,13 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
         const rawDate = d.toISOString().slice(0, 10);
         const txType = (tx.type || '').trim();
 
-        // 1. Exclude Rollover In and Rollover Out transactions (internal capital movement between bankrolls)
+        // 1. Exclude Rollover In, Rollover Out, and Carried Over transactions (internal capital movement between bankrolls)
         if (
           txType === 'Rollover In' ||
           txType === 'Rollover Out' ||
-          txType.toLowerCase().includes('rollover')
+          txType === 'Opening Balance (Carried Over)' ||
+          txType.toLowerCase().includes('rollover') ||
+          txType.toLowerCase().includes('carried over')
         ) {
           return;
         }
