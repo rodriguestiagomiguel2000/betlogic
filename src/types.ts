@@ -78,6 +78,7 @@ export interface Bankroll {
   color: string;
   description?: string;
   displayOrder?: number;
+  rolloverFromBankrollId?: string;
 }
 
 export interface BankrollBookmakerBalance {

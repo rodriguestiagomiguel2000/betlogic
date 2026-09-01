@@ -212,7 +212,7 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
   }
 
   if (/INSERT INTO bankrolls/i.test(sql)) {
-    const [userId, name, currency, initBal, freeBal, color, description, displayOrder] = params;
+    const [userId, name, currency, initBal, color, description, displayOrder, rolloverFromBankrollId] = params;
     const newBankroll = {
       id: generateId('bank'),
       user_id: userId,
@@ -225,6 +225,7 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
       color: color || '#2563eb',
       description: description || '',
       display_order: displayOrder || 0,
+      rollover_from_bankroll_id: rolloverFromBankrollId || null,
       created_at: new Date().toISOString(),
     };
     memoryStore.bankrolls.push(newBankroll);
@@ -241,6 +242,7 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
           color: newBankroll.color,
           description: newBankroll.description,
           displayOrder: newBankroll.display_order,
+          rolloverFromBankrollId: newBankroll.rollover_from_bankroll_id,
         },
       ],
       rowCount: 1,
@@ -465,6 +467,18 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
   }
 
   // --- BANKROLL BOOKMAKER BALANCES ---
+  if (/UPDATE bankroll_bookmaker_balances SET cash_balance = GREATEST/i.test(sql)) {
+    const [bankrollId, bookmakerId, cashDelta, freeDelta] = params;
+    const existing = memoryStore.bankrollBookmakerBalances.find(
+      (x) => x.bankroll_id === bankrollId && x.bookmaker_id === bookmakerId
+    );
+    if (existing) {
+      existing.cash_balance = Math.max(0, (existing.cash_balance || 0) - parseFloat(cashDelta || 0));
+      existing.free_bet_balance = Math.max(0, (existing.free_bet_balance || 0) - parseFloat(freeDelta || 0));
+    }
+    return { rows: [], rowCount: existing ? 1 : 0 };
+  }
+
   if (/INSERT INTO bankroll_bookmaker_balances/i.test(sql)) {
     const [bankrollId, bookmakerId, cashBal, freeBal] = params;
     const existing = memoryStore.bankrollBookmakerBalances.find(

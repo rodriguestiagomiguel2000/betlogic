@@ -46,19 +46,34 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
 
 /**
  * POST /api/bankrolls
- * Create a new bankroll.
+ * Create a new bankroll with optional rollover from an existing bankroll.
  */
 router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
   const client = await getDbPool().connect();
   try {
     const userId = req.user?.id;
-    const { name, currency, color, description, allocations } = req.body;
+    const { name, currency, color, description, allocations, rolloverFromBankrollId } = req.body;
 
     if (!name || !allocations || !Array.isArray(allocations) || allocations.length === 0) {
+      client.release();
       return res.status(400).json({ error: 'Bankroll name and at least one allocation are required.' });
     }
 
     await client.query('BEGIN');
+
+    let sourceBankrollName = '';
+    if (rolloverFromBankrollId) {
+      const sourceCheck = await client.query(
+        'SELECT id, name FROM bankrolls WHERE id = $1 AND user_id = $2',
+        [rolloverFromBankrollId, userId]
+      );
+      if (sourceCheck.rows.length === 0) {
+        await client.query('ROLLBACK');
+        client.release();
+        return res.status(404).json({ error: 'Source rollover bankroll not found.' });
+      }
+      sourceBankrollName = sourceCheck.rows[0].name;
+    }
 
     const orderRes = await client.query('SELECT COALESCE(MAX(display_order), -1) + 1 as next_order FROM bankrolls WHERE user_id = $1', [userId]);
     const nextOrder = orderRes.rows[0]?.next_order ?? 0;
@@ -66,27 +81,72 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
     const totalInitialCash = allocations.reduce((sum: number, alloc: any) => sum + (parseFloat(alloc.cashAmount) || 0), 0);
 
     const result = await client.query(
-      `INSERT INTO bankrolls (user_id, name, currency, initial_balance, current_balance, free_bet_credits, color, description, display_order)
-       VALUES ($1, $2, $3, $4, 0, 0, $5, $6, $7)
-       RETURNING id, user_id as "userId", name, currency, initial_balance as "initialBalance", current_balance as "currentBalance", free_bet_credits as "freeBetCredits", color, description, display_order as "displayOrder"`,
-      [userId, name, currency || 'EUR', totalInitialCash, color || '#2563eb', description || '', nextOrder]
+      `INSERT INTO bankrolls (user_id, name, currency, initial_balance, current_balance, free_bet_credits, color, description, display_order, rollover_from_bankroll_id)
+       VALUES ($1, $2, $3, $4, 0, 0, $5, $6, $7, $8)
+       RETURNING id, user_id as "userId", name, currency, initial_balance as "initialBalance", current_balance as "currentBalance", free_bet_credits as "freeBetCredits", color, description, display_order as "displayOrder", rollover_from_bankroll_id as "rolloverFromBankrollId"`,
+      [userId, name, currency || 'EUR', totalInitialCash, color || '#2563eb', description || '', nextOrder, rolloverFromBankrollId || null]
     );
 
     const newBankroll = result.rows[0];
 
-    // Insert allocations
+    // Process allocations
     for (const alloc of allocations) {
-        if ((alloc.cashAmount || 0) < 0 || (alloc.freeBetAmount || 0) < 0) {
+        const cashAmount = parseFloat(alloc.cashAmount) || 0;
+        const freeBetAmount = parseFloat(alloc.freeBetAmount) || 0;
+
+        if (cashAmount < 0 || freeBetAmount < 0) {
             await client.query('ROLLBACK');
+            client.release();
             return res.status(400).json({ error: 'Allocation amounts cannot be negative.' });
         }
+
+        // If rolling over, atomically deduct from rolloverFromBankrollId's balances, clamped at 0
+        if (rolloverFromBankrollId) {
+          await client.query(
+            `UPDATE bankroll_bookmaker_balances
+             SET cash_balance = GREATEST(0, cash_balance - $3),
+                 free_bet_balance = GREATEST(0, free_bet_balance - $4)
+             WHERE bankroll_id = $1 AND bookmaker_id = $2`,
+            [rolloverFromBankrollId, alloc.bookmakerId, cashAmount, freeBetAmount]
+          );
+
+          // Log transaction: Rollover Out on old bankroll (negative amount)
+          if (cashAmount > 0) {
+            await client.query(
+              `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+              [userId, rolloverFromBankrollId, new Date().toISOString(), 'Rollover Out', `Rollover to ${newBankroll.name}`, alloc.bookmakerId, -cashAmount]
+            ).catch(() => {});
+          }
+
+          // Log transaction: Rollover In on new bankroll (positive amount)
+          if (cashAmount > 0) {
+            await client.query(
+              `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+              [userId, newBankroll.id, new Date().toISOString(), 'Rollover In', `Rollover from ${sourceBankrollName}`, alloc.bookmakerId, cashAmount]
+            ).catch(() => {});
+          }
+        } else {
+          // Standard creation: log Initial Balance transaction if cashAmount > 0
+          if (cashAmount > 0) {
+            await client.query(
+              `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+              [userId, newBankroll.id, new Date().toISOString(), 'Initial Balance', 'Initial bankroll allocation', alloc.bookmakerId, cashAmount]
+            ).catch(() => {});
+          }
+        }
+
+        // Insert into new bankroll
         await client.query(
           `INSERT INTO bankroll_bookmaker_balances (bankroll_id, bookmaker_id, cash_balance, free_bet_balance)
            VALUES ($1, $2, $3, $4)
            ON CONFLICT (bankroll_id, bookmaker_id)
            DO UPDATE SET cash_balance = bankroll_bookmaker_balances.cash_balance + $3, free_bet_balance = bankroll_bookmaker_balances.free_bet_balance + $4`,
-          [newBankroll.id, alloc.bookmakerId, alloc.cashAmount || 0, alloc.freeBetAmount || 0]
+          [newBankroll.id, alloc.bookmakerId, cashAmount, freeBetAmount]
         );
+
         // Also update bookmakers real_balance/free_bet_balance
         await client.query(
             `UPDATE bookmakers SET 
@@ -95,17 +155,11 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
              WHERE id = $1`,
             [alloc.bookmakerId]
         );
-
-        // Log initial allocation transaction if cashAmount > 0
-        if (alloc.cashAmount && alloc.cashAmount > 0) {
-          await client.query(
-            `INSERT INTO bankroll_transactions (user_id, bankroll_id, date, type, description, bookmaker_id, amount)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [userId, newBankroll.id, new Date().toISOString(), 'Initial Balance', 'Initial bankroll allocation', alloc.bookmakerId, alloc.cashAmount]
-          ).catch(() => {});
-        }
     }
 
+    if (rolloverFromBankrollId) {
+      await recomputeBankrollBalance(client, rolloverFromBankrollId);
+    }
     await recomputeBankrollBalance(client, newBankroll.id);
 
     // If this is the user's first bankroll or active bankroll is unset, set it as active

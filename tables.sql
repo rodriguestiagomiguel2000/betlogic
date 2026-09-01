@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS bankrolls (
     color VARCHAR(50) DEFAULT '#2563eb',
     description TEXT,
     display_order INTEGER DEFAULT 0,
+    rollover_from_bankroll_id UUID REFERENCES bankrolls(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -131,7 +132,7 @@ CREATE TABLE IF NOT EXISTS bankroll_transactions (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     bankroll_id UUID NOT NULL REFERENCES bankrolls(id) ON DELETE CASCADE,
     date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    type VARCHAR(50) NOT NULL, -- Initial Balance, Deposit, Withdrawal, Adjustment, Transfer
+    type VARCHAR(50) NOT NULL, -- Initial Balance, Deposit, Withdrawal, Adjustment, Transfer, Rollover In, Rollover Out
     description TEXT,
     bookmaker_id UUID REFERENCES bookmakers(id) ON DELETE SET NULL,
     amount DECIMAL(15, 2) NOT NULL DEFAULT 0.00,

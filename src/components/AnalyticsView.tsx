@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Bet, Bookmaker, BankrollTransaction, Tipster } from '../types';
+import { Bet, Bookmaker, Bankroll, BankrollTransaction, Tipster } from '../types';
 import { formatCurrency, calculateWinStreak, getCurrencySymbol, calculateBetProfit } from '../utils/storage';
 import { getBetLatestEventDate } from '../utils/dateUtils';
 import {
@@ -44,12 +44,13 @@ import {
 interface AnalyticsViewProps {
   bets: Bet[];
   bookmakers: Bookmaker[];
+  bankrolls?: Bankroll[];
   transactions?: BankrollTransaction[];
   userCurrency?: string;
   tipsters?: Tipster[];
 }
 
-export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, transactions = [], userCurrency, tipsters = [] }) => {
+export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, bankrolls = [], transactions = [], userCurrency, tipsters = [] }) => {
   const [activeSubTab, setActiveSubTab] = useState<'overview' | 'heatmap_risk' | 'margins' | 'monte_carlo' | 'kelly'>('overview');
 
   // Kelly Criterion Calculator state
@@ -253,14 +254,60 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
 
     const timelineMap: Record<string, TimelineItem> = {};
 
+    // Determine the first ever bankroll created (for genuinely new money entering the system)
+    const sortedBankrolls = bankrolls ? [...bankrolls].sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0)) : [];
+    const firstBankrollId = sortedBankrolls.length > 0 ? sortedBankrolls[0]?.id : null;
+
+    // Also identify the earliest bankroll ID from 'Initial Balance' transactions as a robust fallback
+    let earliestInitialBankrollId: string | null = null;
+    let earliestInitialDate: string | null = null;
+    if (transactions && transactions.length > 0) {
+      transactions.forEach((tx) => {
+        if (tx.type === 'Initial Balance') {
+          if (!earliestInitialDate || tx.date < earliestInitialDate) {
+            earliestInitialDate = tx.date;
+            earliestInitialBankrollId = tx.bankrollId;
+          }
+        }
+      });
+    }
+
+    const primaryInitialBankrollId = firstBankrollId || earliestInitialBankrollId;
+
     // 1. Process capital transactions (deposits, withdrawals, transfers, initial balances, adjustments)
     if (transactions && transactions.length > 0) {
       transactions.forEach((tx) => {
         const d = new Date(tx.date);
         if (isNaN(d.getTime())) return;
         const rawDate = d.toISOString().slice(0, 10);
+        const txType = (tx.type || '').trim();
+
+        // 1. Exclude Rollover In and Rollover Out transactions (internal capital movement between bankrolls)
+        if (
+          txType === 'Rollover In' ||
+          txType === 'Rollover Out' ||
+          txType.toLowerCase().includes('rollover')
+        ) {
+          return;
+        }
+
+        // 2. Initial Balance: exclude by default UNLESS it is from the very first bankroll created
+        // (i.e. genuine initial capital seeding the user's betting portfolio)
+        if (txType === 'Initial Balance') {
+          const isFirstBankroll = primaryInitialBankrollId
+            ? tx.bankrollId === primaryInitialBankrollId
+            : true;
+          // Check if this bankroll was created from a rollover
+          const matchingBankroll = bankrolls?.find((b) => b.id === tx.bankrollId);
+          const isRolloverDerived = Boolean(matchingBankroll?.rolloverFromBankrollId);
+
+          if (!isFirstBankroll || isRolloverDerived) {
+            return;
+          }
+        }
+
         let amt = Number(tx.amount || 0);
-        if (tx.type && tx.type.toLowerCase().includes('withdraw') && amt > 0) {
+        if (txType.toLowerCase().includes('withdraw') && amt > 0) {
           amt = -amt;
         }
 
@@ -342,7 +389,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
       });
     }
     return evolutionData;
-  }, [bets, transactions, bookmakers, currentTotalProfit]);
+  }, [bets, transactions, bookmakers, bankrolls, currentTotalProfit]);
 
   // Dynamic ROI by Bookmaker calculation
   const bookmakerRoiData = useMemo(() => {

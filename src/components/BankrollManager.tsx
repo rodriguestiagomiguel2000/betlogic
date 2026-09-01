@@ -41,7 +41,7 @@ interface BankrollManagerProps {
   transfers: BankrollTransfer[];
   activeBankrollId?: string;
   userCurrency?: string;
-  onAddBankroll: (bankroll: { name: string; currency: string; color: string; description: string; allocations: Array<{ bookmakerId: string; cashAmount: number; freeBetAmount: number }> }) => string | void;
+  onAddBankroll: (bankroll: { name: string; currency: string; color: string; description: string; rolloverFromBankrollId?: string; allocations: Array<{ bookmakerId: string; cashAmount: number; freeBetAmount: number }> }) => string | void;
   onUpdateBankrollBalance: (bankrollId: string, newBalance: number) => void;
   onAddTransfer: (transfer: Omit<BankrollTransfer, 'id'>) => void;
   onSetActiveBankroll?: (bankrollId: string) => void;
@@ -150,6 +150,34 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
   const [newBankrollCurrency, setNewBankrollCurrency] = useState<string>('EUR');
   const [newBankrollAllocations, setNewBankrollAllocations] = useState<Array<{ bookmakerId: string; cashAmount: string; freeBetAmount: string }>>([{ bookmakerId: '', cashAmount: '', freeBetAmount: '' }]);
   const [newBankrollDesc, setNewBankrollDesc] = useState<string>('');
+  const [isRollover, setIsRollover] = useState<boolean>(false);
+  const [rolloverSourceId, setRolloverSourceId] = useState<string>('');
+
+  const applyRolloverSource = (sourceId: string) => {
+    setRolloverSourceId(sourceId);
+    const sourceBankroll = bankrolls.find((b) => b.id === sourceId);
+    if (sourceBankroll) {
+      if (sourceBankroll.currency) {
+        setNewBankrollCurrency(sourceBankroll.currency);
+      }
+      const sourceAllocs = bookmakers
+        .map((bm) => {
+          const bal = getBookmakerBalanceForBankroll(bm, sourceBankroll.id);
+          return {
+            bookmakerId: bm.id,
+            cashAmount: bal.cashBalance > 0 ? bal.cashBalance.toString() : '0',
+            freeBetAmount: bal.freeBetBalance > 0 ? bal.freeBetBalance.toString() : '0',
+          };
+        })
+        .filter((a) => parseFloat(a.cashAmount) > 0 || parseFloat(a.freeBetAmount) > 0);
+
+      if (sourceAllocs.length > 0) {
+        setNewBankrollAllocations(sourceAllocs);
+      } else if (bookmakers.length > 0) {
+        setNewBankrollAllocations([{ bookmakerId: bookmakers[0].id, cashAmount: '0', freeBetAmount: '0' }]);
+      }
+    }
+  };
 
   // Search & Filter for Deep-Dive Bet History Table
   const [betSearchQuery, setBetSearchQuery] = useState<string>('');
@@ -425,6 +453,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
     onAddBankroll({
       name: newBankrollName,
       currency: newBankrollCurrency,
+      rolloverFromBankrollId: isRollover && rolloverSourceId ? rolloverSourceId : undefined,
       allocations: newBankrollAllocations.map(a => ({
         bookmakerId: a.bookmakerId,
         cashAmount: parseFloat(a.cashAmount) || 0,
@@ -435,6 +464,8 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
     });
 
     setNewBankrollName('');
+    setIsRollover(false);
+    setRolloverSourceId('');
     setNewBankrollAllocations([{ bookmakerId: '', cashAmount: '', freeBetAmount: '' }]);
     setShowAddBankrollModal(false);
   };
@@ -808,6 +839,21 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                   <tbody className="divide-y divide-[#27314a]">
                     {transactionsWithRunningBalance.map((t) => {
                       const bmName = bookmakers.find((bm) => bm.id === t.bookmakerId)?.name || '—';
+                      const isRolloverIn = t.type === 'Rollover In';
+                      const isRolloverOut = t.type === 'Rollover Out';
+                      const isRollover = isRolloverIn || isRolloverOut;
+
+                      let displayDescription = t.description;
+                      if (isRolloverIn) {
+                        displayDescription = t.description
+                          ? t.description.replace(/^Rollover from\s*/i, 'Carried over from ')
+                          : 'Carried over from previous bankroll';
+                      } else if (isRolloverOut) {
+                        displayDescription = t.description
+                          ? t.description.replace(/^Rollover to\s*/i, 'Carried over to ')
+                          : 'Carried over to new bankroll';
+                      }
+
                       return (
                         <tr key={t.id} className="hover:bg-[#131b2e] transition-colors">
                           <td className="p-3 text-[#8d90a0] whitespace-nowrap font-mono">
@@ -815,8 +861,12 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                           </td>
                           <td className="p-3 whitespace-nowrap">
                             <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                                t.type === 'Initial Balance'
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider inline-flex items-center gap-1 ${
+                                isRolloverIn
+                                  ? 'bg-slate-800/90 text-blue-300 border border-blue-500/40'
+                                  : isRolloverOut
+                                  ? 'bg-slate-800/90 text-slate-300 border border-slate-600/40'
+                                  : t.type === 'Initial Balance'
                                   ? 'bg-blue-950 text-blue-400 border border-blue-800'
                                   : t.type === 'Deposit'
                                   ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
@@ -825,18 +875,34 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                                   : 'bg-indigo-950 text-indigo-400 border border-indigo-800'
                               }`}
                             >
-                              {t.type}
+                              {isRollover && <ArrowLeftRight size={10} className={isRolloverIn ? 'text-blue-400' : 'text-slate-400'} />}
+                              <span>{t.type}</span>
                             </span>
                           </td>
-                          <td className="p-3 text-white font-medium">{t.description}</td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-1.5">
+                              {isRollover && (
+                                <span className="inline-flex items-center justify-center p-1 rounded bg-slate-800 text-blue-300">
+                                  <ArrowLeftRight size={12} />
+                                </span>
+                              )}
+                              <span className={isRollover ? 'text-slate-200 font-medium' : 'text-white font-medium'}>
+                                {displayDescription}
+                              </span>
+                            </div>
+                          </td>
                           <td className="p-3 text-white font-bold">{bmName}</td>
                           <td
-                            className={`p-3 text-right font-mono font-bold ${
-                              t.amount > 0
-                                ? 'text-[#4edea3]'
+                            className={`p-3 text-right font-mono ${
+                              isRolloverIn
+                                ? 'text-blue-300 font-semibold'
+                                : isRolloverOut
+                                ? 'text-slate-400 font-semibold'
+                                : t.amount > 0
+                                ? 'text-[#4edea3] font-bold'
                                 : t.amount < 0
-                                ? 'text-[#ffb3ad]'
-                                : 'text-white'
+                                ? 'text-[#ffb3ad] font-bold'
+                                : 'text-white font-bold'
                             }`}
                           >
                             {t.amount > 0 ? '+' : ''}
@@ -1272,7 +1338,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                 <label className="block text-[#8d90a0] mb-1 font-medium">Bankroll Name</label>
                 <input
                   type="text"
-                  placeholder="e.g. High Yield Unit"
+                  placeholder="e.g. September High Yield"
                   value={newBankrollName}
                   onChange={(e) => setNewBankrollName(e.target.value)}
                   className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white"
@@ -1280,12 +1346,64 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                 />
               </div>
 
+              {/* Rollover from existing bankroll option */}
+              {bankrolls.length > 0 && (
+                <div className="p-3 bg-[#0b1326] border border-[#27314a] rounded-lg space-y-2.5">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={isRollover}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setIsRollover(checked);
+                        if (checked) {
+                          const initialSourceId = rolloverSourceId || bankrolls[0]?.id || '';
+                          applyRolloverSource(initialSourceId);
+                        } else {
+                          setRolloverSourceId('');
+                          setNewBankrollAllocations([{ bookmakerId: '', cashAmount: '', freeBetAmount: '' }]);
+                        }
+                      }}
+                      className="w-4 h-4 rounded text-[#2563eb] bg-[#171f33] border-[#27314a] focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                    />
+                    <span className="font-semibold text-white">Roll over balances from an existing bankroll</span>
+                  </label>
+
+                  {isRollover && (
+                    <div className="space-y-2 pt-1 border-t border-[#27314a]/60">
+                      <div>
+                        <label className="block text-[11px] text-[#8d90a0] mb-1 font-medium">Source Bankroll to Roll Over From</label>
+                        <select
+                          value={rolloverSourceId}
+                          onChange={(e) => applyRolloverSource(e.target.value)}
+                          className="w-full bg-[#171f33] border border-[#27314a] rounded px-3 py-2 text-white text-xs focus:outline-none focus:border-[#2563eb]"
+                          required={isRollover}
+                        >
+                          {bankrolls.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name} ({formatCurrency(b.currentBalance, b.currency || userCurrency)} Cash + {formatCurrency(b.freeBetCredits, b.currency || userCurrency)} Free Bets)
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <p className="text-[11px] text-[#8d90a0] leading-relaxed">
+                        <span className="text-cyan-400 font-semibold">Rollover Mode:</span> Balances will be atomically transferred from the source bankroll to this new bankroll and recorded as <span className="text-amber-400 font-mono font-semibold">Rollover Out</span> / <span className="text-cyan-400 font-mono font-semibold">Rollover In</span> transactions on the balance sheet, preventing capital double-counting.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div>
                 <label className="block text-[#8d90a0] mb-1 font-medium">Currency</label>
                 <select
                   value={newBankrollCurrency}
                   onChange={(e) => setNewBankrollCurrency(e.target.value)}
-                  className="w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white"
+                  disabled={isRollover}
+                  className={`w-full bg-[#0b1326] border border-[#27314a] rounded px-3 py-2 text-white ${
+                    isRollover ? 'opacity-70 cursor-not-allowed' : ''
+                  }`}
                 >
                   <option value="EUR">EUR (€)</option>
                   <option value="USD">USD ($)</option>
@@ -1296,66 +1414,105 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
               </div>
 
               <div className="space-y-2">
-                <label className="block text-[#8d90a0] font-medium">Initial Allocations</label>
-                {newBankrollAllocations.map((alloc, idx) => (
-                  <div key={idx} className="flex gap-2 items-end">
-                    <div className="flex-1">
-                      <label className="block text-[10px] text-[#8d90a0] mb-0.5">Bookmaker</label>
-                      <select
-                        value={alloc.bookmakerId}
-                        onChange={(e) => {
-                          const newAllocs = [...newBankrollAllocations];
-                          newAllocs[idx].bookmakerId = e.target.value;
-                          setNewBankrollAllocations(newAllocs);
-                        }}
-                        className="w-full bg-[#0b1326] border border-[#27314a] rounded px-2 py-1 text-white text-xs"
-                      >
-                        <option value="">Select...</option>
-                        {bookmakers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                      </select>
+                <div className="flex items-center justify-between">
+                  <label className="block text-[#8d90a0] font-medium">
+                    {isRollover ? 'Rolled Over Sportsbook Allocations' : 'Initial Allocations'}
+                  </label>
+                  {isRollover && (
+                    <span className="text-[10px] bg-cyan-950 text-cyan-400 border border-cyan-800 px-2 py-0.5 rounded font-mono font-semibold">
+                      Locked to Source Balances
+                    </span>
+                  )}
+                </div>
+
+                {newBankrollAllocations.map((alloc, idx) => {
+                  const bm = bookmakers.find((b) => b.id === alloc.bookmakerId);
+                  return (
+                    <div key={idx} className="flex gap-2 items-end">
+                      <div className="flex-1">
+                        <label className="block text-[10px] text-[#8d90a0] mb-0.5">Sportsbook</label>
+                        {isRollover ? (
+                          <input
+                            type="text"
+                            readOnly
+                            value={bm?.name || 'Sportsbook'}
+                            className="w-full bg-[#0b1326]/60 border border-[#27314a] rounded px-2 py-1 text-white text-xs font-semibold cursor-not-allowed opacity-90"
+                          />
+                        ) : (
+                          <select
+                            value={alloc.bookmakerId}
+                            onChange={(e) => {
+                              const newAllocs = [...newBankrollAllocations];
+                              newAllocs[idx].bookmakerId = e.target.value;
+                              setNewBankrollAllocations(newAllocs);
+                            }}
+                            className="w-full bg-[#0b1326] border border-[#27314a] rounded px-2 py-1 text-white text-xs"
+                          >
+                            <option value="">Select...</option>
+                            {bookmakers.map((b) => (
+                              <option key={b.id} value={b.id}>
+                                {b.name}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                      <div className="w-28">
+                        <label className="block text-[10px] text-[#8d90a0] mb-0.5">Cash ({newBankrollCurrency})</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          readOnly={isRollover}
+                          value={alloc.cashAmount}
+                          onChange={(e) => {
+                            const newAllocs = [...newBankrollAllocations];
+                            newAllocs[idx].cashAmount = e.target.value;
+                            setNewBankrollAllocations(newAllocs);
+                          }}
+                          className={`w-full bg-[#0b1326] border border-[#27314a] rounded px-2 py-1 text-white text-xs font-mono ${
+                            isRollover ? 'cursor-not-allowed bg-[#0b1326]/60 text-[#4edea3]' : ''
+                          }`}
+                        />
+                      </div>
+                      <div className="w-28">
+                        <label className="block text-[10px] text-[#8d90a0] mb-0.5">Free Bet ({newBankrollCurrency})</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          readOnly={isRollover}
+                          value={alloc.freeBetAmount}
+                          onChange={(e) => {
+                            const newAllocs = [...newBankrollAllocations];
+                            newAllocs[idx].freeBetAmount = e.target.value;
+                            setNewBankrollAllocations(newAllocs);
+                          }}
+                          className={`w-full bg-[#0b1326] border border-[#27314a] rounded px-2 py-1 text-white text-xs font-mono ${
+                            isRollover ? 'cursor-not-allowed bg-[#0b1326]/60 text-indigo-300' : ''
+                          }`}
+                        />
+                      </div>
+                      {!isRollover && (
+                        <button
+                          type="button"
+                          onClick={() => setNewBankrollAllocations(newBankrollAllocations.filter((_, i) => i !== idx))}
+                          className="text-red-400 hover:text-red-300 mb-1 cursor-pointer"
+                        >
+                          <XCircle size={16} />
+                        </button>
+                      )}
                     </div>
-                    <div className="w-24">
-                      <label className="block text-[10px] text-[#8d90a0] mb-0.5">Cash ({newBankrollCurrency})</label>
-                      <input
-                        type="number"
-                        value={alloc.cashAmount}
-                        onChange={(e) => {
-                          const newAllocs = [...newBankrollAllocations];
-                          newAllocs[idx].cashAmount = e.target.value;
-                          setNewBankrollAllocations(newAllocs);
-                        }}
-                        className="w-full bg-[#0b1326] border border-[#27314a] rounded px-2 py-1 text-white text-xs"
-                      />
-                    </div>
-                    <div className="w-24">
-                      <label className="block text-[10px] text-[#8d90a0] mb-0.5">Free Bet ({newBankrollCurrency})</label>
-                      <input
-                        type="number"
-                        value={alloc.freeBetAmount}
-                        onChange={(e) => {
-                          const newAllocs = [...newBankrollAllocations];
-                          newAllocs[idx].freeBetAmount = e.target.value;
-                          setNewBankrollAllocations(newAllocs);
-                        }}
-                        className="w-full bg-[#0b1326] border border-[#27314a] rounded px-2 py-1 text-white text-xs"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setNewBankrollAllocations(newBankrollAllocations.filter((_, i) => i !== idx))}
-                      className="text-red-400 hover:text-red-300 mb-1"
-                    >
-                      <XCircle size={16} />
-                    </button>
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => setNewBankrollAllocations([...newBankrollAllocations, { bookmakerId: '', cashAmount: '', freeBetAmount: '' }])}
-                  className="text-xs text-[#2563eb] hover:underline"
-                >
-                  + Add another allocation
-                </button>
+                  );
+                })}
+
+                {!isRollover && (
+                  <button
+                    type="button"
+                    onClick={() => setNewBankrollAllocations([...newBankrollAllocations, { bookmakerId: '', cashAmount: '', freeBetAmount: '' }])}
+                    className="text-xs text-[#2563eb] hover:underline cursor-pointer"
+                  >
+                    + Add another allocation
+                  </button>
+                )}
               </div>
 
               <div>

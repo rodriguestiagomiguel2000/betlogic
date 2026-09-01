@@ -662,6 +662,7 @@ export function App() {
           <AnalyticsView
             bets={bets}
             bookmakers={bookmakers}
+            bankrolls={bankrolls}
             transactions={transactions}
             userCurrency={userPrefs.currency}
             tipsters={tipsters}
