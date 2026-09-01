@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Bet, Bookmaker, Bankroll, BankrollTransaction, Tipster, TRANSACTION_TYPES } from '../types';
+import { Bet, Bookmaker, Bankroll, BankrollTransaction, Tipster, TRANSACTION_TYPES, INTERNAL_TRANSFER_TYPES } from '../types';
 import { formatCurrency, calculateWinStreak, getCurrencySymbol, calculateBetProfit } from '../utils/storage';
 import { getBetLatestEventDate } from '../utils/dateUtils';
 import {
@@ -287,6 +287,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
       const distinctTypes = Array.from(new Set(transactions.map((t) => t.type)));
       console.log('[AnalyticsView] Distinct transaction types in bankrollEvolutionData:', distinctTypes, transactions);
 
+      const contributingTypesSet = new Set<string>();
+
       transactions.forEach((tx) => {
         const d = new Date(tx.date);
         if (isNaN(d.getTime())) return;
@@ -294,18 +296,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
         const txType = (tx.type || '').trim();
 
         // 1. Exclude Rollover In, Rollover Out, Opening Balance (Carried Over), and internal Transfers
-        if (
-          tx.type === TRANSACTION_TYPES.OPENING_BALANCE_CARRIED_OVER ||
-          tx.type === TRANSACTION_TYPES.ROLLOVER_IN ||
-          tx.type === TRANSACTION_TYPES.ROLLOVER_OUT ||
-          tx.type === TRANSACTION_TYPES.TRANSFER ||
-          txType === 'Opening Balance (Carried Over)' ||
-          txType === 'Rollover In' ||
-          txType === 'Rollover Out' ||
-          txType === 'Transfer' ||
-          txType.toLowerCase().includes('carried over') ||
-          txType.toLowerCase().includes('rollover')
-        ) {
+        if (INTERNAL_TRANSFER_TYPES.includes(tx.type) || INTERNAL_TRANSFER_TYPES.includes(txType)) {
           return;
         }
 
@@ -318,6 +309,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
             return;
           }
         }
+
+        contributingTypesSet.add(tx.type);
 
         let amt = Number(tx.amount || 0);
         if ((tx.type === TRANSACTION_TYPES.WITHDRAWAL || txType.toLowerCase().includes('withdraw')) && amt > 0) {
@@ -337,6 +330,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ bets, bookmakers, 
           timelineMap[rawDate].descriptions.push(tx.description);
         }
       });
+
+      console.log('[AnalyticsView] Transaction types that DID contribute to capitalDelta:', Array.from(contributingTypesSet));
     }
 
     // 2. Process settled bets

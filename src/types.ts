@@ -134,6 +134,13 @@ export const TRANSACTION_TYPES = {
 
 export type TransactionType = typeof TRANSACTION_TYPES[keyof typeof TRANSACTION_TYPES] | string;
 
+export const INTERNAL_TRANSFER_TYPES: string[] = [
+  TRANSACTION_TYPES.OPENING_BALANCE_CARRIED_OVER,
+  TRANSACTION_TYPES.ROLLOVER_IN,
+  TRANSACTION_TYPES.ROLLOVER_OUT,
+  TRANSACTION_TYPES.TRANSFER,
+];
+
 export interface BankrollTransaction {
   id: string;
   userId: string;

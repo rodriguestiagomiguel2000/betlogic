@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Bankroll, Bookmaker, BankrollTransfer, Bet, BankrollTransaction, TRANSACTION_TYPES } from '../types';
+import { Bankroll, Bookmaker, BankrollTransfer, Bet, BankrollTransaction, TRANSACTION_TYPES, INTERNAL_TRANSFER_TYPES } from '../types';
 import { formatCurrency, formatOdds, getBookmakerBalanceForBankroll, getCurrencySymbol, calculateBetProfit } from '../utils/storage';
 import { formatEventDate, formatLegSelection, formatBetDateTime, getBetLatestEventDate } from '../utils/dateUtils';
 import { bookmakersApi, bankrollsApi } from '../utils/api';
@@ -152,7 +152,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
   // Add Bankroll Form State & Allocations
   const [newBankrollName, setNewBankrollName] = useState<string>('');
   const [newBankrollCurrency, setNewBankrollCurrency] = useState<string>('EUR');
-  const [newBankrollAllocations, setNewBankrollAllocations] = useState<Array<{ bookmakerId: string; cashAmount: string; freeBetAmount: string; isRollover?: boolean }>>([{ bookmakerId: '', cashAmount: '', freeBetAmount: '', isRollover: false }]);
+  const [newBankrollAllocations, setNewBankrollAllocations] = useState<Array<{ bookmakerId: string; cashAmount: string; freeBetAmount: string }>>([{ bookmakerId: '', cashAmount: '', freeBetAmount: '' }]);
   const [newBankrollDesc, setNewBankrollDesc] = useState<string>('');
   const [isRollover, setIsRollover] = useState<boolean>(false);
   const [rolloverSourceId, setRolloverSourceId] = useState<string>('');
@@ -172,7 +172,6 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
             bookmakerId: bm.id,
             cashAmount: bal.cashBalance > 0 ? bal.cashBalance.toString() : '0',
             freeBetAmount: bal.freeBetBalance > 0 ? bal.freeBetBalance.toString() : '0',
-            isRollover: true,
           };
         })
         .filter((a) => parseFloat(a.cashAmount) > 0 || parseFloat(a.freeBetAmount) > 0);
@@ -180,7 +179,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
       if (sourceAllocs.length > 0) {
         setNewBankrollAllocations(sourceAllocs);
       } else if (bookmakers.length > 0) {
-        setNewBankrollAllocations([{ bookmakerId: bookmakers[0].id, cashAmount: '0', freeBetAmount: '0', isRollover: true }]);
+        setNewBankrollAllocations([{ bookmakerId: bookmakers[0].id, cashAmount: '0', freeBetAmount: '0' }]);
       }
     }
   };
@@ -473,8 +472,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
       allocations: newBankrollAllocations.map(a => ({
         bookmakerId: a.bookmakerId,
         cashAmount: parseFloat(a.cashAmount) || 0,
-        freeBetAmount: parseFloat(a.freeBetAmount) || 0,
-        isRollover: a.isRollover !== undefined ? a.isRollover : isRollover
+        freeBetAmount: parseFloat(a.freeBetAmount) || 0
       })),
       color: '#2563eb',
       description: newBankrollDesc
@@ -484,7 +482,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
     setIsRollover(false);
     setRolloverSourceId('');
     setArchiveSourceOnRollover(true);
-    setNewBankrollAllocations([{ bookmakerId: '', cashAmount: '', freeBetAmount: '', isRollover: false }]);
+    setNewBankrollAllocations([{ bookmakerId: '', cashAmount: '', freeBetAmount: '' }]);
     setShowAddBankrollModal(false);
   };
 
@@ -859,7 +857,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                       const bmName = bookmakers.find((bm) => bm.id === t.bookmakerId)?.name || '—';
                       const isRolloverIn = t.type === TRANSACTION_TYPES.ROLLOVER_IN || t.type === TRANSACTION_TYPES.OPENING_BALANCE_CARRIED_OVER || t.type?.toLowerCase().includes('carried over');
                       const isRolloverOut = t.type === TRANSACTION_TYPES.ROLLOVER_OUT;
-                      const isRollover = isRolloverIn || isRolloverOut;
+                      const isRollover = isRolloverIn || isRolloverOut || INTERNAL_TRANSFER_TYPES.includes(t.type);
 
                       let displayDescription = t.description;
                       if (isRolloverIn) {
@@ -1652,7 +1650,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
                 {!isRollover && (
                   <button
                     type="button"
-                    onClick={() => setNewBankrollAllocations([...newBankrollAllocations, { bookmakerId: '', cashAmount: '', freeBetAmount: '', isRollover: false }])}
+                    onClick={() => setNewBankrollAllocations([...newBankrollAllocations, { bookmakerId: '', cashAmount: '', freeBetAmount: '' }])}
                     className="text-xs text-[#2563eb] hover:underline cursor-pointer"
                   >
                     + Add another allocation
