@@ -24,7 +24,7 @@ import {
   Clock
 } from 'lucide-react';
 import { formatCurrency, formatOdds, getCurrencySymbol } from '../utils/storage';
-import { formatLegSelection, calculateLegsOdds, parseDateString, formatToLocalISOString, formatForDateTimeLocal } from '../utils/dateUtils';
+import { formatLegSelection, calculateLegsOdds, parseDateString, formatToLocalISOString, formatForDateTimeLocal, normalizeScannedDate } from '../utils/dateUtils';
 
 interface BetslipScannerProps {
   bankrolls: Bankroll[];
@@ -534,27 +534,6 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     } finally {
       abortControllerRef.current = null;
     }
-  };
-
-  const normalizeScannedDate = (dateStr?: string): string | undefined => {
-    if (!dateStr || typeof dateStr !== 'string' || !dateStr.trim()) return undefined;
-
-    let cleaned = dateStr.trim();
-    const currentYear = new Date().getFullYear();
-
-    // Replace past years 2024/2025 with current year when inferred incorrectly by model
-    cleaned = cleaned.replace(/\b202[0-5]\b/g, String(currentYear));
-
-    // If format is "DD/MM • HH:mm" or "DD/MM HH:mm" or "DD/MM" (e.g. "02/08 • 20:00" -> 2nd August 2026)
-    const ddMmMatch = cleaned.match(/^(\d{1,2})\/(\d{1,2})(?:\s*[•\s]\s*(\d{1,2}:\d{2}))?/);
-    if (ddMmMatch) {
-      const day = ddMmMatch[1].padStart(2, '0');
-      const month = ddMmMatch[2].padStart(2, '0');
-      const time = ddMmMatch[3] ? `T${ddMmMatch[3]}:00` : '';
-      return `${currentYear}-${month}-${day}${time}`;
-    }
-
-    return cleaned;
   };
 
   const applyParsedData = (parsed: any) => {

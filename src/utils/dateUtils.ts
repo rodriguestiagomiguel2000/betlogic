@@ -1,12 +1,94 @@
 import { Bet, BetLeg } from '../types';
 
 /**
+ * Disambiguates and normalizes dates extracted from betting slips.
+ * Sports bets are almost always placed in the current month, the month right before, or the month right after.
+ * When DD/MM is misinterpreted by OCR or LLM as MM/DD (e.g. "02/09" -> Month 2, Day 9 instead of Day 2, Month 9),
+ * this function automatically corrects and swaps month and day if the swapped month falls within [currentMonth - 1, currentMonth, currentMonth + 1].
+ */
+export function normalizeScannedDate(dateStr?: string, referenceDate: Date = new Date()): string | undefined {
+  if (!dateStr || typeof dateStr !== 'string' || !dateStr.trim()) return undefined;
+
+  let cleaned = dateStr.trim();
+  const currentYear = referenceDate.getFullYear();
+  const currentMonth = referenceDate.getMonth() + 1; // 1-12
+
+  // Allowed target month window: current month, previous month, next month (handling Dec/Jan transitions)
+  const prevMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+  const nextMonth = currentMonth === 12 ? 1 : currentMonth + 1;
+  const allowedMonths = new Set([prevMonth, currentMonth, nextMonth]);
+
+  // Replace past years 2024/2025 with current year when inferred incorrectly by model
+  cleaned = cleaned.replace(/\b202[0-5]\b/g, String(currentYear));
+
+  // Case 1: Pattern "DD/MM" or "DD/MM • HH:mm" or "DD/MM HH:mm" or "DD/MM/YYYY HH:mm"
+  // e.g. "02/09 • 17:00", "02/09 17:00", "02/09"
+  const ddmmyyyyMatch = cleaned.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?(?:\s*[•,\s]\s*(\d{1,2}:\d{2}))?/);
+  if (ddmmyyyyMatch) {
+    const p1 = parseInt(ddmmyyyyMatch[1], 10);
+    const p2 = parseInt(ddmmyyyyMatch[2], 10);
+    let yr = ddmmyyyyMatch[3] ? parseInt(ddmmyyyyMatch[3], 10) : currentYear;
+    if (yr < 100) yr += 2000;
+    const time = ddmmyyyyMatch[4] ? `T${ddmmyyyyMatch[4]}:00` : '';
+
+    // Standard European: p1 = Day, p2 = Month (e.g. 02/09 -> Day 2, Month 9)
+    let day = p1;
+    let month = p2;
+
+    // Disambiguate if month is not in allowed months but day is (and values are compatible)
+    if (!allowedMonths.has(month) && allowedMonths.has(day) && month <= 31 && day <= 12) {
+      const temp = day;
+      day = month;
+      month = temp;
+    }
+
+    // Determine year for boundary months (e.g. Dec vs Jan)
+    let targetYear = yr;
+    if (month === 12 && currentMonth === 1) targetYear = currentYear - 1;
+    else if (month === 1 && currentMonth === 12) targetYear = currentYear + 1;
+    else targetYear = currentYear;
+
+    return `${targetYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}${time}`;
+  }
+
+  // Case 2: ISO format "YYYY-MM-DD" or "YYYY-MM-DDTHH:mm:ss" or "YYYY-MM-DD HH:mm"
+  // e.g. "2026-02-09T17:00:00" -> was converted by LLM from "02/09" assuming US MM/DD (month 2, day 9)
+  const isoMatch = cleaned.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s](\d{1,2}:\d{2}(?::\d{2})?))?/);
+  if (isoMatch) {
+    const yr = parseInt(isoMatch[1], 10);
+    let month = parseInt(isoMatch[2], 10);
+    let day = parseInt(isoMatch[3], 10);
+    const time = isoMatch[4] ? `T${isoMatch[4]}` : '';
+
+    // If month is NOT in allowedMonths (e.g. month=2 when current is 9),
+    // but day IS in allowedMonths (e.g. day=9 when current is 9) and month <= 31:
+    // It is clear that Day and Month were inverted by US MM/DD parsing!
+    if (!allowedMonths.has(month) && allowedMonths.has(day) && month <= 31 && day <= 12) {
+      const tempMonth = day;
+      const tempDay = month;
+      month = tempMonth;
+      day = tempDay;
+    }
+
+    // Determine year for boundary months (e.g. Dec vs Jan)
+    let targetYear = yr;
+    if (month === 12 && currentMonth === 1) targetYear = currentYear - 1;
+    else if (month === 1 && currentMonth === 12) targetYear = currentYear + 1;
+    else targetYear = currentYear;
+
+    return `${targetYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}${time}`;
+  }
+
+  return cleaned;
+}
+
+/**
  * Safely parses various date/time formats (ISO string, "YYYY-MM-DD HH:mm", "DD/MM/YYYY HH:mm", etc.)
  * into a valid local Date object without UTC midnight timezone distortion.
  */
 export function parseDateString(str?: string): Date | null {
   if (!str || typeof str !== 'string' || !str.trim()) return null;
-  const s = str.trim();
+  const s = normalizeScannedDate(str) || str.trim();
 
   // Pattern 1: ISO or date-time with T or space e.g. "2026-08-03T20:30:00", "2026-08-03 20:30"
   const isoTimeMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{1,2}):(\d{2})(?::(\d{2}))?/);

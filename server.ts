@@ -127,7 +127,13 @@ async function startServer() {
         });
       }
 
-      const currentYear = new Date().getFullYear();
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      const currentMonth = now.getMonth() + 1;
+      const currentDay = now.getDate();
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      const currentMonthName = monthNames[currentMonth - 1];
+
       const prompt = `Analyze this sports betting slip image and extract all structured fields matching the schema exactly.
 Infer values strictly from the slip. Ensure decimal odds format is returned. Output clean, valid JSON only.
 
@@ -159,13 +165,18 @@ Special parsing & Extraction Rules:
      * Set top-level 'total_odds' to this exact printed total odds value from the summary footer.
      * Set top-level 'odds' to this same printed total odds.
 
-2. CURRENT YEAR & DATE HANDLING (IMPORTANT):
-   - The current year is ${currentYear}.
-   - Read the day and month EXACTLY as printed on THIS slip. Do not reuse or default to any date mentioned elsewhere in these instructions — every slip has its own date, and copying a previous example would be a factual error.
-   - Dates on these slips are in European format DD/MM (day first, then month) — e.g. a printed "05/11" means day 5, month 11 (5th November), NOT May 11th. Apply this rule to whatever DD/MM digits are actually visible on the slip, whatever they are.
-   - When a date is shown without an explicit year, assume the current year is ${currentYear}, and combine it with the DD/MM (and time, if shown) you actually read from the image into ISO format YYYY-MM-DDTHH:mm.
-   - NEVER output past years unless explicitly printed on the physical slip.
-   - If no date/time is visible anywhere on the slip for the top-level 'placed_at' field, output an empty string "" for it. Do NOT guess, and do NOT fall back to today's date or to any date used as an example in this prompt.
+2. CURRENT YEAR & DATE HANDLING (CRITICAL):
+   - Current calendar context: Today is ${currentDay} ${currentMonthName} ${currentYear} (Date: ${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(currentDay).padStart(2, '0')}).
+   - Sports betting tickets almost ALWAYS contain events occurring in the CURRENT MONTH (${currentMonthName}), the preceding month, or the next upcoming month.
+   - EUROPEAN DATE FORMAT (DD/MM) MANDATE:
+     * Dates on sports betting tickets (such as "02/09", "15/08", "03/10") are in European DD/MM format (Day first, then Month).
+     * For example, a printed "02/09" means Day 02 of Month 09 (${currentMonthName} 2nd) -> ISO "${currentYear}-09-02", NEVER February 9th ("${currentYear}-02-09")!
+     * "05/09" means Day 05 of Month 09 (${currentMonthName} 5th) -> ISO "${currentYear}-09-05", NEVER May 9th!
+     * "12/08" means Day 12 of Month 08 (August 12th) -> ISO "${currentYear}-08-12", NEVER December 8th!
+     * If the date digits could be interpreted as either DD/MM or MM/DD, ALWAYS choose the one whose month is the CURRENT MONTH (${currentMonthName}) or adjacent month.
+     * When a date is shown without an explicit year, use ${currentYear}, and combine it with the DD/MM and time into ISO format YYYY-MM-DDTHH:mm.
+     * NEVER output past years unless explicitly printed on the physical slip.
+     * If no date/time is visible anywhere on the slip for the top-level 'placed_at' field, output an empty string "".
 
 2b. 'placed_at' vs 'event_date' ARE DIFFERENT FIELDS, EVEN WHEN THEY ARE VISUALLY CLOSE (CRITICAL):
    - 'placed_at' (top-level) is the timestamp of the TICKET/SLIP ITSELF — where the bet was placed. It is normally found in ONE of these specific structural positions, and NOWHERE else:
@@ -375,6 +386,76 @@ Special parsing & Extraction Rules:
       // Safe parse to verify structure and log raw extraction
       const parsedData = JSON.parse(rawText.trim());
       console.log(`[BETSLIP OCR] [stage=${currentStage}] Gemini response parsed successfully`);
+
+      // Server-side European date normalization to prevent US MM/DD inversions
+      function serverNormalizeDate(dateStr?: string): string | undefined {
+        if (!dateStr || typeof dateStr !== 'string' || !dateStr.trim()) return undefined;
+        let cleaned = dateStr.trim();
+        const prevMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+        const nextMonth = currentMonth === 12 ? 1 : currentMonth + 1;
+        const allowedMonths = new Set([prevMonth, currentMonth, nextMonth]);
+
+        cleaned = cleaned.replace(/\b202[0-5]\b/g, String(currentYear));
+
+        // Pattern 1: DD/MM or DD/MM/YYYY
+        const ddmmyyyyMatch = cleaned.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?(?:[T\s*•,\s]\s*(\d{1,2}:\d{2}))?/);
+        if (ddmmyyyyMatch) {
+          const p1 = parseInt(ddmmyyyyMatch[1], 10);
+          const p2 = parseInt(ddmmyyyyMatch[2], 10);
+          let yr = ddmmyyyyMatch[3] ? parseInt(ddmmyyyyMatch[3], 10) : currentYear;
+          if (yr < 100) yr += 2000;
+          const time = ddmmyyyyMatch[4] ? `T${ddmmyyyyMatch[4]}:00` : '';
+
+          let day = p1;
+          let month = p2;
+          if (!allowedMonths.has(month) && allowedMonths.has(day) && month <= 31 && day <= 12) {
+            const temp = day;
+            day = month;
+            month = temp;
+          }
+          let targetYear = yr;
+          if (month === 12 && currentMonth === 1) targetYear = currentYear - 1;
+          else if (month === 1 && currentMonth === 12) targetYear = currentYear + 1;
+          else targetYear = currentYear;
+
+          return `${targetYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}${time}`;
+        }
+
+        // Pattern 2: ISO format YYYY-MM-DD
+        const isoMatch = cleaned.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s](\d{1,2}:\d{2}(?::\d{2})?))?/);
+        if (isoMatch) {
+          const yr = parseInt(isoMatch[1], 10);
+          let month = parseInt(isoMatch[2], 10);
+          let day = parseInt(isoMatch[3], 10);
+          const time = isoMatch[4] ? `T${isoMatch[4]}` : '';
+
+          if (!allowedMonths.has(month) && allowedMonths.has(day) && month <= 31 && day <= 12) {
+            const tempMonth = day;
+            const tempDay = month;
+            month = tempMonth;
+            day = tempDay;
+          }
+          let targetYear = yr;
+          if (month === 12 && currentMonth === 1) targetYear = currentYear - 1;
+          else if (month === 1 && currentMonth === 12) targetYear = currentYear + 1;
+          else targetYear = currentYear;
+
+          return `${targetYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}${time}`;
+        }
+
+        return cleaned;
+      }
+
+      if (parsedData.placed_at) {
+        parsedData.placed_at = serverNormalizeDate(parsedData.placed_at);
+      }
+      if (Array.isArray(parsedData.legs)) {
+        for (const leg of parsedData.legs) {
+          if (leg.event_date) {
+            leg.event_date = serverNormalizeDate(leg.event_date);
+          }
+        }
+      }
 
       currentStage = 'http_response';
       const legsCount = Array.isArray(parsedData.legs) ? parsedData.legs.length : 0;
