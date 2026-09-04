@@ -16,7 +16,7 @@ Comecei este projeto para resolver um problema pessoal — controlar apostas esp
 ## Funcionalidades Principais
 
 ### Scanner de Betslip com OCR (IA)
-- Motor: Google Gemini 3.5 Flash Lite (processamento server-side)
+- Motor: Google Gemini 3.1 Flash Lite (processamento server-side)
 - Suporta múltiplas pernas (parlays/accumulators), bet builders e same game parlays
 - Deteta automaticamente desporto, mercado, seleção, odds, stake, bookmaker e status live
 - Imagens processadas no backend, não são guardadas permanentemente
@@ -59,7 +59,7 @@ Comecei este projeto para resolver um problema pessoal — controlar apostas esp
 | Backend | Express 5 + TypeScript, Node.js ≥20 |
 | Base de Dados | PostgreSQL |
 | Auth | JWT + bcrypt |
-| OCR/IA | Google Gemini 3.5 Flash Lite |
+| OCR/IA | Google Gemini 3.1 Flash Lite |
 
 ---
 

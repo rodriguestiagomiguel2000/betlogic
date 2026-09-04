@@ -147,7 +147,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   const [isLive, setIsLive] = useState<boolean>(false);
   const [isFreeBet, setIsFreeBet] = useState<boolean>(false);
   const [freeBetDestination, setFreeBetDestination] = useState<'cash' | 'free_bet'>('cash');
-  const [notes, setNotes] = useState<string>('Scanned via Gemini 3.5 Flash Lite OCR engine');
+  const [notes, setNotes] = useState<string>('Scanned via Gemini 3.1 Flash Lite OCR engine');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [customTagInput, setCustomTagInput] = useState<string>('');
 
@@ -494,7 +494,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
       const jsonStr = JSON.stringify(result, null, 2);
       setRawOcrJson(jsonStr);
       applyParsedData(result);
-      setNotes(`Scanned via Gemini 3.5 Flash Lite OCR engine`);
+      setNotes(`Scanned via Gemini 3.1 Flash Lite OCR engine`);
       setScanningState('scanned');
     } catch (err: any) {
       if (timeoutTimerRef.current) {
@@ -527,7 +527,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
         isSizeError,
         isHtmlResponse: Boolean(err.isHtmlResponse),
         code: err.code || (isTimeout ? 'GEMINI_TIMEOUT' : isQuotaExceeded ? 'GEMINI_QUOTA' : is403 ? 'GEMINI_AUTH' : 'SERVER_ERROR'),
-        attemptedModels: ['gemini-3.5-flash-lite (server-side)'],
+        attemptedModels: ['gemini-3.1-flash-lite (server-side)'],
         message: finalErrorMessage
       });
       setScanningState('error');
@@ -597,7 +597,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     const rawDateStr = parsed.placed_at || new Date().toISOString().slice(0, 10);
     const dateStr = normalizeScannedDate(rawDateStr) || new Date().toISOString().slice(0, 10);
     const idStr = parsed.bet_id ? ` [Ref: ${parsed.bet_id}]` : '';
-    setNotes(`Scanned via Gemini 3.5 Flash Lite on ${dateStr}${idStr}`);
+    setNotes(`Scanned via Gemini 3.1 Flash Lite on ${dateStr}${idStr}`);
 
     // Detect Sport Helper
     const parseSportStr = (src: any): SportType | '' => {
@@ -928,14 +928,14 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
             <ScanLine className="text-[#2563eb]" />
-            <span>Optical Betslip Scanner (Gemini 3.5 Flash Lite OCR)</span>
+            <span>Optical Betslip Scanner (Gemini 3.1 Flash Lite OCR)</span>
           </h2>
           <span className="text-xs font-mono bg-[#2563eb]/20 text-[#2563eb] border border-[#2563eb]/30 px-2.5 py-1 rounded-md flex items-center gap-1">
             <Sparkles size={12} /> Gemini Vision AI
           </span>
         </div>
         <p className="text-sm text-[#8d90a0] mt-1">
-          Upload or photograph a sports betslip image. Gemini 3.5 Flash Lite extracts multi-leg events, decimal odds, parlay structures, and bookmaker metadata into your selected bankroll.
+          Upload or photograph a sports betslip image. Gemini 3.1 Flash Lite extracts multi-leg events, decimal odds, parlay structures, and bookmaker metadata into your selected bankroll.
         </p>
       </div>
 
@@ -1118,7 +1118,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
 
           <div className="space-y-2 max-w-md mx-auto">
             <h3 className="text-base font-bold text-white flex items-center justify-center gap-2">
-              <span>Analyzing Betslip with Gemini 3.5 Flash Lite OCR...</span>
+              <span>Analyzing Betslip with Gemini 3.1 Flash Lite OCR...</span>
             </h3>
             <p className="text-xs text-[#8d90a0] leading-relaxed">
               Extracting sportsbook metadata, fixture legs, selections, decimal odds, stake values, and payout structures.
@@ -1370,7 +1370,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                   {showRawDrawer && (
                     <div className="p-3 bg-[#070d19] border-t border-[#27314a] space-y-2">
                       <div className="flex items-center justify-between text-[11px] text-[#8d90a0]">
-                        <span>Model: gemini-3.5-flash-lite (Primary OCR Engine)</span>
+                        <span>Model: gemini-3.1-flash-lite (Primary OCR Engine)</span>
                         <button
                           onClick={() => {
                             if (rawOcrJson) {

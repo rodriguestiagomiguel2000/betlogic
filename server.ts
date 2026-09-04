@@ -229,11 +229,11 @@ Special parsing & Extraction Rules:
       }, 45000);
 
       currentStage = 'gemini_request';
-      console.log(`[BETSLIP OCR] [stage=${currentStage}] Starting Gemini request to gemini-3.5-flash-lite (timeout: 45s)...`);
+      console.log(`[BETSLIP OCR] [stage=${currentStage}] Starting Gemini request to gemini-3.1-flash-lite (timeout: 45s)...`);
 
-      // Enforce JSON Schema structured outputs using Gemini 3.5 Flash Lite
+      // Enforce JSON Schema structured outputs using Gemini 3.1 Flash Lite
       const response = await ai.models.generateContent({
-        model: 'gemini-3.5-flash-lite',
+        model: 'gemini-3.1-flash-lite',
         contents: [
           {
             inlineData: {
@@ -543,7 +543,7 @@ Special parsing & Extraction Rules:
     if (!process.env.GEMINI_API_KEY) {
       return res.status(500).json({
         available: false,
-        model: 'gemini-3.5-flash-lite',
+        model: 'gemini-3.1-flash-lite',
         error: 'GEMINI_API_KEY environment variable is missing.',
         code: 'GEMINI_KEY_MISSING'
       });
@@ -551,19 +551,19 @@ Special parsing & Extraction Rules:
 
     try {
       const ping = await ai.models.generateContent({
-        model: 'gemini-3.5-flash-lite',
+        model: 'gemini-3.1-flash-lite',
         contents: ['Return the word PONG in plain text.'],
       });
       return res.json({
         available: true,
-        model: 'gemini-3.5-flash-lite',
+        model: 'gemini-3.1-flash-lite',
         response: (ping.text || '').trim(),
         timestamp: new Date().toISOString()
       });
     } catch (err: any) {
       return res.status(500).json({
         available: false,
-        model: 'gemini-3.5-flash-lite',
+        model: 'gemini-3.1-flash-lite',
         error: err.message || 'Failed to reach Gemini API',
         code: 'GEMINI_MODEL_UNAVAILABLE',
         details: err
@@ -581,12 +581,12 @@ Special parsing & Extraction Rules:
       return res.status(400).json({ error: 'Missing image in body', code: 'INVALID_REQUEST' });
     }
 
-    const results: any = { model: 'gemini-3.5-flash-lite' };
+    const results: any = { model: 'gemini-3.1-flash-lite' };
 
     // Test A: Plain text
     try {
       const resA = await ai.models.generateContent({
-        model: 'gemini-3.5-flash-lite',
+        model: 'gemini-3.1-flash-lite',
         contents: [
           { inlineData: { mimeType, data: imageData } },
           'Describe what is visible on this betting slip in plain text.'
@@ -600,7 +600,7 @@ Special parsing & Extraction Rules:
     // Test B: Simple JSON
     try {
       const resB = await ai.models.generateContent({
-        model: 'gemini-3.5-flash-lite',
+        model: 'gemini-3.1-flash-lite',
         contents: [
           { inlineData: { mimeType, data: imageData } },
           'Look at this image and return JSON object with description.'
