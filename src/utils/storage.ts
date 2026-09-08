@@ -265,7 +265,7 @@ export function calculateBetProfit(bet: {
     return isFreeBetCash ? returnAmt : returnAmt - bet.stake;
   }
   if (bet.status === 'lost') {
-    return -bet.stake;
+    return bet.isFreeBet ? 0 : -bet.stake;
   }
   if (bet.status === 'cashout') {
     const returnAmt = bet.actualReturn !== undefined && bet.actualReturn !== null ? bet.actualReturn : 0;
