@@ -1036,14 +1036,17 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
           dailyMap[dayNum] = { day: dayNum, betCount: 0, pnl: 0, hasPending: false };
         }
         dailyMap[dayNum].betCount += 1;
+        const isFreeBetCash = !!bet.is_free_bet && (bet.free_bet_destination === 'cash' || !bet.free_bet_destination);
         if (bet.status === 'pending') {
           dailyMap[dayNum].hasPending = true;
         } else if (bet.status === 'won') {
-          dailyMap[dayNum].pnl += (bet.actual_return || bet.potential_payout) - bet.stake;
+          const ret = bet.actual_return || bet.potential_payout;
+          dailyMap[dayNum].pnl += isFreeBetCash ? ret : ret - bet.stake;
         } else if (bet.status === 'lost') {
-          dailyMap[dayNum].pnl -= bet.stake;
+          dailyMap[dayNum].pnl += bet.is_free_bet ? 0 : -bet.stake;
         } else if (bet.status === 'cashout') {
-          dailyMap[dayNum].pnl += (bet.actual_return || 0) - bet.stake;
+          const ret = bet.actual_return || 0;
+          dailyMap[dayNum].pnl += isFreeBetCash ? ret : ret - bet.stake;
         }
       }
     });
@@ -1065,16 +1068,19 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
 
     userBets.forEach((b) => {
       totalStaked += b.stake || 0;
+      const isFreeBetCash = !!b.is_free_bet && (b.free_bet_destination === 'cash' || !b.free_bet_destination);
       if (b.status === 'won') {
         wonBets += 1;
-        totalPnL += (b.actual_return || b.potential_payout) - b.stake;
+        const ret = b.actual_return || b.potential_payout;
+        totalPnL += isFreeBetCash ? ret : ret - b.stake;
       } else if (b.status === 'lost') {
         lostBets += 1;
-        totalPnL -= b.stake;
+        totalPnL += b.is_free_bet ? 0 : -b.stake;
       } else if (b.status === 'pending') {
         pendingBets += 1;
       } else if (b.status === 'cashout') {
-        totalPnL += (b.actual_return || 0) - b.stake;
+        const ret = b.actual_return || 0;
+        totalPnL += isFreeBetCash ? ret : ret - b.stake;
       }
     });
 

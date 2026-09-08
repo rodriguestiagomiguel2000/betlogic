@@ -308,7 +308,7 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
       }
     });
 
-    const netProfit = totalReturns - (totalStaked - pendingStake);
+    const netProfit = list.reduce((acc, bet) => acc + calculateBetProfit(bet), 0);
     const roi = (totalStaked - pendingStake) > 0 ? (netProfit / (totalStaked - pendingStake)) * 100 : 0;
     const winRate = settledCount > 0 ? (wonCount / settledCount) * 100 : 0;
 

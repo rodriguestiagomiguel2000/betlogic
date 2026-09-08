@@ -22,6 +22,7 @@ router.get('/pnl-calendar', authenticateToken as any, async (req: AuthenticatedR
           CASE 
             WHEN status = 'won' AND is_free_bet = true AND (free_bet_destination = 'cash' OR free_bet_destination IS NULL) THEN COALESCE(actual_return, potential_payout)
             WHEN status = 'won' THEN (COALESCE(actual_return, potential_payout) - stake)
+            WHEN status = 'lost' AND is_free_bet = true THEN 0
             WHEN status = 'lost' THEN -stake
             WHEN status = 'cashout' AND is_free_bet = true AND (free_bet_destination = 'cash' OR free_bet_destination IS NULL) THEN COALESCE(actual_return, 0)
             WHEN status = 'cashout' THEN (COALESCE(actual_return, 0) - stake)
@@ -79,6 +80,7 @@ router.get('/summary', authenticateToken as any, async (req: AuthenticatedReques
           CASE 
             WHEN status = 'won' AND is_free_bet = true AND (free_bet_destination = 'cash' OR free_bet_destination IS NULL) THEN COALESCE(actual_return, potential_payout)
             WHEN status = 'won' THEN (COALESCE(actual_return, potential_payout) - stake)
+            WHEN status = 'lost' AND is_free_bet = true THEN 0
             WHEN status = 'lost' THEN -stake
             WHEN status = 'cashout' AND is_free_bet = true AND (free_bet_destination = 'cash' OR free_bet_destination IS NULL) THEN COALESCE(actual_return, 0)
             WHEN status = 'cashout' THEN (COALESCE(actual_return, 0) - stake)

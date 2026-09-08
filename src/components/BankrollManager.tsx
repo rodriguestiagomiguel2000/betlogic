@@ -315,7 +315,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
       .filter((b) => b.status !== 'pending')
       .reduce((acc, b) => acc + b.stake, 0);
 
-    const netPnL = totalReturns - settledStaked;
+    const netPnL = scopedBets.filter((b) => b.status !== 'pending').reduce((acc, b) => acc + calculateBetProfit(b), 0);
     const roi = totalVolumeStaked > 0 ? (netPnL / totalVolumeStaked) * 100 : 0;
     const winRate = settledCount > 0 ? (wonCount / settledCount) * 100 : 0;
     
@@ -400,14 +400,7 @@ export const BankrollManager: React.FC<BankrollManagerProps> = ({
       const item = map[bet.bookmakerId];
       item.betsCount += 1;
       item.staked += bet.stake;
-
-      if (bet.status === 'won') {
-        item.netPnL += (bet.actualReturn ?? bet.potentialPayout) - bet.stake;
-      } else if (bet.status === 'lost') {
-        item.netPnL -= bet.stake;
-      } else if (bet.status === 'cashout') {
-        item.netPnL += (bet.actualReturn ?? 0) - bet.stake;
-      }
+      item.netPnL += calculateBetProfit(bet);
     });
 
     return Object.values(map);

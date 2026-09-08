@@ -834,7 +834,7 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
             });
 
             const settledCount = wonCount + lostCount;
-            const netProfit = totalReturns - (totalStaked - (pendingCount * 0));
+            const netProfit = bmBets.reduce((acc, b) => acc + calculateBetProfit(b), 0);
             const winRate = settledCount > 0 ? (wonCount / settledCount) * 100 : 0;
 
             // Mini Recent Wager Impact Audit Log (last 2 bets)
@@ -937,11 +937,13 @@ export const BookmakersView: React.FC<BookmakersViewProps> = ({
                     ) : (
                       recentBets.map((rb) => {
                         let impactTxt = '';
+                        const profit = calculateBetProfit(rb);
                         if (rb.status === 'won') {
-                          const profit = calculateBetProfit(rb);
                           impactTxt = `+${formatCurrency(profit, cardCur)} (Won)`;
                         } else if (rb.status === 'lost') {
-                          impactTxt = `-${formatCurrency(rb.stake, cardCur)} (Lost)`;
+                          impactTxt = `${profit < 0 ? '-' : ''}${formatCurrency(Math.abs(profit), cardCur)} (Lost)`;
+                        } else if (rb.status === 'cashout') {
+                          impactTxt = `${profit >= 0 ? '+' : '-'}${formatCurrency(Math.abs(profit), cardCur)} (Cashout)`;
                         } else {
                           impactTxt = `${rb.status.toUpperCase()}`;
                         }

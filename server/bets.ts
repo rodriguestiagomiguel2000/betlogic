@@ -339,7 +339,17 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
     } else if (sortBy === 'odds-desc') {
       orderSql = `ORDER BY b.total_odds DESC, b.date DESC`;
     } else if (sortBy === 'profit-desc') {
-      orderSql = `ORDER BY (COALESCE(b.actual_return, 0) - b.stake) DESC, b.date DESC`;
+      orderSql = `ORDER BY (
+        CASE 
+          WHEN b.status = 'won' AND b.is_free_bet = true AND (b.free_bet_destination = 'cash' OR b.free_bet_destination IS NULL) THEN COALESCE(b.actual_return, b.potential_payout)
+          WHEN b.status = 'won' THEN (COALESCE(b.actual_return, b.potential_payout) - b.stake)
+          WHEN b.status = 'lost' AND b.is_free_bet = true THEN 0
+          WHEN b.status = 'lost' THEN -b.stake
+          WHEN b.status = 'cashout' AND b.is_free_bet = true AND (b.free_bet_destination = 'cash' OR b.free_bet_destination IS NULL) THEN COALESCE(b.actual_return, 0)
+          WHEN b.status = 'cashout' THEN (COALESCE(b.actual_return, 0) - b.stake)
+          ELSE 0
+        END
+      ) DESC, b.date DESC`;
     } else if (sortBy === 'event-date-asc') {
       orderSql = `ORDER BY b.date ASC`;
     } else if (sortBy === 'event-date-desc') {
