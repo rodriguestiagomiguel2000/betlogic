@@ -33,6 +33,8 @@ export async function verifyDatabaseSchema() {
     await query('ALTER TABLE bet_legs ADD COLUMN IF NOT EXISTS event_date TIMESTAMP WITH TIME ZONE');
     await query('ALTER TABLE bet_legs ADD COLUMN IF NOT EXISTS sport VARCHAR(100)');
     await query('ALTER TABLE bet_legs ALTER COLUMN sport DROP NOT NULL');
+    await query('ALTER TABLE bet_legs ADD COLUMN IF NOT EXISTS builder_id VARCHAR(50)');
+    await query('ALTER TABLE bet_legs ADD COLUMN IF NOT EXISTS builder_odds DECIMAL(10,3)');
     await query(`
       CREATE TABLE IF NOT EXISTS tipsters (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

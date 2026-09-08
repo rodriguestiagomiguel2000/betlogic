@@ -637,6 +637,25 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
         odds: leg.odds,
         status: leg.status,
         eventDate: leg.event_date,
+        builderId: leg.builder_id || null,
+        builderOdds: leg.builder_odds !== undefined && leg.builder_odds !== null ? parseFloat(leg.builder_odds) : null,
+      })),
+      rowCount: found.length,
+    };
+  }
+
+  if (/SELECT .* FROM bet_legs WHERE bet_id = \$1/i.test(sql)) {
+    const betId = params[0];
+    const found = memoryStore.betLegs.filter((leg) => leg.bet_id === betId);
+    return {
+      rows: found.map((leg) => ({
+        id: leg.id,
+        odds: leg.odds,
+        status: leg.status,
+        builder_id: leg.builder_id || null,
+        builder_odds: leg.builder_odds !== undefined && leg.builder_odds !== null ? parseFloat(leg.builder_odds) : null,
+        builderId: leg.builder_id || null,
+        builderOdds: leg.builder_odds !== undefined && leg.builder_odds !== null ? parseFloat(leg.builder_odds) : null,
       })),
       rowCount: found.length,
     };
@@ -689,7 +708,7 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
   }
 
   if (/INSERT INTO bet_legs/i.test(sql)) {
-    const [betId, sport, league, event, market, selection, odds, status, eventDate] = params;
+    const [betId, sport, league, event, market, selection, odds, status, eventDate, builderId, builderOdds] = params;
     const newLeg = {
       id: generateId('leg'),
       bet_id: betId,
@@ -701,6 +720,8 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
       odds: parseFloat(odds || 1.0),
       status: status || 'pending',
       event_date: eventDate || null,
+      builder_id: builderId || null,
+      builder_odds: builderOdds ? parseFloat(builderOdds) : null,
     };
     memoryStore.betLegs.push(newLeg);
     return { rows: [{ id: newLeg.id }], rowCount: 1 };
@@ -733,6 +754,16 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
       bet.scanned_slip_url = (params[13] && params[13] !== 'attached') ? params[13] : bet.scanned_slip_url;
       bet.image_url = (params[14] && params[14] !== 'attached') ? params[14] : bet.image_url;
       bet.tags = typeof params[15] === 'string' ? JSON.parse(params[15]) : params[15] || [];
+      return { rows: [], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 0 };
+  }
+
+  if (/UPDATE bet_legs SET status = \$1 WHERE id = \$2 AND bet_id = \$3/i.test(sql)) {
+    const [status, legId, betId] = params;
+    const leg = memoryStore.betLegs.find((l) => l.id === legId && l.bet_id === betId);
+    if (leg) {
+      leg.status = status;
       return { rows: [], rowCount: 1 };
     }
     return { rows: [], rowCount: 0 };

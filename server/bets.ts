@@ -105,6 +105,84 @@ function computeBetFinancialImpact(bet: {
   return { realCashDelta: 0, freeBetDelta: 0 };
 }
 
+export interface LegForOddsCalculation {
+  odds: number | string;
+  status?: string;
+  builder_id?: string | null;
+  builderId?: string | null;
+  builder_odds?: number | string | null;
+  builderOdds?: number | string | null;
+}
+
+/**
+ * Calculates raw and effective total odds for a list of bet legs.
+ * Correctly accounts for Bet Builder groups where multiple sub-selections share a single builder odds value.
+ * - Group legs by builder_id where present; for each group, use builder_odds (falling back to that group's first leg's odds).
+ * - Legs without a builder_id are treated individually.
+ * - Multiply once per single leg and once per builder group (skip a leg/group entirely if ALL its members have status 'void', treating that unit as 1.0).
+ */
+export function calculateEffectiveOddsFromLegs(
+  legs: LegForOddsCalculation[],
+  allowVoidExclusion: boolean = true,
+  betType?: string
+): number {
+  if (!legs || legs.length === 0) {
+    return 1.0;
+  }
+
+  // Handle whole-bet bet_builder where legs might not have builder_id (legacy rows)
+  const hasAnyBuilderId = legs.some((l) => !!(l.builder_id || l.builderId)?.trim());
+  if (betType === 'bet_builder' && !hasAnyBuilderId) {
+    const rawBOdds = legs[0]?.builder_odds ?? legs[0]?.builderOdds;
+    const parsedBOdds = rawBOdds !== null && rawBOdds !== undefined ? parseFloat(String(rawBOdds)) : null;
+    const groupOdds = parsedBOdds && parsedBOdds > 0 ? parsedBOdds : (parseFloat(String(legs[0]?.odds)) || 1.0);
+    const allVoid = allowVoidExclusion && legs.every((l) => l.status === 'void');
+    return Number((allVoid ? 1.0 : groupOdds).toFixed(3));
+  }
+
+  const builderGroups: Record<string, { legs: LegForOddsCalculation[]; odds: number }> = {};
+  const singleLegs: LegForOddsCalculation[] = [];
+
+  for (const leg of legs) {
+    const bId = (leg.builder_id || leg.builderId || '').trim();
+    if (bId) {
+      if (!builderGroups[bId]) {
+        const rawBOdds = leg.builder_odds ?? leg.builderOdds;
+        const parsedBOdds = rawBOdds !== null && rawBOdds !== undefined ? parseFloat(String(rawBOdds)) : null;
+        const parsedLegOdds = parseFloat(String(leg.odds)) || 1.0;
+        const groupOdds = parsedBOdds && parsedBOdds > 0 ? parsedBOdds : (parsedLegOdds > 0 ? parsedLegOdds : 1.0);
+        builderGroups[bId] = { legs: [], odds: groupOdds };
+      }
+      builderGroups[bId].legs.push(leg);
+    } else {
+      singleLegs.push(leg);
+    }
+  }
+
+  let effectiveTotal = 1.0;
+
+  for (const leg of singleLegs) {
+    const legOdds = parseFloat(String(leg.odds)) || 1.0;
+    if (allowVoidExclusion && leg.status === 'void') {
+      effectiveTotal *= 1.0;
+    } else {
+      effectiveTotal *= (legOdds > 0 ? legOdds : 1.0);
+    }
+  }
+
+  for (const bId in builderGroups) {
+    const group = builderGroups[bId];
+    const allVoid = allowVoidExclusion && group.legs.length > 0 && group.legs.every((l) => l.status === 'void');
+    if (allVoid) {
+      effectiveTotal *= 1.0;
+    } else {
+      effectiveTotal *= group.odds;
+    }
+  }
+
+  return Number(effectiveTotal.toFixed(3));
+}
+
 /**
  * GET /api/bets
  * Lists bets for the authenticated user, supporting optional startDate, endDate, bankrollId, page, and limit.
@@ -319,7 +397,7 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
     // Fetch all legs for these bets in one query to optimize performance
     const betIds = bets.map((b) => b.id);
     const legsResult = await query(
-      `SELECT id, bet_id as "betId", sport, league, event, market, selection, odds, status, event_date as "eventDate"
+      `SELECT id, bet_id as "betId", sport, league, event, market, selection, odds, status, event_date as "eventDate", builder_id as "builderId", builder_odds as "builderOdds"
        FROM bet_legs 
        WHERE bet_id = ANY($1)`,
       [betIds]
@@ -341,6 +419,8 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
         odds: parseFloat(leg.odds),
         status: leg.status,
         eventDate: leg.eventDate,
+        builderId: leg.builderId || null,
+        builderOdds: leg.builderOdds != null ? parseFloat(leg.builderOdds) : null,
       });
     });
 
@@ -493,8 +573,8 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
       }
 
       await client.query(
-        `INSERT INTO bet_legs (bet_id, sport, league, event, market, selection, odds, status, event_date)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        `INSERT INTO bet_legs (bet_id, sport, league, event, market, selection, odds, status, event_date, builder_id, builder_odds)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           betId,
           leg.sport,
@@ -505,6 +585,8 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
           leg.odds || 1.0,
           leg.status || status || 'pending',
           eventDateIso,
+          leg.builderId || null,
+          leg.builderOdds || null,
         ]
       );
     }
@@ -644,8 +726,8 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
       }
 
       await client.query(
-        `INSERT INTO bet_legs (bet_id, sport, league, event, market, selection, odds, status, event_date)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        `INSERT INTO bet_legs (bet_id, sport, league, event, market, selection, odds, status, event_date, builder_id, builder_odds)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           betId,
           leg.sport,
@@ -656,6 +738,8 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
           leg.odds || 1.0,
           leg.status || status || 'pending',
           eventDateIso,
+          leg.builderId || null,
+          leg.builderOdds || null,
         ]
       );
     }
@@ -744,10 +828,14 @@ router.patch('/:id/legs/:legId/status', authenticateToken as any, async (req: Au
 
     // 4. Recalculate bet status based on all legs
     const allLegsRes = await client.query(
-      `SELECT id, odds, status FROM bet_legs WHERE bet_id = $1`,
+      `SELECT id, odds, status, builder_id as "builderId", builder_odds as "builderOdds" FROM bet_legs WHERE bet_id = $1`,
       [betId]
     );
-    const allLegs = allLegsRes.rows.map((l) => ({ ...l, odds: parseFloat(l.odds) }));
+    const allLegs = allLegsRes.rows.map((l) => ({
+      ...l,
+      odds: parseFloat(l.odds),
+      builderOdds: l.builderOdds !== null && l.builderOdds !== undefined ? parseFloat(l.builderOdds) : null,
+    }));
 
     const anyLost = allLegs.some((l) => l.status === 'lost');
     const allWon = allLegs.every((l) => l.status === 'won');
@@ -761,12 +849,7 @@ router.patch('/:id/legs/:legId/status', authenticateToken as any, async (req: Au
     else if (allVoid) newStatus = 'void';
     else newStatus = 'pending';
 
-    let effectiveOdds = 1.0;
-    for (const leg of allLegs) {
-      if (leg.status !== 'void') {
-        effectiveOdds *= (leg.odds || 1.0);
-      }
-    }
+    const effectiveOdds = calculateEffectiveOddsFromLegs(allLegs, true, orig.type);
 
     const stake = parseFloat(orig.stake);
     const payout = Number((stake * effectiveOdds).toFixed(2));

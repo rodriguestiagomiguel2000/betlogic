@@ -101,8 +101,14 @@ CREATE TABLE IF NOT EXISTS bet_legs (
     odds DECIMAL(10, 4) NOT NULL DEFAULT 1.0000,
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     event_date TIMESTAMP WITH TIME ZONE,
+    builder_id VARCHAR(50),
+    builder_odds DECIMAL(10, 3),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Ensure migration-safe columns on bet_legs
+ALTER TABLE bet_legs ADD COLUMN IF NOT EXISTS builder_id VARCHAR(50);
+ALTER TABLE bet_legs ADD COLUMN IF NOT EXISTS builder_odds DECIMAL(10, 3);
 
 -- 7. BANKROLL TRANSFERS TABLE
 CREATE TABLE IF NOT EXISTS bankroll_transfers (

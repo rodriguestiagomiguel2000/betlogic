@@ -890,13 +890,8 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   const bankrollTotal = activeBankroll ? activeBankroll.currentBalance || activeBankroll.initialBalance : 0;
   const stakePercentage = bankrollTotal > 0 ? (stake / bankrollTotal) * 100 : 0;
 
-  // Calculate theoretical cumulative combined odds by multiplying all individual leg odds together
-  const multiplicativeOdds = Number(
-    legs.reduce((acc, leg) => {
-      if (leg.status === 'void') return acc;
-      return acc * (Number(leg.odds) || 1);
-    }, 1).toFixed(3)
-  );
+  // Theoretical cumulative combined odds (accounting correctly for Bet Builder groups via calculateLegsOdds)
+  const multiplicativeOdds = rawTotalOdds;
 
   // Accumulator Multiplier Math Check tolerance (±5% or a fixed delta of ±0.15)
   const oddsDelta = Math.abs(multiplicativeOdds - displaySlipOdds);

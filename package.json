@@ -11,7 +11,8 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node --max-old-space-size=384 --expose-gc dist/server.cjs",
     "lint": "tsc --noEmit",
-    "cleanup:duplicates": "tsx scripts/cleanup-duplicate-rollover-transactions.ts"
+    "cleanup:duplicates": "tsx scripts/cleanup-duplicate-rollover-transactions.ts",
+    "check:builder-odds": "tsx scripts/find-bets-with-builder-odds-mismatch.ts"
   },
   "dependencies": {
     "@google/genai": "^2.15.0",
