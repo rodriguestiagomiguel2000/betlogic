@@ -860,6 +860,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
         type: betType,
         legs,
         totalOdds: Number(totalOdds.toFixed(3)),
+        rawTheoreticalOdds: rawTotalOdds,
         stake,
         potentialPayout: Number(potentialPayout.toFixed(2)),
         actualReturn: calculatedReturn,

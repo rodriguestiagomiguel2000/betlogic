@@ -359,7 +359,7 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
     // 2. Fetch records
     let queryText = `
       SELECT 
-        b.id, b.date::text as date, b.type, b.total_odds as "totalOdds", b.stake, 
+        b.id, b.date::text as date, b.type, b.total_odds as "totalOdds", b.raw_theoretical_odds as "rawTheoreticalOdds", b.stake, 
         b.potential_payout as "potentialPayout", b.actual_return as "actualReturn", 
         b.status, b.bookmaker_id as "bookmakerId", b.bankroll_id as "bankrollId", 
         b.tipster_id as "tipsterId", t.name as "tipsterName", t.color as "tipsterColor", t.platform as "tipsterPlatform",
@@ -438,6 +438,7 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
     for (let i = 0; i < bets.length; i++) {
       const bet = bets[i];
       bet.totalOdds = parseFloat(bet.totalOdds);
+      bet.rawTheoreticalOdds = bet.rawTheoreticalOdds != null ? parseFloat(bet.rawTheoreticalOdds) : null;
       bet.stake = parseFloat(bet.stake);
       bet.potentialPayout = parseFloat(bet.potentialPayout);
       bet.actualReturn = bet.actualReturn ? parseFloat(bet.actualReturn) : 0;
@@ -513,6 +514,7 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
       type,
       legs,
       totalOdds,
+      rawTheoreticalOdds,
       stake,
       potentialPayout,
       actualReturn,
@@ -536,12 +538,17 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
     await client.query('BEGIN');
 
     // 1. Insert Bet Header
+    const parsedTotalOdds = totalOdds != null ? parseFloat(totalOdds) : 1.0;
+    const parsedRawTheoreticalOdds = rawTheoreticalOdds !== undefined && rawTheoreticalOdds !== null
+      ? parseFloat(rawTheoreticalOdds)
+      : parsedTotalOdds;
+
     const betInsertQuery = `
       INSERT INTO bets (
-        user_id, bankroll_id, bookmaker_id, date, type, total_odds, stake, 
+        user_id, bankroll_id, bookmaker_id, date, type, total_odds, raw_theoretical_odds, stake, 
         potential_payout, actual_return, status, is_live, is_free_bet, 
         free_bet_destination, notes, scanned_slip_url, image_url, tags, tipster_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
       RETURNING id
     `;
     const betInsertParams = [
@@ -550,7 +557,8 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
       bookmakerId,
       date,
       type,
-      totalOdds || 1.0,
+      parsedTotalOdds,
+      parsedRawTheoreticalOdds,
       stake,
       potentialPayout || 0,
       actualReturn || 0,
@@ -640,6 +648,7 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
       type,
       legs,
       totalOdds,
+      rawTheoreticalOdds,
       stake,
       potentialPayout,
       actualReturn,
@@ -660,7 +669,7 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
 
     // 1. Get original bet to reverse its balance impact before updating
     const originalBetQuery = await client.query(
-      'SELECT bankroll_id, bookmaker_id, stake, actual_return, potential_payout, status, is_free_bet, free_bet_destination, scanned_slip_url, image_url FROM bets WHERE id = $1 AND user_id = $2',
+      'SELECT bankroll_id, bookmaker_id, stake, total_odds, raw_theoretical_odds, actual_return, potential_payout, status, is_free_bet, free_bet_destination, scanned_slip_url, image_url FROM bets WHERE id = $1 AND user_id = $2',
       [betId, userId]
     );
 
@@ -690,19 +699,25 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
     }
 
     // 3. Update Bet Header
+    const parsedTotalOddsPut = totalOdds != null ? parseFloat(totalOdds) : (parseFloat(orig.total_odds) || 1.0);
+    const parsedRawTheoreticalOddsPut = rawTheoreticalOdds !== undefined && rawTheoreticalOdds !== null
+      ? parseFloat(rawTheoreticalOdds)
+      : (orig.raw_theoretical_odds !== null && orig.raw_theoretical_odds !== undefined ? parseFloat(orig.raw_theoretical_odds) : parsedTotalOddsPut);
+
     await client.query(
       `UPDATE bets SET 
         bankroll_id = $1, bookmaker_id = $2, date = $3, type = $4, total_odds = $5, 
-        stake = $6, potential_payout = $7, actual_return = $8, status = $9, 
-        is_live = $10, is_free_bet = $11, free_bet_destination = $12, notes = $13, 
-        scanned_slip_url = $14, image_url = $15, tags = $16, tipster_id = $17
-       WHERE id = $18 AND user_id = $19`,
+        raw_theoretical_odds = $6, stake = $7, potential_payout = $8, actual_return = $9, status = $10, 
+        is_live = $11, is_free_bet = $12, free_bet_destination = $13, notes = $14, 
+        scanned_slip_url = $15, image_url = $16, tags = $17, tipster_id = $18
+       WHERE id = $19 AND user_id = $20`,
       [
         bankrollId || orig.bankroll_id,
         bookmakerId || orig.bookmaker_id,
         date,
         type,
-        totalOdds || 1.0,
+        parsedTotalOddsPut,
+        parsedRawTheoreticalOddsPut,
         stake,
         potentialPayout || 0,
         actualReturn || 0,
@@ -810,7 +825,7 @@ router.patch('/:id/legs/:legId/status', authenticateToken as any, async (req: Au
 
     // 2. Fetch original bet header
     const origBetRes = await client.query(
-      `SELECT bankroll_id, bookmaker_id, stake, total_odds, actual_return, potential_payout, status, is_free_bet, free_bet_destination, type, scanned_slip_url, image_url
+      `SELECT bankroll_id, bookmaker_id, stake, total_odds, raw_theoretical_odds, actual_return, potential_payout, status, is_free_bet, free_bet_destination, type, scanned_slip_url, image_url
        FROM bets WHERE id = $1 AND user_id = $2`,
       [betId, userId]
     );
@@ -859,10 +874,22 @@ router.patch('/:id/legs/:legId/status', authenticateToken as any, async (req: Au
     else if (allVoid) newStatus = 'void';
     else newStatus = 'pending';
 
-    const effectiveOdds = calculateEffectiveOddsFromLegs(allLegs, true, orig.type);
+    const storedTotalOdds = parseFloat(orig.total_odds) || 1.0;
+    const storedRawTheoreticalOdds = orig.raw_theoretical_odds != null ? parseFloat(orig.raw_theoretical_odds) : null;
+
+    const newTheoreticalOdds = calculateEffectiveOddsFromLegs(allLegs, true, orig.type);
+
+    const hasAnyVoidLeg = allLegs.some((l) => l.status === 'void');
+    let finalTotalOdds = storedTotalOdds;
+    if (hasAnyVoidLeg) {
+      const boostRatio = (storedRawTheoreticalOdds !== null && storedRawTheoreticalOdds > 0)
+        ? (storedTotalOdds / storedRawTheoreticalOdds)
+        : 1.0;
+      finalTotalOdds = Number((newTheoreticalOdds * boostRatio).toFixed(3));
+    }
 
     const stake = parseFloat(orig.stake);
-    const payout = Number((stake * effectiveOdds).toFixed(2));
+    const payout = Number((stake * finalTotalOdds).toFixed(2));
     let ret = 0;
     if (newStatus === 'won') ret = payout;
     else if (newStatus === 'lost') ret = 0;
@@ -872,7 +899,7 @@ router.patch('/:id/legs/:legId/status', authenticateToken as any, async (req: Au
     await client.query(
       `UPDATE bets SET status = $1, total_odds = $2, potential_payout = $3, actual_return = $4
        WHERE id = $5 AND user_id = $6`,
-      [newStatus, parseFloat(effectiveOdds.toFixed(3)), payout, ret, betId, userId]
+      [newStatus, finalTotalOdds, payout, ret, betId, userId]
     );
 
     // 6. Apply new financial impact
@@ -895,7 +922,7 @@ router.patch('/:id/legs/:legId/status', authenticateToken as any, async (req: Au
     return res.json({
       id: betId,
       status: newStatus,
-      totalOdds: parseFloat(effectiveOdds.toFixed(3)),
+      totalOdds: finalTotalOdds,
       potentialPayout: payout,
       actualReturn: ret,
       scannedSlipUrl: hasImg ? 'attached' : '',

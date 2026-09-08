@@ -22,6 +22,7 @@ export interface Bet {
   type: BetType;
   legs: BetLeg[];
   totalOdds: number;
+  rawTheoreticalOdds?: number;
   stake: number;
   potentialPayout: number;
   actualReturn?: number;

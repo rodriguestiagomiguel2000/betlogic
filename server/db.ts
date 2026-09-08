@@ -602,6 +602,7 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
           date: b.date,
           type: b.type,
           totalOdds: b.total_odds,
+          rawTheoreticalOdds: b.raw_theoretical_odds,
           stake: b.stake,
           potentialPayout: b.potential_payout,
           actualReturn: b.actual_return,
@@ -669,6 +670,7 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
       date,
       type,
       totalOdds,
+      rawTheoreticalOdds,
       stake,
       potentialPayout,
       actualReturn,
@@ -690,6 +692,7 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
       date,
       type,
       total_odds: parseFloat(totalOdds || 1.0),
+      raw_theoretical_odds: rawTheoreticalOdds !== undefined && rawTheoreticalOdds !== null ? parseFloat(rawTheoreticalOdds) : parseFloat(totalOdds || 1.0),
       stake: parseFloat(stake || 0),
       potential_payout: parseFloat(potentialPayout || 0),
       actual_return: parseFloat(actualReturn || 0),
@@ -727,10 +730,23 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
     return { rows: [{ id: newLeg.id }], rowCount: 1 };
   }
 
-  if (/SELECT bankroll_id, bookmaker_id, stake, actual_return, potential_payout, status, is_free_bet, free_bet_destination FROM bets WHERE id = \$1 AND user_id = \$2/i.test(sql)) {
+  if (/SELECT .* FROM bets WHERE id = \$1 AND user_id = \$2/i.test(sql)) {
     const [betId, userId] = params;
     const found = memoryStore.bets.filter((b) => b.id === betId && b.user_id === userId);
     return { rows: found, rowCount: found.length };
+  }
+
+  if (/UPDATE bets SET status = \$1, total_odds = \$2, potential_payout = \$3, actual_return = \$4 WHERE id = \$5 AND user_id = \$6/i.test(sql)) {
+    const [status, totalOdds, potentialPayout, actualReturn, betId, userId] = params;
+    const bet = memoryStore.bets.find((b) => b.id === betId && b.user_id === userId);
+    if (bet) {
+      bet.status = status;
+      bet.total_odds = parseFloat(totalOdds);
+      bet.potential_payout = parseFloat(potentialPayout);
+      bet.actual_return = parseFloat(actualReturn);
+      return { rows: [], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 0 };
   }
 
   if (/UPDATE bets SET/i.test(sql)) {
@@ -743,17 +759,18 @@ async function runInMemoryQuery(text: string, params: any[] = []): Promise<{ row
       bet.date = params[2] || bet.date;
       bet.type = params[3] || bet.type;
       bet.total_odds = parseFloat(params[4] || 1.0);
-      bet.stake = parseFloat(params[5] || 0);
-      bet.potential_payout = parseFloat(params[6] || 0);
-      bet.actual_return = parseFloat(params[7] || 0);
-      bet.status = params[8] || 'pending';
-      bet.is_live = !!params[9];
-      bet.is_free_bet = !!params[10];
-      bet.free_bet_destination = params[11] || 'cash';
-      bet.notes = params[12] || '';
-      bet.scanned_slip_url = (params[13] && params[13] !== 'attached') ? params[13] : bet.scanned_slip_url;
-      bet.image_url = (params[14] && params[14] !== 'attached') ? params[14] : bet.image_url;
-      bet.tags = typeof params[15] === 'string' ? JSON.parse(params[15]) : params[15] || [];
+      bet.raw_theoretical_odds = params[5] !== undefined && params[5] !== null ? parseFloat(params[5]) : bet.raw_theoretical_odds;
+      bet.stake = parseFloat(params[6] || 0);
+      bet.potential_payout = parseFloat(params[7] || 0);
+      bet.actual_return = parseFloat(params[8] || 0);
+      bet.status = params[9] || 'pending';
+      bet.is_live = !!params[10];
+      bet.is_free_bet = !!params[11];
+      bet.free_bet_destination = params[12] || 'cash';
+      bet.notes = params[13] || '';
+      bet.scanned_slip_url = (params[14] && params[14] !== 'attached') ? params[14] : bet.scanned_slip_url;
+      bet.image_url = (params[15] && params[15] !== 'attached') ? params[15] : bet.image_url;
+      bet.tags = typeof params[16] === 'string' ? JSON.parse(params[16]) : params[16] || [];
       return { rows: [], rowCount: 1 };
     }
     return { rows: [], rowCount: 0 };

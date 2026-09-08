@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS bets (
     date DATE NOT NULL,
     type VARCHAR(50) NOT NULL DEFAULT 'single', -- single, parlay, bet_builder
     total_odds DECIMAL(10, 4) NOT NULL DEFAULT 1.0000,
+    raw_theoretical_odds DECIMAL(10, 3),
     stake DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
     potential_payout DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
     actual_return DECIMAL(15, 2) DEFAULT 0.00,
@@ -88,6 +89,9 @@ CREATE TABLE IF NOT EXISTS bets (
     tags JSONB DEFAULT '[]'::jsonb, -- Store list of strings e.g. ["arbitrage", "hedged"]
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Ensure migration-safe columns on bets
+ALTER TABLE bets ADD COLUMN IF NOT EXISTS raw_theoretical_odds DECIMAL(10, 3);
 
 -- 6. BET LEGS TABLE
 CREATE TABLE IF NOT EXISTS bet_legs (

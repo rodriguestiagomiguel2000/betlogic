@@ -197,6 +197,7 @@ export const ManualBetEntry: React.FC<ManualBetEntryProps> = ({
       type: betType,
       legs,
       totalOdds: Number(totalOdds.toFixed(3)),
+      rawTheoreticalOdds: Number(totalOdds.toFixed(3)),
       stake: stakeAmount,
       potentialPayout: Number((stakeAmount * totalOdds).toFixed(2)),
       status: 'pending',

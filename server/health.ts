@@ -48,6 +48,7 @@ export async function verifyDatabaseSchema() {
       )
     `);
     await query('ALTER TABLE bets ADD COLUMN IF NOT EXISTS tipster_id UUID REFERENCES tipsters(id) ON DELETE SET NULL');
+    await query('ALTER TABLE bets ADD COLUMN IF NOT EXISTS raw_theoretical_odds DECIMAL(10,3)');
     await query(`
       CREATE TABLE IF NOT EXISTS bankroll_transactions (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
