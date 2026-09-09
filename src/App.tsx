@@ -27,6 +27,7 @@ import { CSVImportExport } from './components/CSVImportExport';
 import { UserProfile } from './components/UserProfile';
 import { PLCalendarView } from './components/PLCalendarView';
 import { TipstersView } from './components/TipstersView';
+import { VoidLegModal } from './components/VoidLegModal';
 import { Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 
 import { AnimatePresence, motion } from 'motion/react';
@@ -59,6 +60,15 @@ export function App() {
   });
   const [tagDefinitions, setTagDefinitions] = useState<TagDefinition[]>([]);
   const [tipsters, setTipsters] = useState<Tipster[]>([]);
+
+  // State for Void Leg confirmation modal
+  const [voidLegModalData, setVoidLegModalData] = useState<{
+    betId: string;
+    legId: string;
+    legSelection: string;
+    currentTotalOdds: number;
+    suggestedTotalOdds: number;
+  } | null>(null);
 
   // Memoized win streak
   const winStreak = useMemo(() => calculateWinStreak(bets), [bets]);
@@ -270,12 +280,17 @@ export function App() {
     }
   };
 
-  const handleUpdateBetLegStatus = async (betId: string, legId: string, newLegStatus: BetStatus) => {
+  const executeUpdateBetLegStatus = async (
+    betId: string,
+    legId: string,
+    newLegStatus: BetStatus,
+    confirmedTotalOdds?: number
+  ) => {
     try {
       const existing = bets.find(b => b.id === betId);
       if (!existing) return;
       const updatedLegs = existing.legs.map(l => l.id === legId ? { ...l, status: newLegStatus } : l);
-      const effectiveOdds = calculateLegsOdds(updatedLegs, existing.type).effectiveTotalOdds;
+
       const anyLost = updatedLegs.some(l => l.status === 'lost');
       const allWon = updatedLegs.every(l => l.status === 'won');
       const allVoid = updatedLegs.every(l => l.status === 'void');
@@ -288,7 +303,11 @@ export function App() {
       else if (allVoid) newStatus = 'void';
       else newStatus = 'pending';
 
-      const payout = Number((existing.stake * effectiveOdds).toFixed(2));
+      const finalTotalOdds = (newLegStatus === 'void' && confirmedTotalOdds !== undefined)
+        ? confirmedTotalOdds
+        : existing.totalOdds;
+
+      const payout = Number((existing.stake * finalTotalOdds).toFixed(2));
       let ret = existing.actualReturn;
       if (newStatus === 'won') ret = payout;
       else if (newStatus === 'lost') ret = 0;
@@ -297,7 +316,7 @@ export function App() {
       const updated = {
         ...existing,
         legs: updatedLegs,
-        totalOdds: Number(effectiveOdds.toFixed(3)),
+        totalOdds: Number(finalTotalOdds.toFixed(3)),
         potentialPayout: payout,
         status: newStatus,
         actualReturn: ret
@@ -340,7 +359,7 @@ export function App() {
         }
       }
 
-      const res = await betsApi.updateLegStatus(betId, legId, newLegStatus);
+      const res = await betsApi.updateLegStatus(betId, legId, newLegStatus, confirmedTotalOdds);
       
       if (res && (res.status !== undefined || res.totalOdds !== undefined || res.potentialPayout !== undefined || res.actualReturn !== undefined)) {
         setBets(prev => prev.map(b => {
@@ -359,6 +378,53 @@ export function App() {
       // Revert on error
       loadData();
     }
+  };
+
+  const handleUpdateBetLegStatus = async (betId: string, legId: string, newLegStatus: BetStatus) => {
+    // 1. If changing to 'void', open confirmation modal and compute suggested odds
+    if (newLegStatus === 'void') {
+      const existing = bets.find(b => b.id === betId);
+      if (!existing) return;
+      const targetLeg = existing.legs.find(l => l.id === legId);
+      if (!targetLeg) return;
+      if (targetLeg.status === 'void') return; // already void
+
+      // Compute suggested odds using bet-builder-aware calculateLegsOdds with this leg set to void locally
+      const updatedLegs = existing.legs.map(l => l.id === legId ? { ...l, status: 'void' as BetStatus } : l);
+      const { effectiveTotalOdds } = calculateLegsOdds(updatedLegs, existing.type);
+
+      const storedOdds = existing.totalOdds;
+      const rawOdds = existing.rawTheoreticalOdds;
+      const boostRatio = (rawOdds !== undefined && rawOdds !== null && rawOdds > 0)
+        ? (storedOdds / rawOdds)
+        : 1.0;
+      const suggestedTotalOdds = Number((effectiveTotalOdds * boostRatio).toFixed(3));
+
+      setVoidLegModalData({
+        betId,
+        legId,
+        legSelection: targetLeg.selection || 'Leg',
+        currentTotalOdds: existing.totalOdds,
+        suggestedTotalOdds,
+      });
+      return;
+    }
+
+    // 2. Regular won/lost/pending update without modal
+    await executeUpdateBetLegStatus(betId, legId, newLegStatus);
+  };
+
+  const handleConfirmVoidLeg = async (confirmedOdds: number) => {
+    if (!voidLegModalData) return;
+    const { betId, legId } = voidLegModalData;
+    setVoidLegModalData(null);
+    await executeUpdateBetLegStatus(betId, legId, 'void', confirmedOdds);
+  };
+
+  const handleCancelVoidLeg = () => {
+    setVoidLegModalData(null);
+    // Force re-render to ensure controlled select inputs revert to original leg status
+    setBets(prev => [...prev]);
   };
 
   const handleDeleteBet = async (betId: string) => {
@@ -754,6 +820,17 @@ export function App() {
           </motion.div>
         </AnimatePresence>
       </main>
+
+      {voidLegModalData && (
+        <VoidLegModal
+          isOpen={true}
+          legSelection={voidLegModalData.legSelection}
+          currentTotalOdds={voidLegModalData.currentTotalOdds}
+          suggestedTotalOdds={voidLegModalData.suggestedTotalOdds}
+          onConfirm={handleConfirmVoidLeg}
+          onCancel={handleCancelVoidLeg}
+        />
+      )}
     </div>
   );
 }

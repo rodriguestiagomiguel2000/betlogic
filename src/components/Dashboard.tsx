@@ -72,6 +72,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
   }, [lightboxBet]);
 
+  // Synchronize lightboxBet with bets updates (e.g. leg status change)
+  React.useEffect(() => {
+    if (lightboxBet) {
+      const updated = bets.find((b) => b.id === lightboxBet.id);
+      if (updated && updated !== lightboxBet) {
+        setLightboxBet(updated);
+      }
+    }
+  }, [bets, lightboxBet]);
+
   // Filter bets
   const filteredBets = useMemo(() => {
     return bets.filter((b: Bet) => {

@@ -397,10 +397,10 @@ export const betsApi = {
     return apiRequest<{ id: string; imageUrl?: string; scannedSlipUrl?: string }>(`/bets/${id}/image`);
   },
 
-  async updateLegStatus(betId: string, legId: string, status: string): Promise<any> {
+  async updateLegStatus(betId: string, legId: string, status: string, confirmedTotalOdds?: number): Promise<any> {
     return apiRequest(`/bets/${betId}/legs/${legId}/status`, {
       method: 'PATCH',
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, confirmedTotalOdds }),
     });
   }
 };

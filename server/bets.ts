@@ -809,7 +809,7 @@ router.patch('/:id/legs/:legId/status', authenticateToken as any, async (req: Au
     const userId = req.user?.id;
     const betId = req.params.id;
     const legId = req.params.legId;
-    const { status: newLegStatus } = req.body;
+    const { status: newLegStatus, confirmedTotalOdds } = req.body;
 
     if (!newLegStatus) {
       return res.status(400).json({ error: 'Leg status is required.' });
@@ -877,15 +877,23 @@ router.patch('/:id/legs/:legId/status', authenticateToken as any, async (req: Au
     const storedTotalOdds = parseFloat(orig.total_odds) || 1.0;
     const storedRawTheoreticalOdds = orig.raw_theoretical_odds != null ? parseFloat(orig.raw_theoretical_odds) : null;
 
-    const newTheoreticalOdds = calculateEffectiveOddsFromLegs(allLegs, true, orig.type);
-
-    const hasAnyVoidLeg = allLegs.some((l) => l.status === 'void');
     let finalTotalOdds = storedTotalOdds;
-    if (hasAnyVoidLeg) {
+
+    // Void case source of truth:
+    // If request includes confirmedTotalOdds, use that value directly (no server-side recalculation).
+    if (confirmedTotalOdds !== undefined && confirmedTotalOdds !== null && !isNaN(Number(confirmedTotalOdds))) {
+      finalTotalOdds = Number(Number(confirmedTotalOdds).toFixed(3));
+    } else if (newLegStatus === 'void') {
+      // Fall back to server-side recalculation only as safety net for automated/legacy calls without confirmedTotalOdds
+      console.warn(`[PATCH /api/bets/${betId}/legs/${legId}/status] Leg marked void without confirmedTotalOdds; falling back to safety-net recalculation.`);
+      const newTheoreticalOdds = calculateEffectiveOddsFromLegs(allLegs, true, orig.type);
       const boostRatio = (storedRawTheoreticalOdds !== null && storedRawTheoreticalOdds > 0)
         ? (storedTotalOdds / storedRawTheoreticalOdds)
         : 1.0;
       finalTotalOdds = Number((newTheoreticalOdds * boostRatio).toFixed(3));
+    } else {
+      // Regular won/lost/pending leg updates do not modify accumulator total_odds
+      finalTotalOdds = storedTotalOdds;
     }
 
     const stake = parseFloat(orig.stake);
