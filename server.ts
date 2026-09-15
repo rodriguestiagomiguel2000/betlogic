@@ -231,146 +231,228 @@ Special parsing & Extraction Rules:
      * Map the pick answer into 'selection' (e.g. "Sim", "Não", "Over 2.5").
      * NEVER omit 'market' or leave it empty when a market descriptor header is visible on the slip.`;
 
-      // Set up server-side AbortController with a 45s hard safety timeout
+      // Set up server-side AbortController with a 65s hard safety timeout (accommodates retries & fallback)
       const controller = new AbortController();
       abortTimeout = setTimeout(() => {
-        console.warn(`[BETSLIP OCR] ⏱️ Timeout reached (45s) -> aborting Gemini API call`);
+        console.warn(`[BETSLIP OCR] ⏱️ Timeout reached (65s) -> aborting Gemini API call`);
         controller.abort();
-      }, 45000);
+      }, 65000);
 
       currentStage = 'gemini_request';
-      console.log(`[BETSLIP OCR] [stage=${currentStage}] Starting Gemini request to gemini-3.1-flash-lite (timeout: 45s)...`);
+      console.log(`[BETSLIP OCR] [stage=${currentStage}] Starting Gemini request (primary: gemini-3.1-flash-lite, timeout: 65s)...`);
 
-      // Enforce JSON Schema structured outputs using Gemini 3.1 Flash Lite
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite',
-        contents: [
-          {
-            inlineData: {
-              mimeType: mimeType || 'image/jpeg',
-              data: imageData,
+      // Helper to identify 503/UNAVAILABLE or temporary high demand spikes
+      function is503UnavailableError(error: any): boolean {
+        if (!error) return false;
+        const status = error.status || error.statusCode || error.code;
+        if (status === 503 || status === '503') return true;
+        const msg = String(error.message || error || '').toLowerCase();
+        return (
+          msg.includes('503') ||
+          msg.includes('unavailable') ||
+          msg.includes('high demand') ||
+          msg.includes('overloaded') ||
+          msg.includes('service unavailable') ||
+          msg.includes('spikes in demand')
+        );
+      }
+
+      const retryDelays = [2000, 5000, 10000]; // 2s, 5s, 10s backoff delays
+      let response: any = null;
+      let usedFallbackModel = false;
+      let modelUsed = 'gemini-3.1-flash-lite';
+      let lastError: any = null;
+
+      const geminiConfig = {
+        responseMimeType: 'application/json',
+        temperature: 0,
+        abortSignal: controller.signal,
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            bookmaker: {
+              type: Type.STRING,
+              description: 'Name of the sportsbook/bookmaker (e.g. ReloadBet, Bet365, Pinnacle, BC.GAME).',
             },
-          },
-          {
-            text: prompt,
-          },
-        ],
-        config: {
-          responseMimeType: 'application/json',
-          temperature: 0,
-          abortSignal: controller.signal,
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              bookmaker: {
-                type: Type.STRING,
-                description: 'Name of the sportsbook/bookmaker (e.g. ReloadBet, Bet365, Pinnacle, BC.GAME).',
-              },
-              event: {
-                type: Type.STRING,
-                description: 'Main match/fixture name for single bets or overall description for parlays.',
-              },
-              market: {
-                type: Type.STRING,
-                description: 'Main betting market name (e.g. 1x2, Match Result, Both Teams To Score).',
-              },
-              selection: {
-                type: Type.STRING,
-                description: 'Selected outcome or team (e.g., Deportivo Madryn, Over 2.5).',
-              },
-              sport: {
-                type: Type.STRING,
-                enum: ['Football', 'Basketball', 'Tennis', 'Baseball', 'Ice Hockey', 'Esports', 'MMA', 'Golf'],
-                description: 'Sport category. MUST be exactly one of the specified enum values, or omit/leave null if unrecognizable.',
-              },
-              odds: {
-                type: Type.NUMBER,
-                description: 'Total combined odds directly printed on the slip footer/summary (or single bet odds). Extract printed number directly without multiplying legs.',
-              },
-              stake: {
-                type: Type.NUMBER,
-                description: 'Monetary stake amount wagered.',
-              },
-              potentialPayout: {
-                type: Type.NUMBER,
-                description: 'Estimated or potential monetary return.',
-              },
-              status: {
-                type: Type.STRING,
-                description: 'Current wager status: pending, won, lost, void, or cashout.',
-              },
-              is_live: {
-                type: Type.BOOLEAN,
-                description: 'True if the wager is an in-play/live bet or taken during halftime/in-game, indicated by LIVE badges, red dots, or match clocks.',
-              },
-              market_type: {
-                type: Type.STRING,
-                description: 'Type of bet: Single, Parlay, Multiple, Accumulator, or Bet Builder.',
-              },
-              placed_at: {
-                type: Type.STRING,
-                description: `The bet-slip's own placement/issue timestamp ONLY (e.g. a receipt or "ticket generated" line), NOT any match kickoff time — see rule 2b. ISO string YYYY-MM-DD or YYYY-MM-DDTHH:mm using current year ${currentYear}. If no distinct placement timestamp is visible on the slip, output an empty string "" — do not default to today's date.`,
-              },
-              bet_id: {
-                type: Type.STRING,
-                description: 'Unique slip identifier/ticket number.',
-              },
-              total_odds: {
-                type: Type.NUMBER,
-                description: 'Total combined odds directly printed on the ticket slip summary/footer (e.g. "Total odds", "Cota total"). Do not calculate by multiplying legs.',
-              },
-              legs: {
-                type: Type.ARRAY,
-                description: 'Array of separate selections or legs parsed from the slip. ALWAYS extract EVERY leg.',
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    event: {
-                      type: Type.STRING,
-                      description: 'Match fixture or event name (e.g. Deportivo Madryn vs. All Boys or Ciudad de Bolivar vs. Mitre). MUST NOT be empty.',
-                    },
-                    selection: {
-                      type: Type.STRING,
-                      description: 'The specific pick or team outcome (e.g. Deportivo Madryn, Mitre). MUST NOT be empty.',
-                    },
-                    team: {
-                      type: Type.STRING,
-                      description: 'Selected team or outcome.',
-                    },
-                    market: {
-                      type: Type.STRING,
-                      description: 'Wager market details (e.g. 1x2, Ambas Marcam, Match Result, [Team] para marcar em ambas as partes). MUST be extracted if visible.',
-                    },
-                    sport: {
-                      type: Type.STRING,
-                      enum: ['Football', 'Basketball', 'Tennis', 'Baseball', 'Ice Hockey', 'Esports', 'MMA', 'Golf'],
-                      description: 'Sport category for this specific leg. MUST be exactly one of the specified enum values, or omit/leave null if unrecognizable.',
-                    },
-                    odds_decimal: {
-                      type: Type.NUMBER,
-                      description: 'Decimal odds for this individual leg ONLY (e.g. 1.95 or 1.43). For Bet Builders, use group odds or builder_odds.',
-                    },
-                    builder_id: {
-                      type: Type.STRING,
-                      description: 'Identifier grouping sub-selections that belong to the same Bet Builder (e.g. builder_1, builder_2). Leave empty for single independent legs.',
-                    },
-                    builder_odds: {
-                      type: Type.NUMBER,
-                      description: 'Combined decimal odds for the entire Bet Builder block (e.g. 4.50 or 2.83). Only populated if part of a Bet Builder.',
-                    },
-                    event_date: {
-                      type: Type.STRING,
-                      description: `Kickoff date/time exactly as printed on THIS slip, in ISO format YYYY-MM-DDTHH:mm, using current year ${currentYear} if no year is shown. Read the actual digits from the image — never reuse a date from these instructions or from another leg. This field is REQUIRED and must always be present in the JSON. If, after a careful second check of this specific leg's own block, truly no date or time is printed there, output an empty string "" — never omit the field entirely.`,
-                    },
+            event: {
+              type: Type.STRING,
+              description: 'Main match/fixture name for single bets or overall description for parlays.',
+            },
+            market: {
+              type: Type.STRING,
+              description: 'Main betting market name (e.g. 1x2, Match Result, Both Teams To Score).',
+            },
+            selection: {
+              type: Type.STRING,
+              description: 'Selected outcome or team (e.g., Deportivo Madryn, Over 2.5).',
+            },
+            sport: {
+              type: Type.STRING,
+              enum: ['Football', 'Basketball', 'Tennis', 'Baseball', 'Ice Hockey', 'Esports', 'MMA', 'Golf'],
+              description: 'Sport category. MUST be exactly one of the specified enum values, or omit/leave null if unrecognizable.',
+            },
+            odds: {
+              type: Type.NUMBER,
+              description: 'Total combined odds directly printed on the slip footer/summary (or single bet odds). Extract printed number directly without multiplying legs.',
+            },
+            stake: {
+              type: Type.NUMBER,
+              description: 'Monetary stake amount wagered.',
+            },
+            potentialPayout: {
+              type: Type.NUMBER,
+              description: 'Estimated or potential monetary return.',
+            },
+            status: {
+              type: Type.STRING,
+              description: 'Current wager status: pending, won, lost, void, or cashout.',
+            },
+            is_live: {
+              type: Type.BOOLEAN,
+              description: 'True if the wager is an in-play/live bet or taken during halftime/in-game, indicated by LIVE badges, red dots, or match clocks.',
+            },
+            market_type: {
+              type: Type.STRING,
+              description: 'Type of bet: Single, Parlay, Multiple, Accumulator, or Bet Builder.',
+            },
+            placed_at: {
+              type: Type.STRING,
+              description: `The bet-slip's own placement/issue timestamp ONLY (e.g. a receipt or "ticket generated" line), NOT any match kickoff time — see rule 2b. ISO string YYYY-MM-DD or YYYY-MM-DDTHH:mm using current year ${currentYear}. If no distinct placement timestamp is visible on the slip, output an empty string "" — do not default to today's date.`,
+            },
+            bet_id: {
+              type: Type.STRING,
+              description: 'Unique slip identifier/ticket number.',
+            },
+            total_odds: {
+              type: Type.NUMBER,
+              description: 'Total combined odds directly printed on the ticket slip summary/footer (e.g. "Total odds", "Cota total"). Do not calculate by multiplying legs.',
+            },
+            legs: {
+              type: Type.ARRAY,
+              description: 'Array of separate selections or legs parsed from the slip. ALWAYS extract EVERY leg.',
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  event: {
+                    type: Type.STRING,
+                    description: 'Match fixture or event name (e.g. Deportivo Madryn vs. All Boys or Ciudad de Bolivar vs. Mitre). MUST NOT be empty.',
                   },
-                  required: ['event', 'selection', 'event_date'],
+                  selection: {
+                    type: Type.STRING,
+                    description: 'The specific pick or team outcome (e.g. Deportivo Madryn, Mitre). MUST NOT be empty.',
+                  },
+                  team: {
+                    type: Type.STRING,
+                    description: 'Selected team or outcome.',
+                  },
+                  market: {
+                    type: Type.STRING,
+                    description: 'Wager market details (e.g. 1x2, Ambas Marcam, Match Result, [Team] para marcar em ambas as partes). MUST be extracted if visible.',
+                  },
+                  sport: {
+                    type: Type.STRING,
+                    enum: ['Football', 'Basketball', 'Tennis', 'Baseball', 'Ice Hockey', 'Esports', 'MMA', 'Golf'],
+                    description: 'Sport category for this specific leg. MUST be exactly one of the specified enum values, or omit/leave null if unrecognizable.',
+                  },
+                  odds_decimal: {
+                    type: Type.NUMBER,
+                    description: 'Decimal odds for this individual leg ONLY (e.g. 1.95 or 1.43). For Bet Builders, use group odds or builder_odds.',
+                  },
+                  builder_id: {
+                    type: Type.STRING,
+                    description: 'Identifier grouping sub-selections that belong to the same Bet Builder (e.g. builder_1, builder_2). Leave empty for single independent legs.',
+                  },
+                  builder_odds: {
+                    type: Type.NUMBER,
+                    description: 'Combined decimal odds for the entire Bet Builder block (e.g. 4.50 or 2.83). Only populated if part of a Bet Builder.',
+                  },
+                  event_date: {
+                    type: Type.STRING,
+                    description: `Kickoff date/time exactly as printed on THIS slip, in ISO format YYYY-MM-DDTHH:mm, using current year ${currentYear} if no year is shown. Read the actual digits from the image — never reuse a date from these instructions or from another leg. This field is REQUIRED and must always be present in the JSON. If, after a careful second check of this specific leg's own block, truly no date or time is printed there, output an empty string "" — never omit the field entirely.`,
+                  },
                 },
+                required: ['event', 'selection', 'event_date'],
               },
             },
-            required: ['bookmaker', 'stake', 'status', 'legs'],
+          },
+          required: ['bookmaker', 'stake', 'status', 'legs'],
+        },
+      };
+
+      const contents = [
+        {
+          inlineData: {
+            mimeType: mimeType || 'image/jpeg',
+            data: imageData,
           },
         },
-      });
+        {
+          text: prompt,
+        },
+      ];
+
+      // 1. Primary Model: gemini-3.1-flash-lite with up to 3 retries (2s, 5s, 10s) exclusively for 503/UNAVAILABLE
+      for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
+        if (controller.signal.aborted) {
+          throw new Error('Gemini OCR request timed out or was aborted.');
+        }
+
+        try {
+          if (attempt > 0) {
+            console.log(`[BETSLIP OCR] [stage=${currentStage}] Executing retry ${attempt}/${retryDelays.length} with primary model gemini-3.1-flash-lite...`);
+          }
+
+          response = await ai.models.generateContent({
+            model: 'gemini-3.1-flash-lite',
+            contents,
+            config: geminiConfig,
+          });
+
+          modelUsed = 'gemini-3.1-flash-lite';
+          break; // Succeeded
+        } catch (err: any) {
+          lastError = err;
+          const isUnavailable = is503UnavailableError(err);
+          const hasMoreRetries = attempt < retryDelays.length;
+
+          // Non-503 errors (e.g. 400, 403, 429): do NOT retry; bail immediately
+          if (!isUnavailable) {
+            console.error(`[BETSLIP OCR] [stage=${currentStage}] Non-503 error encountered (${err.message}). Aborting retries immediately.`);
+            throw err;
+          }
+
+          if (hasMoreRetries && !controller.signal.aborted) {
+            const waitMs = retryDelays[attempt];
+            console.warn(`[BETSLIP OCR] [stage=${currentStage}] ⚠️ 503/UNAVAILABLE detected on attempt ${attempt + 1}. Waiting ${waitMs / 1000}s before retry (retry ${attempt + 1}/${retryDelays.length})... [${err.message}]`);
+            await new Promise((res) => setTimeout(res, waitMs));
+          } else {
+            console.warn(`[BETSLIP OCR] [stage=${currentStage}] Primary model gemini-3.1-flash-lite exhausted all ${retryDelays.length} retries due to 503/UNAVAILABLE.`);
+            break;
+          }
+        }
+      }
+
+      // 2. Fallback Model: gemini-3.7-flash if primary exhausted all retries with 503
+      if (!response) {
+        if (is503UnavailableError(lastError) && !controller.signal.aborted) {
+          console.warn(`[BETSLIP OCR] [stage=${currentStage}] [FALLBACK] Automatically switching to backup engine 'gemini-3.7-flash' as last resort...`);
+          try {
+            response = await ai.models.generateContent({
+              model: 'gemini-3.7-flash',
+              contents,
+              config: geminiConfig,
+            });
+            usedFallbackModel = true;
+            modelUsed = 'gemini-3.7-flash';
+            console.log(`[BETSLIP OCR] [stage=${currentStage}] [FALLBACK] Successfully extracted betslip using backup model 'gemini-3.7-flash'!`);
+          } catch (fallbackErr: any) {
+            console.error(`[BETSLIP OCR] [stage=${currentStage}] [FALLBACK] Backup engine gemini-3.7-flash also failed: ${fallbackErr.message}`);
+            throw fallbackErr;
+          }
+        } else if (lastError) {
+          throw lastError;
+        }
+      }
 
       currentStage = 'gemini_response';
       // Clear the timeout as soon as response arrives
@@ -467,9 +549,12 @@ Special parsing & Extraction Rules:
         }
       }
 
+      parsedData.usedFallbackModel = usedFallbackModel;
+      parsedData.modelUsed = modelUsed;
+
       currentStage = 'http_response';
       const legsCount = Array.isArray(parsedData.legs) ? parsedData.legs.length : 0;
-      console.log(`[BETSLIP OCR] [stage=${currentStage}] Sending JSON response (${legsCount} legs, bookmaker: "${parsedData.bookmaker}", stake: ${parsedData.stake})`);
+      console.log(`[BETSLIP OCR] [stage=${currentStage}] Sending JSON response (${legsCount} legs, bookmaker: "${parsedData.bookmaker}", stake: ${parsedData.stake}, model: ${modelUsed}, fallback: ${usedFallbackModel})`);
 
       return res.json(parsedData);
     } catch (err: any) {
@@ -489,7 +574,7 @@ Special parsing & Extraction Rules:
       // Handle Timeout / Abort
       if (err.name === 'AbortError' || errMsg.includes('abort') || errMsg.includes('deadline') || errMsg.includes('timeout') || errMsg.includes('504')) {
         return res.status(504).json({
-          error: 'Gemini OCR analysis timed out after 45 seconds. The image processing took too long to complete.',
+          error: 'Gemini OCR analysis timed out after 65 seconds. The image processing took too long to complete.',
           code: 'GEMINI_TIMEOUT',
           stage: currentStage,
           retryable: true,
@@ -515,6 +600,18 @@ Special parsing & Extraction Rules:
           code: 'GEMINI_AUTH',
           stage: currentStage,
           retryable: false,
+          details: err.message,
+        });
+      }
+
+      // Handle Service Unavailable / High Demand (503)
+      const is503 = err.status === 503 || err.statusCode === 503 || err.code === 503 || errMsg.includes('503') || errMsg.includes('unavailable') || errMsg.includes('high demand') || errMsg.includes('overloaded');
+      if (is503) {
+        return res.status(503).json({
+          error: 'Gemini OCR models are currently experiencing temporary high demand (503 UNAVAILABLE). Automatic retries and the backup model were attempted, but upstream capacity remains temporarily constrained. Please try again shortly.',
+          code: 'GEMINI_UNAVAILABLE',
+          stage: currentStage,
+          retryable: true,
           details: err.message,
         });
       }

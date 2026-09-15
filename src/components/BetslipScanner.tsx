@@ -72,6 +72,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     isQuotaExceeded?: boolean;
     isTimeout?: boolean;
     isSizeError?: boolean;
+    isUnavailable?: boolean;
     isHtmlResponse?: boolean;
     code?: string;
     attemptedModels: string[];
@@ -81,6 +82,10 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   const [rawOcrJson, setRawOcrJson] = useState<string | null>(null);
   const [showRawDrawer, setShowRawDrawer] = useState<boolean>(false);
   const [scanElapsedSec, setScanElapsedSec] = useState<number>(0);
+  const [scanMetadata, setScanMetadata] = useState<{
+    usedFallbackModel?: boolean;
+    modelUsed?: string;
+  } | null>(null);
 
   // Active in-flight request refs for cancellation and timeout control
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -409,14 +414,14 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
       return;
     }
 
-    // Set up AbortController with a 50s frontend safety timeout
+    // Set up AbortController with a 70s frontend safety timeout
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
     timeoutTimerRef.current = setTimeout(() => {
-      console.warn('Frontend OCR safety timeout reached (50s) - aborting request');
+      console.warn('Frontend OCR safety timeout reached (70s) - aborting request');
       controller.abort();
-    }, 50000);
+    }, 70000);
 
     try {
       const response = await fetch('/api/scan-betslip', {
@@ -476,7 +481,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
 
       if (!response.ok) {
         const msg = result.error || `Server-side OCR scan failed with status ${status}`;
-        const code = result.code || (status === 504 ? 'GEMINI_TIMEOUT' : status === 429 ? 'GEMINI_QUOTA' : status === 403 ? 'GEMINI_AUTH' : 'SERVER_ERROR');
+        const code = result.code || (status === 504 ? 'GEMINI_TIMEOUT' : status === 503 ? 'GEMINI_UNAVAILABLE' : status === 429 ? 'GEMINI_QUOTA' : status === 403 ? 'GEMINI_AUTH' : 'SERVER_ERROR');
 
         const err: any = new Error(msg);
         err.status = status;
@@ -493,8 +498,16 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
 
       const jsonStr = JSON.stringify(result, null, 2);
       setRawOcrJson(jsonStr);
+      setScanMetadata({
+        usedFallbackModel: Boolean(result.usedFallbackModel),
+        modelUsed: result.modelUsed || 'gemini-3.1-flash-lite'
+      });
       applyParsedData(result);
-      setNotes(`Scanned via Gemini 3.1 Flash Lite OCR engine`);
+      if (result.usedFallbackModel) {
+        setNotes(`Scanned via backup engine (${result.modelUsed || 'Gemini 3.7 Flash'})`);
+      } else {
+        setNotes(`Scanned via Gemini 3.1 Flash Lite OCR engine`);
+      }
       setScanningState('scanned');
     } catch (err: any) {
       if (timeoutTimerRef.current) {
@@ -512,11 +525,12 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
       const isTimeout = isAbort || err.status === 504 || err.code === 'GEMINI_TIMEOUT' || (err.message || '').toLowerCase().includes('time');
       const is403 = err.status === 403 || err.code === 'GEMINI_AUTH' || (err.message || '').includes('403') || (err.message || '').toLowerCase().includes('api key');
       const isQuotaExceeded = err.status === 429 || err.code === 'GEMINI_QUOTA' || (err.message || '').toLowerCase().includes('quota') || (err.message || '').toLowerCase().includes('exhausted') || (err.message || '').includes('429');
+      const isUnavailable = err.status === 503 || err.code === 'GEMINI_UNAVAILABLE' || (err.message || '').includes('503') || (err.message || '').toLowerCase().includes('unavailable') || (err.message || '').toLowerCase().includes('high demand');
       const isSizeError = err.status === 413 || err.code === 'PAYLOAD_TOO_LARGE' || (err.message || '').toLowerCase().includes('too large');
 
       let finalErrorMessage = err.message || "Failed to scan and analyze betslip image.";
       if (isTimeout) {
-        finalErrorMessage = "The betslip scan timed out after 50 seconds. The server took too long to analyze the image or your network connection stalled.";
+        finalErrorMessage = "The betslip scan timed out after 70 seconds. The server took too long to analyze the image or your network connection stalled.";
       }
 
       setErrorMessage(finalErrorMessage);
@@ -525,9 +539,10 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
         isQuotaExceeded,
         isTimeout,
         isSizeError,
+        isUnavailable,
         isHtmlResponse: Boolean(err.isHtmlResponse),
-        code: err.code || (isTimeout ? 'GEMINI_TIMEOUT' : isQuotaExceeded ? 'GEMINI_QUOTA' : is403 ? 'GEMINI_AUTH' : 'SERVER_ERROR'),
-        attemptedModels: ['gemini-3.1-flash-lite (server-side)'],
+        code: err.code || (isTimeout ? 'GEMINI_TIMEOUT' : isUnavailable ? 'GEMINI_UNAVAILABLE' : isQuotaExceeded ? 'GEMINI_QUOTA' : is403 ? 'GEMINI_AUTH' : 'SERVER_ERROR'),
+        attemptedModels: ['gemini-3.1-flash-lite', 'gemini-3.7-flash (fallback)'],
         message: finalErrorMessage
       });
       setScanningState('error');
@@ -1119,6 +1134,15 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
             <p className="text-xs text-[#8d90a0] leading-relaxed">
               Extracting sportsbook metadata, fixture legs, selections, decimal odds, stake values, and payout structures.
             </p>
+
+            {scanElapsedSec >= 5 && (
+              <div className="pt-2 flex justify-center">
+                <div className="inline-flex items-center gap-2 text-xs font-semibold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-3.5 py-1.5 rounded-lg animate-pulse shadow-sm">
+                  <AlertTriangle size={14} className="shrink-0 text-amber-400" />
+                  <span>High demand detected, retrying automatically...</span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Cancel button */}
@@ -1147,6 +1171,8 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                 <h3 className="text-base font-bold text-white">
                   {errorDetails?.isTimeout
                     ? '504 GATEWAY_TIMEOUT: Gemini OCR Request Timed Out'
+                    : errorDetails?.isUnavailable
+                    ? '503 SERVICE_UNAVAILABLE: High Demand on Gemini OCR'
                     : errorDetails?.isQuotaExceeded 
                     ? '429 RESOURCE_EXHAUSTED: Gemini API Quota Limit Reached'
                     : errorDetails?.is403 
@@ -1160,6 +1186,11 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                 {errorDetails?.isTimeout && (
                   <span className="bg-amber-500/20 text-amber-400 border border-amber-500/40 text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase">
                     HTTP 504 TIMEOUT
+                  </span>
+                )}
+                {errorDetails?.isUnavailable && (
+                  <span className="bg-amber-500/20 text-amber-400 border border-amber-500/40 text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase">
+                    HTTP 503 UNAVAILABLE
                   </span>
                 )}
                 {errorDetails?.isQuotaExceeded && (
@@ -1319,9 +1350,21 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
               <CheckCircle2 size={18} />
               <span>Gemini OCR Extracted Successfully! Review & edit extracted wagers below.</span>
             </div>
-            <span className="text-slate-300 font-mono text-[11px] bg-[#0b1326] px-2.5 py-1 rounded border border-[#27314a]">
-              Target: {activeBankroll?.name || 'Selected Bankroll'}
-            </span>
+            <div className="flex items-center gap-2 flex-wrap">
+              {scanMetadata?.usedFallbackModel ? (
+                <span className="text-amber-300 bg-amber-500/15 border border-amber-500/40 px-2.5 py-1 rounded text-[11px] font-mono flex items-center gap-1.5 font-semibold">
+                  <Sparkles size={12} className="text-amber-400" />
+                  Scanned with backup engine ({scanMetadata.modelUsed || 'Gemini 3.7 Flash'})
+                </span>
+              ) : (
+                <span className="text-slate-400 font-mono text-[11px] bg-[#0b1326] px-2.5 py-1 rounded border border-[#27314a]">
+                  Engine: Gemini 3.1 Flash Lite
+                </span>
+              )}
+              <span className="text-slate-300 font-mono text-[11px] bg-[#0b1326] px-2.5 py-1 rounded border border-[#27314a]">
+                Target: {activeBankroll?.name || 'Selected Bankroll'}
+              </span>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
