@@ -30,8 +30,89 @@ import {
   Camera,
   Image as ImageIcon,
   Users,
-  Loader2
+  Loader2,
+  Sparkles
 } from 'lucide-react';
+
+interface StandaloneLegItem {
+  type: 'standalone';
+  leg: any;
+  originalIdx: number;
+}
+
+interface BetBuilderGroupItem {
+  type: 'builder';
+  builderId: string;
+  event: string;
+  eventDate?: string;
+  sport?: string;
+  builderOdds?: number;
+  legs: Array<{
+    leg: any;
+    originalIdx: number;
+  }>;
+}
+
+type GroupedLegItem = StandaloneLegItem | BetBuilderGroupItem;
+
+function groupLegsByBuilder(legs: any[]): GroupedLegItem[] {
+  const items: GroupedLegItem[] = [];
+  const groupMap = new Map<string, BetBuilderGroupItem>();
+
+  legs.forEach((leg, idx) => {
+    const bId = leg.builderId;
+    if (bId) {
+      let group = groupMap.get(bId);
+      if (!group) {
+        group = {
+          type: 'builder',
+          builderId: bId,
+          event: leg.event || 'Bet Builder Event',
+          eventDate: leg.eventDate,
+          sport: leg.sport,
+          builderOdds: leg.builderOdds && leg.builderOdds > 0 ? leg.builderOdds : (leg.odds || undefined),
+          legs: [],
+        };
+        groupMap.set(bId, group);
+        items.push(group);
+      }
+      if ((!group.builderOdds || group.builderOdds <= 0) && leg.builderOdds && leg.builderOdds > 0) {
+        group.builderOdds = leg.builderOdds;
+      }
+      if (!group.eventDate && leg.eventDate) {
+        group.eventDate = leg.eventDate;
+      }
+      if ((!group.event || group.event === 'Bet Builder Event') && leg.event) {
+        group.event = leg.event;
+      }
+      group.legs.push({ leg, originalIdx: idx });
+    } else {
+      items.push({
+        type: 'standalone',
+        leg,
+        originalIdx: idx,
+      });
+    }
+  });
+
+  // If any builder group ended up with only 1 leg, convert it back to standalone
+  const finalItems: GroupedLegItem[] = [];
+  for (const item of items) {
+    if (item.type === 'builder' && item.legs.length < 2) {
+      for (const single of item.legs) {
+        finalItems.push({
+          type: 'standalone',
+          leg: single.leg,
+          originalIdx: single.originalIdx,
+        });
+      }
+    } else {
+      finalItems.push(item);
+    }
+  }
+
+  return finalItems;
+}
 
 interface BetsHistoryViewProps {
   bets: Bet[];
@@ -1031,45 +1112,122 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
                               <div className="text-[11px] font-bold text-[#b4c5ff] uppercase tracking-wider">
                                 Parlay Legs Detail Breakdown ({bet.legs.length} Selections)
                               </div>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                                {bet.legs.map((leg: any, idx: number) => (
-                                  <div key={leg.id || idx} className="bg-[#171f33] p-2.5 rounded border border-[#27314a] text-xs space-y-1.5">
-                                    <div className="flex justify-between items-center text-[#8d90a0] text-[10px]">
-                                      <span>Leg #{idx + 1} • {leg.sport}</span>
-                                      <span className="font-mono font-bold text-white">@{formatOdds(leg.odds)}</span>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                                {groupLegsByBuilder(bet.legs).map((item) => {
+                                  if (item.type === 'standalone') {
+                                    const leg = item.leg;
+                                    const idx = item.originalIdx;
+                                    return (
+                                      <div key={leg.id || idx} className="bg-[#171f33] p-2.5 rounded border border-[#27314a] text-xs space-y-1.5">
+                                        <div className="flex justify-between items-center text-[#8d90a0] text-[10px]">
+                                          <span>Leg #{idx + 1} • {leg.sport}</span>
+                                          <span className="font-mono font-bold text-white">@{formatOdds(leg.odds)}</span>
+                                        </div>
+                                        <div className="font-bold text-white text-xs whitespace-normal break-words">
+                                          {leg.event}
+                                          {formatEventDate(leg.eventDate) ? (
+                                            <span className="text-[10px] font-normal text-[#8d90a0] ml-1.5">— {formatEventDate(leg.eventDate)}</span>
+                                          ) : null}
+                                        </div>
+                                        <div className="text-[#2563eb] font-semibold text-[11px] whitespace-normal break-words">
+                                          {formatLegSelection(leg.selection, leg.market)} <span className="text-[#8d90a0]">({leg.market})</span>
+                                        </div>
+                                        <div className="flex items-center justify-between border-t border-[#27314a] pt-1.5 mt-1 text-[10px]">
+                                          <span className="text-[#8d90a0]">Leg Status:</span>
+                                          <select
+                                            value={leg.status || 'pending'}
+                                            onChange={(e) => onUpdateBetLegStatus?.(bet.id, leg.id, e.target.value as BetStatus)}
+                                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider cursor-pointer ${
+                                              leg.status === 'won'
+                                                ? 'bg-[#005236] text-[#4edea3] border border-[#008f5d]'
+                                                : leg.status === 'lost'
+                                                ? 'bg-[#601410] text-[#ffb3ad] border border-[#93231e]'
+                                                : leg.status === 'void'
+                                                ? 'bg-gray-800 text-gray-300 border border-gray-600'
+                                                : 'bg-[#0b1326] text-amber-400 border border-amber-700'
+                                            }`}
+                                          >
+                                            <option value="pending">Pending</option>
+                                            <option value="won">Won</option>
+                                            <option value="lost">Lost</option>
+                                            <option value="void">Void</option>
+                                          </select>
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+
+                                  // Bet Builder Group
+                                  return (
+                                    <div
+                                      key={item.builderId}
+                                      className="col-span-1 sm:col-span-2 md:col-span-3 bg-[#171f33] p-2.5 rounded border border-[#27314a] text-xs space-y-2"
+                                    >
+                                      {/* Header matching standalone card styling */}
+                                      <div className="flex justify-between items-center text-[#8d90a0] text-[10px]">
+                                        <div className="flex items-center gap-1.5 min-w-0">
+                                          <span className="text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 text-[9px] font-semibold px-1.5 py-0.5 rounded inline-flex items-center gap-1 shrink-0">
+                                            <Sparkles size={10} className="text-indigo-400" /> Bet Builder
+                                          </span>
+                                          {item.sport ? <span>• {item.sport}</span> : null}
+                                        </div>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                          <span className="text-[10px] text-[#8d90a0]">Combined Odds:</span>
+                                          <span className="font-mono font-bold text-white">@{formatOdds(item.builderOdds || 0)}</span>
+                                        </div>
+                                      </div>
+
+                                      <div className="font-bold text-white text-xs whitespace-normal break-words">
+                                        {item.event}
+                                        {formatEventDate(item.eventDate) ? (
+                                          <span className="text-[10px] font-normal text-[#8d90a0] ml-1.5">— {formatEventDate(item.eventDate)}</span>
+                                        ) : null}
+                                      </div>
+
+                                      {/* Sub-selections in this Bet Builder with thin connector */}
+                                      <div className="space-y-1.5 pl-2.5 border-l-2 border-[#27314a] ml-0.5">
+                                        {item.legs.map(({ leg, originalIdx }) => (
+                                          <div
+                                            key={leg.id || originalIdx}
+                                            className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 pt-1.5 first:pt-0 border-t border-[#27314a]/50 first:border-t-0 text-xs"
+                                          >
+                                            <div className="min-w-0 flex-1 space-y-0.5">
+                                              <div className="text-[#8d90a0] text-[10px] flex items-center gap-1.5">
+                                                <span>Leg #{originalIdx + 1}</span>
+                                                {leg.market ? <span>• {leg.market}</span> : null}
+                                              </div>
+                                              <div className="text-[#2563eb] font-semibold text-[11px] whitespace-normal break-words">
+                                                {formatLegSelection(leg.selection, leg.market)}
+                                              </div>
+                                            </div>
+
+                                            <div className="flex items-center justify-between sm:justify-end gap-2 border-t border-[#27314a]/40 sm:border-t-0 pt-1 sm:pt-0 shrink-0 text-[10px]">
+                                              <span className="text-[#8d90a0] sm:hidden">Leg Status:</span>
+                                              <select
+                                                value={leg.status || 'pending'}
+                                                onChange={(e) => onUpdateBetLegStatus?.(bet.id, leg.id, e.target.value as BetStatus)}
+                                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider cursor-pointer ${
+                                                  leg.status === 'won'
+                                                    ? 'bg-[#005236] text-[#4edea3] border border-[#008f5d]'
+                                                    : leg.status === 'lost'
+                                                    ? 'bg-[#601410] text-[#ffb3ad] border border-[#93231e]'
+                                                    : leg.status === 'void'
+                                                    ? 'bg-gray-800 text-gray-300 border border-gray-600'
+                                                    : 'bg-[#0b1326] text-amber-400 border border-amber-700'
+                                                }`}
+                                              >
+                                                <option value="pending">Pending</option>
+                                                <option value="won">Won</option>
+                                                <option value="lost">Lost</option>
+                                                <option value="void">Void</option>
+                                              </select>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
                                     </div>
-                                    <div className="font-bold text-white text-xs whitespace-normal break-words">
-                                      {leg.event}
-                                      {formatEventDate(leg.eventDate) ? (
-                                        <span className="text-[10px] font-normal text-[#8d90a0] ml-1.5">— {formatEventDate(leg.eventDate)}</span>
-                                      ) : null}
-                                    </div>
-                                    <div className="text-[#2563eb] font-semibold text-[11px] whitespace-normal break-words">
-                                      {formatLegSelection(leg.selection, leg.market)} <span className="text-[#8d90a0]">({leg.market})</span>
-                                    </div>
-                                    <div className="flex items-center justify-between border-t border-[#27314a] pt-1.5 mt-1 text-[10px]">
-                                      <span className="text-[#8d90a0]">Leg Status:</span>
-                                      <select
-                                        value={leg.status || 'pending'}
-                                        onChange={(e) => onUpdateBetLegStatus?.(bet.id, leg.id, e.target.value as BetStatus)}
-                                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider cursor-pointer ${
-                                          leg.status === 'won'
-                                            ? 'bg-[#005236] text-[#4edea3] border border-[#008f5d]'
-                                            : leg.status === 'lost'
-                                            ? 'bg-[#601410] text-[#ffb3ad] border border-[#93231e]'
-                                            : leg.status === 'void'
-                                            ? 'bg-gray-800 text-gray-300 border border-gray-600'
-                                            : 'bg-[#0b1326] text-amber-400 border border-amber-700'
-                                        }`}
-                                      >
-                                        <option value="pending">Pending</option>
-                                        <option value="won">Won</option>
-                                        <option value="lost">Lost</option>
-                                        <option value="void">Void</option>
-                                      </select>
-                                    </div>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                               {bet.notes && (
                                 <div className="text-[11px] text-[#8d90a0] bg-[#171f33] p-2 rounded border border-[#27314a] mt-2">
@@ -1176,49 +1334,120 @@ export const BetsHistoryView: React.FC<BetsHistoryViewProps> = ({
 
                   {/* Legs breakdown */}
                   <div className="space-y-2 pt-1.5">
-                    {bet.legs.map((leg: any, idx: number) => (
-                      <div key={leg.id || idx} className="bg-[#0b1326] p-3 rounded-lg border border-[#27314a] text-xs flex items-center justify-between gap-3 shadow-sm">
-                        <div className="min-w-0 flex-1 space-y-1">
-                          {/* Event & Market Context Header */}
-                          <div className="text-[#8d90a0] text-[10px] leading-relaxed font-medium whitespace-normal break-words">
-                            <span className="text-slate-300 font-semibold">{leg.event}</span>
-                            {leg.market ? <span className="text-[#8d90a0]"> • {leg.market}</span> : ''}
+                    {groupLegsByBuilder(bet.legs).map((item) => {
+                      if (item.type === 'standalone') {
+                        const leg = item.leg;
+                        const idx = item.originalIdx;
+                        return (
+                          <div key={leg.id || idx} className="bg-[#0b1326] p-3 rounded-lg border border-[#27314a] text-xs flex items-center justify-between gap-3 shadow-sm">
+                            <div className="min-w-0 flex-1 space-y-1">
+                              {/* Event & Market Context Header */}
+                              <div className="text-[#8d90a0] text-[10px] leading-relaxed font-medium whitespace-normal break-words">
+                                <span className="text-slate-300 font-semibold">{leg.event}</span>
+                                {leg.market ? <span className="text-[#8d90a0]"> • {leg.market}</span> : ''}
+                              </div>
+                              
+                              {/* Selection value block */}
+                              <div className="whitespace-normal break-words text-xs">
+                                <span className="text-slate-400">Selection: </span>
+                                <span className="font-extrabold text-[#4edea3] text-[13px]">{formatLegSelection(leg.selection, leg.market)}</span>
+                                {leg.odds ? <span className="text-[#8d90a0] font-mono text-[10px] ml-1.5">(@{formatOdds(leg.odds)})</span> : ''}
+                              </div>
+
+                              {/* Date details if any */}
+                              {formatEventDate(leg.eventDate) && (
+                                <div className="text-[9px] text-[#8d90a0]">
+                                  Event Date: {formatEventDate(leg.eventDate)}
+                                </div>
+                              )}
+                            </div>
+                            <select
+                              value={leg.status || 'pending'}
+                              onChange={(e) => onUpdateBetLegStatus?.(bet.id, leg.id, e.target.value as BetStatus)}
+                              className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider cursor-pointer border shrink-0 ${
+                                leg.status === 'won'
+                                  ? 'bg-[#005236] text-[#4edea3] border-[#008f5d]'
+                                  : leg.status === 'lost'
+                                  ? 'bg-[#601410] text-[#ffb3ad] border-[#93231e]'
+                                  : leg.status === 'void'
+                                  ? 'bg-gray-800 text-gray-300 border-gray-600'
+                                  : 'bg-[#171f33] text-amber-400 border-amber-700'
+                              }`}
+                            >
+                              <option value="pending">Pending</option>
+                              <option value="won">Won</option>
+                              <option value="lost">Lost</option>
+                              <option value="void">Void</option>
+                            </select>
                           </div>
-                          
-                          {/* Selection value block */}
-                          <div className="whitespace-normal break-words text-xs">
-                            <span className="text-slate-400">Selection: </span>
-                            <span className="font-extrabold text-[#4edea3] text-[13px]">{formatLegSelection(leg.selection, leg.market)}</span>
-                            {leg.odds ? <span className="text-[#8d90a0] font-mono text-[10px] ml-1.5">(@{formatOdds(leg.odds)})</span> : ''}
+                        );
+                      }
+
+                      // Bet Builder Group in card view
+                      return (
+                        <div key={item.builderId} className="bg-[#0b1326] p-3 rounded-lg border border-[#27314a] text-xs space-y-2.5 shadow-sm">
+                          {/* Header */}
+                          <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-[#27314a]/60">
+                            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                              <span className="text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 text-[9px] font-semibold px-1.5 py-0.5 rounded inline-flex items-center gap-1 shrink-0">
+                                <Sparkles size={10} className="text-indigo-400" /> Bet Builder
+                              </span>
+                              <span className="text-slate-300 font-semibold text-[11px] whitespace-normal break-words">
+                                {item.event}
+                              </span>
+                              {formatEventDate(item.eventDate) ? (
+                                <span className="text-[9px] text-[#8d90a0]">
+                                  — {formatEventDate(item.eventDate)}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <span className="text-[10px] text-[#8d90a0]">Combined Odds:</span>
+                              <span className="font-mono font-bold text-white text-[11px]">@{formatOdds(item.builderOdds || 0)}</span>
+                            </div>
                           </div>
 
-                          {/* Date details if any */}
-                          {formatEventDate(leg.eventDate) && (
-                            <div className="text-[9px] text-[#8d90a0]">
-                              Event Date: {formatEventDate(leg.eventDate)}
-                            </div>
-                          )}
+                          {/* Sub-selections with thin connector */}
+                          <div className="space-y-2 pl-2.5 border-l-2 border-[#27314a] ml-0.5">
+                            {item.legs.map(({ leg, originalIdx }) => (
+                              <div key={leg.id || originalIdx} className="flex items-center justify-between gap-3 text-xs">
+                                <div className="min-w-0 flex-1 space-y-0.5">
+                                  <div className="text-[#8d90a0] text-[10px] flex items-center gap-1.5">
+                                    <span>Leg #{originalIdx + 1}</span>
+                                    {leg.market ? <span>• {leg.market}</span> : null}
+                                  </div>
+                                  <div className="whitespace-normal break-words">
+                                    <span className="text-slate-400 text-xs">Selection: </span>
+                                    <span className="font-extrabold text-[#4edea3] text-[12px]">
+                                      {formatLegSelection(leg.selection, leg.market)}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <select
+                                  value={leg.status || 'pending'}
+                                  onChange={(e) => onUpdateBetLegStatus?.(bet.id, leg.id, e.target.value as BetStatus)}
+                                  className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider cursor-pointer border shrink-0 ${
+                                    leg.status === 'won'
+                                      ? 'bg-[#005236] text-[#4edea3] border-[#008f5d]'
+                                      : leg.status === 'lost'
+                                      ? 'bg-[#601410] text-[#ffb3ad] border-[#93231e]'
+                                      : leg.status === 'void'
+                                      ? 'bg-gray-800 text-gray-300 border-gray-600'
+                                      : 'bg-[#171f33] text-amber-400 border-amber-700'
+                                  }`}
+                                >
+                                  <option value="pending">Pending</option>
+                                  <option value="won">Won</option>
+                                  <option value="lost">Lost</option>
+                                  <option value="void">Void</option>
+                                </select>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                        <select
-                          value={leg.status || 'pending'}
-                          onChange={(e) => onUpdateBetLegStatus?.(bet.id, leg.id, e.target.value as BetStatus)}
-                          className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider cursor-pointer border shrink-0 ${
-                            leg.status === 'won'
-                              ? 'bg-[#005236] text-[#4edea3] border-[#008f5d]'
-                              : leg.status === 'lost'
-                              ? 'bg-[#601410] text-[#ffb3ad] border-[#93231e]'
-                              : leg.status === 'void'
-                              ? 'bg-gray-800 text-gray-300 border-gray-600'
-                              : 'bg-[#171f33] text-amber-400 border-amber-700'
-                          }`}
-                        >
-                          <option value="pending">Pending</option>
-                          <option value="won">Won</option>
-                          <option value="lost">Lost</option>
-                          <option value="void">Void</option>
-                        </select>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 
