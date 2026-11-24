@@ -50,10 +50,26 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promi
     headers.set('Content-Type', 'application/json');
   }
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  const maxWarmupRetries = 5;
+  let response!: Response;
+
+  for (let attempt = 0; attempt <= maxWarmupRetries; attempt++) {
+    response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      ...options,
+      headers,
+    });
+
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('text/html')) {
+      const text = await response.text();
+      if (text.includes('Starting Server...') && attempt < maxWarmupRetries) {
+        await new Promise((r) => setTimeout(r, 2000));
+        continue;
+      }
+      throw new Error('Server is starting up or returned an unexpected HTML response. Please try again.');
+    }
+    break;
+  }
 
   if (response.status === 401 || response.status === 403) {
     logoutUser();

@@ -70,15 +70,205 @@ async function startServer() {
   // Run database table verification check on startup
   await verifyDatabaseSchema();
 
-  // Initialize Gemini client on the server side with strict timeout options
-  const ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
+  // Helper to resolve secrets from process.env (including /etc/secrets/.env on Render) or individual Render Secret Files (/etc/secrets/<KEY>)
+  const readEnvOrRenderSecret = (names: string[]): string => {
+    for (const name of names) {
+      const val = process.env[name];
+      if (typeof val === 'string' && val.trim().length > 0) {
+        return val.trim();
+      }
+    }
+    for (const name of names) {
+      const secretFilePath = path.join('/etc/secrets', name);
+      if (fs.existsSync(secretFilePath)) {
+        try {
+          const content = fs.readFileSync(secretFilePath, 'utf8').trim();
+          if (content.length > 0) {
+            return content;
+          }
+        } catch {
+          // Ignore unreadable secret file
+        }
+      }
+    }
+    return '';
+  };
+
+  const getGeminiApiKey = () => readEnvOrRenderSecret(['GEMINI_API_KEY']);
+  const getGroqApiKey = () => readEnvOrRenderSecret(['GROQ_API_KEY', 'GROK_API_KEY']);
+  const getGroqPrimaryModel = () => (process.env.GROQ_OCR_MODEL || process.env.GROK_OCR_MODEL || 'qwen/qwen3.8-27b').trim();
+  const getGroqFallbackModel = () => 'meta-models/muse-spark-open';
+
+  let cachedGeminiKey = '';
+  let cachedGeminiClient: GoogleGenAI | null = null;
+  const getGeminiClient = () => {
+    const key = getGeminiApiKey();
+    if (!key) return null;
+    if (!cachedGeminiClient || cachedGeminiKey !== key) {
+      cachedGeminiKey = key;
+      cachedGeminiClient = new GoogleGenAI({
+        apiKey: key,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+          timeout: 32000,
+        },
+      });
+    }
+    return cachedGeminiClient;
+  };
+
+  // Lightweight in-memory OCR usage & rate-limit tracker (per rolling UTC day & 60s window)
+  const getUtcDayKey = () => new Date().toISOString().slice(0, 10);
+  type ProviderUsageState = {
+    dayKey: string;
+    recentTimestamps: number[];
+    requestsToday: number;
+    tokensToday: number;
+    lastTokens: number | null;
+    lastCostUsd: number | null;
+    lastScanAt: string | null;
+    lastErrorCode: string | null;
+    rateLimitHeaders: {
+      limitRequests?: string | null;
+      remainingRequests?: string | null;
+      limitTokens?: string | null;
+      remainingTokens?: string | null;
+      resetRequests?: string | null;
+      resetTokens?: string | null;
+    } | null;
+  };
+
+  const createEmptyUsageState = (): ProviderUsageState => ({
+    dayKey: getUtcDayKey(),
+    recentTimestamps: [],
+    requestsToday: 0,
+    tokensToday: 0,
+    lastTokens: null,
+    lastCostUsd: null,
+    lastScanAt: null,
+    lastErrorCode: null,
+    rateLimitHeaders: null,
+  });
+
+  const ocrUsageTracker: Record<'gemini' | 'groq', ProviderUsageState> = {
+    gemini: createEmptyUsageState(),
+    groq: createEmptyUsageState(),
+  };
+
+  const refreshUsageWindow = (state: ProviderUsageState) => {
+    const today = getUtcDayKey();
+    if (state.dayKey !== today) {
+      state.dayKey = today;
+      state.requestsToday = 0;
+      state.tokensToday = 0;
+      state.lastErrorCode = null;
+    }
+    const cutoff = Date.now() - 60000;
+    state.recentTimestamps = state.recentTimestamps.filter((ts) => ts >= cutoff);
+  };
+
+  const recordOcrAttempt = (
+    providerId: 'gemini' | 'groq',
+    metrics: {
+      tokens?: number | null;
+      costUsd?: number | null;
+      errorCode?: string | null;
+      rateLimitHeaders?: ProviderUsageState['rateLimitHeaders'];
+    }
+  ) => {
+    const state = ocrUsageTracker[providerId];
+    refreshUsageWindow(state);
+    const nowMs = Date.now();
+    state.recentTimestamps.push(nowMs);
+    state.requestsToday += 1;
+    state.lastScanAt = new Date(nowMs).toISOString();
+    if (typeof metrics.tokens === 'number' && !isNaN(metrics.tokens)) {
+      state.tokensToday += metrics.tokens;
+      state.lastTokens = metrics.tokens;
+    }
+    if (typeof metrics.costUsd === 'number' && !isNaN(metrics.costUsd)) {
+      state.lastCostUsd = metrics.costUsd;
+    }
+    if (metrics.rateLimitHeaders) {
+      state.rateLimitHeaders = metrics.rateLimitHeaders;
+    }
+    state.lastErrorCode = metrics.errorCode || null;
+  };
+
+  const buildProviderPayload = () => {
+    refreshUsageWindow(ocrUsageTracker.gemini);
+    refreshUsageWindow(ocrUsageTracker.groq);
+    const geminiAvailable = Boolean(getGeminiApiKey());
+    const groqAvailable = Boolean(getGroqApiKey());
+    const groqModel = getGroqPrimaryModel();
+
+    return {
+      gemini: {
+        id: 'gemini',
+        name: 'Gemini',
+        label: 'Gemini 3.5 Flash Lite',
+        model: 'gemini-3.5-flash-lite',
+        fallbackModel: 'gemini-3.8-flash',
+        available: geminiAvailable,
+        envHint: 'GEMINI_API_KEY',
+        freeTier: true,
+        billingModel: 'Free Tier Supported',
+        limits: {
+          rpm: 15,
+          rpd: 500,
+          tpm: 250000,
+          resetNote: 'Free tier (~15 RPM, ~500 RPD, 250k TPM) resets daily at midnight Pacific Time and is shared across your Google AI Studio project.',
+        },
+        usage: {
+          requestsLastMinute: ocrUsageTracker.gemini.recentTimestamps.length,
+          requestsToday: ocrUsageTracker.gemini.requestsToday,
+          tokensToday: ocrUsageTracker.gemini.tokensToday,
+          lastTokens: ocrUsageTracker.gemini.lastTokens,
+          lastCostUsd: null,
+          lastScanAt: ocrUsageTracker.gemini.lastScanAt,
+          lastErrorCode: ocrUsageTracker.gemini.lastErrorCode,
+          rateLimitHeaders: null,
+        },
       },
-      timeout: 45000,
-    },
+      groq: {
+        id: 'groq',
+        name: 'Groq',
+        label: `Groq Vision (${groqModel})`,
+        model: groqModel,
+        fallbackModel: getGroqFallbackModel(),
+        available: groqAvailable,
+        envHint: 'GROQ_API_KEY or GROK_API_KEY',
+        freeTier: true,
+        billingModel: 'Free Tier Supported',
+        limits: {
+          rpm: 30,
+          rpd: 1000,
+          tpm: 8000,
+          tpd: 200000,
+          resetNote: 'Groq Free Tier (~30 RPM, ~1,000 RPD, ~7k input / ~1k output TPM, ~200k TPD on Qwen 3.8 27B) is completely free and shared across your Groq Console organization (console.groq.com/settings/limits).',
+        },
+        usage: {
+          requestsLastMinute: ocrUsageTracker.groq.recentTimestamps.length,
+          requestsToday: ocrUsageTracker.groq.requestsToday,
+          tokensToday: ocrUsageTracker.groq.tokensToday,
+          lastTokens: ocrUsageTracker.groq.lastTokens,
+          lastCostUsd: null,
+          lastScanAt: ocrUsageTracker.groq.lastScanAt,
+          lastErrorCode: ocrUsageTracker.groq.lastErrorCode,
+          rateLimitHeaders: ocrUsageTracker.groq.rateLimitHeaders,
+        },
+      },
+    };
+  };
+
+  // Endpoint to report configured OCR providers & usage limits without exposing secret values
+  app.get('/api/ocr-providers', (_req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    return res.json({
+      providers: buildProviderPayload(),
+    });
   });
 
   // TASK 2: Secure Betslip Scanner Server Endpoint with AbortController, Timeout, and Structured Logging
@@ -88,12 +278,25 @@ async function startServer() {
     let currentStage = 'request_received';
     let imageData: string | null = req.body.image;
     let mimeType: string = req.body.mimeType || 'image/jpeg';
+    const rawProvider = typeof req.body.provider === 'string' ? req.body.provider.trim().toLowerCase() : 'gemini';
+    const isGroqAlias = rawProvider === 'groq' || rawProvider === 'grok';
+    const provider: 'gemini' | 'groq' = isGroqAlias ? 'groq' : 'gemini';
     let abortTimeout: NodeJS.Timeout | null = null;
+    let capturedRateHeaders: ProviderUsageState['rateLimitHeaders'] = null;
 
     try {
-      console.log(`[BETSLIP OCR] [stage=${currentStage}] HTTP request received from ${req.ip} (content-length: ${req.headers['content-length'] || 'unknown'})`);
+      console.log(`[BETSLIP OCR] [stage=${currentStage}] HTTP request received from ${req.ip} (provider=${provider}, content-length: ${req.headers['content-length'] || 'unknown'})`);
 
       currentStage = 'request_validation';
+      if (req.body.provider !== undefined && rawProvider !== 'gemini' && !isGroqAlias) {
+        return res.status(400).json({
+          error: `Unsupported OCR provider "${req.body.provider}". Choose "gemini" or "groq".`,
+          code: 'INVALID_PROVIDER',
+          retryable: false,
+          stage: currentStage,
+        });
+      }
+
       if (!imageData || typeof imageData !== 'string' || !imageData.trim()) {
         console.warn(`[BETSLIP OCR] [stage=${currentStage}] ❌ Rejected: Missing or invalid image data`);
         return res.status(400).json({
@@ -114,14 +317,29 @@ async function startServer() {
       }
 
       const payloadSizeKb = Math.round((imageData.length * 0.75) / 1024);
-      console.log(`[BETSLIP OCR] [stage=${currentStage}] Image validated: ${payloadSizeKb} KB, MIME: ${mimeType}`);
+      console.log(`[BETSLIP OCR] [stage=${currentStage}] Image validated: ${payloadSizeKb} KB, MIME: ${mimeType}, provider: ${provider}`);
 
-      // Check if Gemini API key exists
-      if (!process.env.GEMINI_API_KEY) {
+      // Check selected provider API key
+      const geminiClient = provider === 'gemini' ? getGeminiClient() : null;
+      const groqApiKey = provider === 'groq' ? getGroqApiKey() : '';
+
+      if (provider === 'gemini' && !geminiClient) {
         console.error(`[BETSLIP OCR] [stage=${currentStage}] ❌ GEMINI_API_KEY environment variable is missing`);
         return res.status(500).json({
-          error: 'GEMINI_API_KEY environment variable is not configured. Please set it in Settings > Secrets.',
+          error: 'GEMINI_API_KEY environment variable is not configured. Please set it in Settings > Secrets or Render Environment Variables.',
           code: 'GEMINI_AUTH',
+          provider,
+          retryable: false,
+          stage: currentStage,
+        });
+      }
+
+      if (provider === 'groq' && !groqApiKey) {
+        console.error(`[BETSLIP OCR] [stage=${currentStage}] ❌ GROQ_API_KEY / GROK_API_KEY environment variable is missing`);
+        return res.status(500).json({
+          error: 'GROQ_API_KEY (or GROK_API_KEY) environment variable is not configured. Please add it in Settings > Secrets or Render Environment Variables.',
+          code: 'GROQ_AUTH',
+          provider,
           retryable: false,
           stage: currentStage,
         });
@@ -231,15 +449,12 @@ Special parsing & Extraction Rules:
      * Map the pick answer into 'selection' (e.g. "Sim", "Não", "Over 2.5").
      * NEVER omit 'market' or leave it empty when a market descriptor header is visible on the slip.`;
 
-      // Set up server-side AbortController with a 65s hard safety timeout (accommodates retries & fallback)
+      // Set up server-side AbortController with an 80s hard safety timeout (accommodates primary retries + fallback model)
       const controller = new AbortController();
       abortTimeout = setTimeout(() => {
-        console.warn(`[BETSLIP OCR] ⏱️ Timeout reached (65s) -> aborting Gemini API call`);
+        console.warn(`[BETSLIP OCR] ⏱️ Timeout reached (80s) -> aborting ${provider.toUpperCase()} API call`);
         controller.abort();
-      }, 65000);
-
-      currentStage = 'gemini_request';
-      console.log(`[BETSLIP OCR] [stage=${currentStage}] Starting Gemini request (primary: gemini-3.1-flash-lite, timeout: 65s)...`);
+      }, 80000);
 
       // Helper to identify 503/UNAVAILABLE or temporary high demand spikes
       function is503UnavailableError(error: any): boolean {
@@ -257,204 +472,500 @@ Special parsing & Extraction Rules:
         );
       }
 
-      const retryDelays = [2000, 5000, 10000]; // 2s, 5s, 10s backoff delays
-      let response: any = null;
-      let usedFallbackModel = false;
-      let modelUsed = 'gemini-3.1-flash-lite';
-      let lastError: any = null;
-
-      const geminiConfig = {
-        responseMimeType: 'application/json',
-        temperature: 0,
-        abortSignal: controller.signal,
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            bookmaker: {
-              type: Type.STRING,
-              description: 'Name of the sportsbook/bookmaker (e.g. ReloadBet, Bet365, Pinnacle, BC.GAME).',
-            },
-            event: {
-              type: Type.STRING,
-              description: 'Main match/fixture name for single bets or overall description for parlays.',
-            },
-            market: {
-              type: Type.STRING,
-              description: 'Main betting market name (e.g. 1x2, Match Result, Both Teams To Score).',
-            },
-            selection: {
-              type: Type.STRING,
-              description: 'Selected outcome or team (e.g., Deportivo Madryn, Over 2.5).',
-            },
-            sport: {
-              type: Type.STRING,
-              enum: ['Football', 'Basketball', 'Tennis', 'Baseball', 'Ice Hockey', 'Esports', 'MMA', 'Golf'],
-              description: 'Sport category. MUST be exactly one of the specified enum values, or omit/leave null if unrecognizable.',
-            },
-            odds: {
-              type: Type.NUMBER,
-              description: 'Total combined odds directly printed on the slip footer/summary (or single bet odds). Extract printed number directly without multiplying legs.',
-            },
-            stake: {
-              type: Type.NUMBER,
-              description: 'Monetary stake amount wagered.',
-            },
-            potentialPayout: {
-              type: Type.NUMBER,
-              description: 'Estimated or potential monetary return.',
-            },
-            status: {
-              type: Type.STRING,
-              description: 'Current wager status: pending, won, lost, void, or cashout.',
-            },
-            is_live: {
-              type: Type.BOOLEAN,
-              description: 'True if the wager is an in-play/live bet or taken during halftime/in-game, indicated by LIVE badges, red dots, or match clocks.',
-            },
-            market_type: {
-              type: Type.STRING,
-              description: 'Type of bet: Single, Parlay, Multiple, Accumulator, or Bet Builder.',
-            },
-            placed_at: {
-              type: Type.STRING,
-              description: `The bet-slip's own placement/issue timestamp ONLY (e.g. a receipt or "ticket generated" line), NOT any match kickoff time — see rule 2b. ISO string YYYY-MM-DD or YYYY-MM-DDTHH:mm using current year ${currentYear}. If no distinct placement timestamp is visible on the slip, output an empty string "" — do not default to today's date.`,
-            },
-            bet_id: {
-              type: Type.STRING,
-              description: 'Unique slip identifier/ticket number.',
-            },
-            total_odds: {
-              type: Type.NUMBER,
-              description: 'Total combined odds directly printed on the ticket slip summary/footer (e.g. "Total odds", "Cota total"). Do not calculate by multiplying legs.',
-            },
-            legs: {
-              type: Type.ARRAY,
-              description: 'Array of separate selections or legs parsed from the slip. ALWAYS extract EVERY leg.',
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  event: {
-                    type: Type.STRING,
-                    description: 'Match fixture or event name (e.g. Deportivo Madryn vs. All Boys or Ciudad de Bolivar vs. Mitre). MUST NOT be empty.',
-                  },
-                  selection: {
-                    type: Type.STRING,
-                    description: 'The specific pick or team outcome (e.g. Deportivo Madryn, Mitre). MUST NOT be empty.',
-                  },
-                  team: {
-                    type: Type.STRING,
-                    description: 'Selected team or outcome.',
-                  },
-                  market: {
-                    type: Type.STRING,
-                    description: 'Wager market details (e.g. 1x2, Ambas Marcam, Match Result, [Team] para marcar em ambas as partes). MUST be extracted if visible.',
-                  },
-                  sport: {
-                    type: Type.STRING,
-                    enum: ['Football', 'Basketball', 'Tennis', 'Baseball', 'Ice Hockey', 'Esports', 'MMA', 'Golf'],
-                    description: 'Sport category for this specific leg. MUST be exactly one of the specified enum values, or omit/leave null if unrecognizable.',
-                  },
-                  odds_decimal: {
-                    type: Type.NUMBER,
-                    description: 'Decimal odds for this individual leg ONLY (e.g. 1.95 or 1.43). For Bet Builders, use group odds or builder_odds.',
-                  },
-                  builder_id: {
-                    type: Type.STRING,
-                    description: 'Identifier grouping sub-selections that belong to the same Bet Builder (e.g. builder_1, builder_2). Leave empty for single independent legs.',
-                  },
-                  builder_odds: {
-                    type: Type.NUMBER,
-                    description: 'Combined decimal odds for the entire Bet Builder block (e.g. 4.50 or 2.83). Only populated if part of a Bet Builder.',
-                  },
-                  event_date: {
-                    type: Type.STRING,
-                    description: `Kickoff date/time exactly as printed on THIS slip, in ISO format YYYY-MM-DDTHH:mm, using current year ${currentYear} if no year is shown. Read the actual digits from the image — never reuse a date from these instructions or from another leg. This field is REQUIRED and must always be present in the JSON. If, after a careful second check of this specific leg's own block, truly no date or time is printed there, output an empty string "" — never omit the field entirely.`,
-                  },
-                },
-                required: ['event', 'selection', 'event_date'],
-              },
-            },
-          },
-          required: ['bookmaker', 'stake', 'status', 'legs'],
-        },
-      };
-
-      const contents = [
-        {
-          inlineData: {
-            mimeType: mimeType || 'image/jpeg',
-            data: imageData,
-          },
-        },
-        {
-          text: prompt,
-        },
-      ];
-
-      // 1. Primary Model: gemini-3.1-flash-lite with up to 3 retries (2s, 5s, 10s) exclusively for 503/UNAVAILABLE
-      for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
-        if (controller.signal.aborted) {
-          throw new Error('Gemini OCR request timed out or was aborted.');
-        }
-
-        try {
-          if (attempt > 0) {
-            console.log(`[BETSLIP OCR] [stage=${currentStage}] Executing retry ${attempt}/${retryDelays.length} with primary model gemini-3.1-flash-lite...`);
-          }
-
-          response = await ai.models.generateContent({
-            model: 'gemini-3.1-flash-lite',
-            contents,
-            config: geminiConfig,
-          });
-
-          modelUsed = 'gemini-3.1-flash-lite';
-          break; // Succeeded
-        } catch (err: any) {
-          lastError = err;
-          const isUnavailable = is503UnavailableError(err);
-          const hasMoreRetries = attempt < retryDelays.length;
-
-          // Non-503 errors (e.g. 400, 403, 429): do NOT retry; bail immediately
-          if (!isUnavailable) {
-            console.error(`[BETSLIP OCR] [stage=${currentStage}] Non-503 error encountered (${err.message}). Aborting retries immediately.`);
-            throw err;
-          }
-
-          if (hasMoreRetries && !controller.signal.aborted) {
-            const waitMs = retryDelays[attempt];
-            console.warn(`[BETSLIP OCR] [stage=${currentStage}] ⚠️ 503/UNAVAILABLE detected on attempt ${attempt + 1}. Waiting ${waitMs / 1000}s before retry (retry ${attempt + 1}/${retryDelays.length})... [${err.message}]`);
-            await new Promise((res) => setTimeout(res, waitMs));
-          } else {
-            console.warn(`[BETSLIP OCR] [stage=${currentStage}] Primary model gemini-3.1-flash-lite exhausted all ${retryDelays.length} retries due to 503/UNAVAILABLE.`);
-            break;
-          }
-        }
+      // Helper to identify transient upstream failures/timeouts that warrant backup model fallback
+      function isTransientFallbackError(error: any): boolean {
+        if (!error) return false;
+        if (is503UnavailableError(error)) return true;
+        const status = error.status || error.statusCode || error.code;
+        if (status === 502 || status === 504 || status === 500) return true;
+        const msg = String(error.message || error || '').toLowerCase();
+        return (
+          msg.includes('timeout') ||
+          msg.includes('timed out') ||
+          msg.includes('abort') ||
+          msg.includes('econnreset') ||
+          msg.includes('socket') ||
+          msg.includes('502') ||
+          msg.includes('504')
+        );
       }
 
-      // 2. Fallback Model: gemini-3.7-flash if primary exhausted all retries with 503
-      if (!response) {
-        if (is503UnavailableError(lastError) && !controller.signal.aborted) {
-          console.warn(`[BETSLIP OCR] [stage=${currentStage}] [FALLBACK] Automatically switching to backup engine 'gemini-3.7-flash' as last resort...`);
+      const retryDelays = [1500, 3500]; // 1.5s, 3.5s quick backoff delays so backup model keeps >=40s runway
+      let usedFallbackModel = false;
+      let modelUsed = provider === 'groq' ? getGroqPrimaryModel() : 'gemini-3.5-flash-lite';
+      let rawText = '';
+      let extractedTokens: number | null = null;
+
+      if (provider === 'gemini' && geminiClient) {
+        currentStage = 'gemini_request';
+        console.log(`[BETSLIP OCR] [stage=${currentStage}] Starting Gemini request (primary: gemini-3.5-flash-lite, timeout: 80s)...`);
+
+        let response: any = null;
+        let lastError: any = null;
+
+        const geminiConfig = {
+          responseMimeType: 'application/json',
+          temperature: 0,
+          abortSignal: controller.signal,
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              bookmaker: {
+                type: Type.STRING,
+                description: 'Name of the sportsbook/bookmaker (e.g. ReloadBet, Bet365, Pinnacle, BC.GAME).',
+              },
+              event: {
+                type: Type.STRING,
+                description: 'Main match/fixture name for single bets or overall description for parlays.',
+              },
+              market: {
+                type: Type.STRING,
+                description: 'Main betting market name (e.g. 1x2, Match Result, Both Teams To Score).',
+              },
+              selection: {
+                type: Type.STRING,
+                description: 'Selected outcome or team (e.g., Deportivo Madryn, Over 2.5).',
+              },
+              sport: {
+                type: Type.STRING,
+                enum: ['Football', 'Basketball', 'Tennis', 'Baseball', 'Ice Hockey', 'Esports', 'MMA', 'Golf'],
+                description: 'Sport category. MUST be exactly one of the specified enum values, or omit/leave null if unrecognizable.',
+              },
+              odds: {
+                type: Type.NUMBER,
+                description: 'Total combined odds directly printed on the slip footer/summary (or single bet odds). Extract printed number directly without multiplying legs.',
+              },
+              stake: {
+                type: Type.NUMBER,
+                description: 'Monetary stake amount wagered.',
+              },
+              potentialPayout: {
+                type: Type.NUMBER,
+                description: 'Estimated or potential monetary return.',
+              },
+              status: {
+                type: Type.STRING,
+                description: 'Current wager status: pending, won, lost, void, or cashout.',
+              },
+              is_live: {
+                type: Type.BOOLEAN,
+                description: 'True if the wager is an in-play/live bet or taken during halftime/in-game, indicated by LIVE badges, red dots, or match clocks.',
+              },
+              market_type: {
+                type: Type.STRING,
+                description: 'Type of bet: Single, Parlay, Multiple, Accumulator, or Bet Builder.',
+              },
+              placed_at: {
+                type: Type.STRING,
+                description: `The bet-slip's own placement/issue timestamp ONLY (e.g. a receipt or "ticket generated" line), NOT any match kickoff time — see rule 2b. ISO string YYYY-MM-DD or YYYY-MM-DDTHH:mm using current year ${currentYear}. If no distinct placement timestamp is visible on the slip, output an empty string "" — do not default to today's date.`,
+              },
+              bet_id: {
+                type: Type.STRING,
+                description: 'Unique slip identifier/ticket number.',
+              },
+              total_odds: {
+                type: Type.NUMBER,
+                description: 'Total combined odds directly printed on the ticket slip summary/footer (e.g. "Total odds", "Cota total"). Do not calculate by multiplying legs.',
+              },
+              legs: {
+                type: Type.ARRAY,
+                description: 'Array of separate selections or legs parsed from the slip. ALWAYS extract EVERY leg.',
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    event: {
+                      type: Type.STRING,
+                      description: 'Match fixture or event name (e.g. Deportivo Madryn vs. All Boys or Ciudad de Bolivar vs. Mitre). MUST NOT be empty.',
+                    },
+                    selection: {
+                      type: Type.STRING,
+                      description: 'The specific pick or team outcome (e.g. Deportivo Madryn, Mitre). MUST NOT be empty.',
+                    },
+                    team: {
+                      type: Type.STRING,
+                      description: 'Selected team or outcome.',
+                    },
+                    market: {
+                      type: Type.STRING,
+                      description: 'Wager market details (e.g. 1x2, Ambas Marcam, Match Result, [Team] para marcar em ambas as partes). MUST be extracted if visible.',
+                    },
+                    sport: {
+                      type: Type.STRING,
+                      enum: ['Football', 'Basketball', 'Tennis', 'Baseball', 'Ice Hockey', 'Esports', 'MMA', 'Golf'],
+                      description: 'Sport category for this specific leg. MUST be exactly one of the specified enum values, or omit/leave null if unrecognizable.',
+                    },
+                    odds_decimal: {
+                      type: Type.NUMBER,
+                      description: 'Decimal odds for this individual leg ONLY (e.g. 1.95 or 1.43). For Bet Builders, use group odds or builder_odds.',
+                    },
+                    builder_id: {
+                      type: Type.STRING,
+                      description: 'Identifier grouping sub-selections that belong to the same Bet Builder (e.g. builder_1, builder_2). Leave empty for single independent legs.',
+                    },
+                    builder_odds: {
+                      type: Type.NUMBER,
+                      description: 'Combined decimal odds for the entire Bet Builder block (e.g. 4.50 or 2.83). Only populated if part of a Bet Builder.',
+                    },
+                    event_date: {
+                      type: Type.STRING,
+                      description: `Kickoff date/time exactly as printed on THIS slip, in ISO format YYYY-MM-DDTHH:mm, using current year ${currentYear} if no year is shown. Read the actual digits from the image — never reuse a date from these instructions or from another leg. This field is REQUIRED and must always be present in the JSON. If, after a careful second check of this specific leg's own block, truly no date or time is printed there, output an empty string "" — never omit the field entirely.`,
+                    },
+                  },
+                  required: ['event', 'selection', 'event_date'],
+                },
+              },
+            },
+            required: ['bookmaker', 'stake', 'status', 'legs'],
+          },
+        };
+
+        const contents = [
+          {
+            inlineData: {
+              mimeType: mimeType || 'image/jpeg',
+              data: imageData,
+            },
+          },
+          {
+            text: prompt,
+          },
+        ];
+
+        // 1. Primary Model: gemini-3.5-flash-lite with up to 2 quick retries (1.5s, 3.5s) while within 35s budget
+        for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
+          if (controller.signal.aborted) {
+            throw new Error('Gemini OCR request timed out or was aborted.');
+          }
+
           try {
-            response = await ai.models.generateContent({
-              model: 'gemini-3.7-flash',
+            if (attempt > 0) {
+              console.log(`[BETSLIP OCR] [stage=${currentStage}] Executing retry ${attempt}/${retryDelays.length} with primary model gemini-3.5-flash-lite...`);
+            }
+
+            response = await geminiClient.models.generateContent({
+              model: 'gemini-3.5-flash-lite',
               contents,
               config: geminiConfig,
             });
-            usedFallbackModel = true;
-            modelUsed = 'gemini-3.7-flash';
-            console.log(`[BETSLIP OCR] [stage=${currentStage}] [FALLBACK] Successfully extracted betslip using backup model 'gemini-3.7-flash'!`);
-          } catch (fallbackErr: any) {
-            console.error(`[BETSLIP OCR] [stage=${currentStage}] [FALLBACK] Backup engine gemini-3.7-flash also failed: ${fallbackErr.message}`);
-            throw fallbackErr;
+
+            modelUsed = 'gemini-3.5-flash-lite';
+            break; // Succeeded
+          } catch (err: any) {
+            lastError = err;
+            const isTransient = isTransientFallbackError(err);
+            const hasMoreRetries = attempt < retryDelays.length;
+            const elapsedSoFar = Date.now() - startTime;
+
+            // Non-transient errors (e.g. 400, 403, 429): do NOT retry; bail immediately
+            if (!isTransient) {
+              console.error(`[BETSLIP OCR] [stage=${currentStage}] Non-retryable Gemini error encountered (${err.message}). Aborting retries immediately.`);
+              throw err;
+            }
+
+            // If we already spent >= 35s on primary, stop retrying primary immediately so fallback gets >=40s
+            if (hasMoreRetries && !controller.signal.aborted && elapsedSoFar < 35000) {
+              const waitMs = retryDelays[attempt];
+              console.warn(`[BETSLIP OCR] [stage=${currentStage}] ⚠️ Transient error on attempt ${attempt + 1} (${elapsedSoFar}ms elapsed). Waiting ${waitMs / 1000}s before retry (${attempt + 1}/${retryDelays.length})... [${err.message}]`);
+              await new Promise((res) => setTimeout(res, waitMs));
+            } else {
+              console.warn(`[BETSLIP OCR] [stage=${currentStage}] Switching away from primary gemini-3.5-flash-lite (${elapsedSoFar}ms elapsed): ${err.message}`);
+              break;
+            }
           }
-        } else if (lastError) {
-          throw lastError;
         }
+
+        // 2. Fallback Model: gemini-3.8-flash if primary failed with transient 503/timeout
+        if (!response) {
+          if (isTransientFallbackError(lastError) && !controller.signal.aborted) {
+            console.warn(`[BETSLIP OCR] [stage=${currentStage}] [FALLBACK] Automatically switching to backup engine 'gemini-3.8-flash' (${Date.now() - startTime}ms elapsed)...`);
+            try {
+              response = await geminiClient.models.generateContent({
+                model: 'gemini-3.8-flash',
+                contents,
+                config: geminiConfig,
+              });
+              usedFallbackModel = true;
+              modelUsed = 'gemini-3.8-flash';
+              console.log(`[BETSLIP OCR] [stage=${currentStage}] [FALLBACK] Successfully extracted betslip using backup model 'gemini-3.8-flash'!`);
+            } catch (fallbackErr: any) {
+              console.error(`[BETSLIP OCR] [stage=${currentStage}] [FALLBACK] Backup engine gemini-3.8-flash also failed: ${fallbackErr.message}`);
+              throw fallbackErr;
+            }
+          } else if (lastError) {
+            throw lastError;
+          }
+        }
+
+        currentStage = 'gemini_response';
+        rawText = response?.text || '';
+        const meta = response?.usageMetadata;
+        if (meta && typeof meta.totalTokenCount === 'number') {
+          extractedTokens = meta.totalTokenCount;
+        }
+      } else {
+        // Provider: Groq Cloud (console.groq.com OpenAI-compatible Vision API)
+        currentStage = 'groq_request';
+        const primaryGroqModel = getGroqPrimaryModel();
+        const fallbackGroqModel = getGroqFallbackModel();
+        console.log(`[BETSLIP OCR] [stage=${currentStage}] Starting Groq request (primary: ${primaryGroqModel}, timeout: 65s)...`);
+
+        // Concise, token-efficient prompt tailored for Groq free-tier (~7,000 input TPM limit)
+        const groqPrompt = `Extract all sports betting slip data into valid JSON matching the schema. Today: ${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(currentDay).padStart(2, '0')} (${currentMonthName} ${currentYear}).
+
+Rules:
+1. Bookmaker: Read literal wordmark/logo first (e.g., Betclic, 22Bet, BC.GAME, ReloadBet, Bet365, Pinnacle). Return null only if no brand is visible.
+2. Sport: Infer from teams/players/leagues/icons. Must be one of: "Football", "Basketball", "Tennis", "Baseball", "Ice Hockey", "Esports", "MMA", "Golf", or null. Set per leg and top-level.
+3. Odds & Stake: Use decimal odds. For total_odds/odds, extract the literal printed footer "Total odds" / "Cota total" (do NOT multiply legs).
+4. Dates (European DD/MM): "02/09" -> "${currentYear}-09-02" (prefer ${currentMonthName} or adjacent months). Format ISO "YYYY-MM-DDTHH:mm" using ${currentYear} if year omitted.
+   - placed_at: Ticket placement/issue timestamp ONLY (near header/Ticket ID/footer), or "". Never copy a match kickoff time here.
+   - event_date (required on every leg): Match kickoff time inside that leg's own row/card. If only a bare time (e.g. "19:30") is shown on a leg, combine the ticket's calendar date with THAT leg's time (never placed_at's time). Output "" only if no date/time exists in that leg's row.
+5. Status & Live: status in ["pending","won","lost","void","cashout"]. is_live=true if LIVE badge, red dot, match clock, or live score is shown.
+6. Legs & Bet Builders: Extract EVERY selection in legs[]. On ReloadBet-style rows: bold pick=selection, top-right=odds_decimal, middle=market, bottom=event.
+   - Combo market vs Bet Builder: If a single row (even with "&" like "1x2 & Total") has its own individual odds beside it, keep it as 1 standalone leg (builder_id=null).
+   - True Bet Builder ("Bet Builder", "Criar Aposta", "Same Game Parlay"): Sub-rows have NO individual odds; one combined odds covers the block. Split EVERY stacked sub-row into separate leg objects (NEVER join markets/picks with commas or "&"), all sharing the same builder_id ("builder_1", etc.) and builder_odds (= combined block odds; also put in odds_decimal).`;
+
+        const groqJsonSchema = {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            bookmaker: { type: ['string', 'null'] },
+            event: { type: ['string', 'null'] },
+            market: { type: ['string', 'null'] },
+            selection: { type: ['string', 'null'] },
+            sport: {
+              anyOf: [
+                {
+                  type: 'string',
+                  enum: ['Football', 'Basketball', 'Tennis', 'Baseball', 'Ice Hockey', 'Esports', 'MMA', 'Golf'],
+                },
+                { type: 'null' },
+              ],
+            },
+            odds: { type: ['number', 'null'] },
+            stake: { type: 'number' },
+            potentialPayout: { type: ['number', 'null'] },
+            status: { type: 'string' },
+            is_live: { type: ['boolean', 'null'] },
+            market_type: { type: ['string', 'null'] },
+            placed_at: { type: ['string', 'null'] },
+            bet_id: { type: ['string', 'null'] },
+            total_odds: { type: ['number', 'null'] },
+            legs: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  event: { type: 'string' },
+                  selection: { type: 'string' },
+                  team: { type: ['string', 'null'] },
+                  market: { type: ['string', 'null'] },
+                  sport: {
+                    anyOf: [
+                      {
+                        type: 'string',
+                        enum: ['Football', 'Basketball', 'Tennis', 'Baseball', 'Ice Hockey', 'Esports', 'MMA', 'Golf'],
+                      },
+                      { type: 'null' },
+                    ],
+                  },
+                  odds_decimal: { type: ['number', 'null'] },
+                  builder_id: { type: ['string', 'null'] },
+                  builder_odds: { type: ['number', 'null'] },
+                  event_date: { type: 'string' },
+                },
+                required: ['event', 'selection', 'team', 'market', 'sport', 'odds_decimal', 'builder_id', 'builder_odds', 'event_date'],
+              },
+            },
+          },
+          required: [
+            'bookmaker',
+            'event',
+            'market',
+            'selection',
+            'sport',
+            'odds',
+            'stake',
+            'potentialPayout',
+            'status',
+            'is_live',
+            'market_type',
+            'placed_at',
+            'bet_id',
+            'total_odds',
+            'legs',
+          ],
+        };
+
+        const callGroqModel = async (targetModel: string, useStrictSchema: boolean = true): Promise<string> => {
+          const schemaReminder = useStrictSchema
+            ? ''
+            : '\n\nReturn ONLY JSON with keys: bookmaker, event, market, selection, sport, odds, stake, potentialPayout, status, is_live, market_type, placed_at, bet_id, total_odds, legs ([{event, selection, team, market, sport, odds_decimal, builder_id, builder_odds, event_date}]).';
+
+          const payload: any = {
+            model: targetModel,
+            temperature: 0,
+            max_completion_tokens: 850,
+            messages: [
+              {
+                role: 'system',
+                content: 'Sports betslip OCR engine. Output only valid JSON matching the schema.',
+              },
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'image_url',
+                    image_url: {
+                      url: `data:${mimeType || 'image/jpeg'};base64,${imageData}`,
+                    },
+                  },
+                  {
+                    type: 'text',
+                    text: `${groqPrompt}${schemaReminder}`,
+                  },
+                ],
+              },
+            ],
+            response_format: useStrictSchema
+              ? {
+                  type: 'json_schema',
+                  json_schema: {
+                    name: 'betslip_extraction',
+                    strict: true,
+                    schema: groqJsonSchema,
+                  },
+                }
+              : { type: 'json_object' },
+          };
+
+          const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${groqApiKey}`,
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+
+          const headerObj: ProviderUsageState['rateLimitHeaders'] = {
+            limitRequests: groqRes.headers.get('x-ratelimit-limit-requests'),
+            remainingRequests: groqRes.headers.get('x-ratelimit-remaining-requests'),
+            limitTokens: groqRes.headers.get('x-ratelimit-limit-tokens'),
+            remainingTokens: groqRes.headers.get('x-ratelimit-remaining-tokens'),
+            resetRequests: groqRes.headers.get('x-ratelimit-reset-requests'),
+            resetTokens: groqRes.headers.get('x-ratelimit-reset-tokens'),
+          };
+          if (Object.values(headerObj).some((v) => v !== null && v !== '')) {
+            capturedRateHeaders = headerObj;
+          }
+
+          const rawBody = await groqRes.text();
+          if (!groqRes.ok) {
+            let errMessage = rawBody;
+            try {
+              const parsedErr = JSON.parse(rawBody);
+              errMessage = parsedErr?.error?.message || parsedErr?.error || parsedErr?.message || rawBody;
+            } catch {
+              // keep raw text
+            }
+            const err: any = new Error(errMessage || `Groq API error (HTTP ${groqRes.status})`);
+            err.status = groqRes.status;
+            err.statusCode = groqRes.status;
+            throw err;
+          }
+
+          const groqJson = JSON.parse(rawBody);
+          if (groqJson?.usage && typeof groqJson.usage.total_tokens === 'number') {
+            extractedTokens = groqJson.usage.total_tokens;
+          }
+          const msgContent = groqJson?.choices?.[0]?.message?.content;
+          if (typeof msgContent === 'string') {
+            return msgContent;
+          }
+          if (Array.isArray(msgContent)) {
+            return msgContent
+              .map((part: any) => (typeof part?.text === 'string' ? part.text : ''))
+              .join('')
+              .trim();
+          }
+          return '';
+        };
+
+        const callGroqWithSchemaFallback = async (targetModel: string): Promise<string> => {
+          try {
+            return await callGroqModel(targetModel, true);
+          } catch (schemaErr: any) {
+            const msg = String(schemaErr?.message || '').toLowerCase();
+            if (schemaErr?.status === 400 && (msg.includes('response_format') || msg.includes('json_schema') || msg.includes('schema') || msg.includes('reasoning') || msg.includes('strict'))) {
+              console.warn(`[BETSLIP OCR] [stage=${currentStage}] Strict json_schema rejected for ${targetModel}, retrying with json_object mode...`);
+              return await callGroqModel(targetModel, false);
+            }
+            throw schemaErr;
+          }
+        };
+
+        let lastGroqError: any = null;
+        for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
+          if (controller.signal.aborted) {
+            throw new Error('Groq OCR request timed out or was aborted.');
+          }
+
+          try {
+            if (attempt > 0) {
+              console.log(`[BETSLIP OCR] [stage=${currentStage}] Executing retry ${attempt}/${retryDelays.length} with primary model ${primaryGroqModel}...`);
+            }
+            rawText = await callGroqWithSchemaFallback(primaryGroqModel);
+            modelUsed = primaryGroqModel;
+            break;
+          } catch (err: any) {
+            lastGroqError = err;
+            const isUnavailable = is503UnavailableError(err);
+            const hasMoreRetries = attempt < retryDelays.length;
+
+            if (!isUnavailable) {
+              console.error(`[BETSLIP OCR] [stage=${currentStage}] Groq non-503 error (${err.status || 'unknown'}: ${err.message}).`);
+              break;
+            }
+
+            if (hasMoreRetries && !controller.signal.aborted) {
+              const waitMs = retryDelays[attempt];
+              console.warn(`[BETSLIP OCR] [stage=${currentStage}] ⚠️ Groq 503/UNAVAILABLE on attempt ${attempt + 1}. Waiting ${waitMs / 1000}s before retry... [${err.message}]`);
+              await new Promise((res) => setTimeout(res, waitMs));
+            } else {
+              break;
+            }
+          }
+        }
+
+        const errMsgLower = String(lastGroqError?.message || '').toLowerCase();
+        const isModelMissingOrDecommissioned =
+          lastGroqError?.status === 404 ||
+          errMsgLower.includes('decommissioned') ||
+          errMsgLower.includes('not found') ||
+          errMsgLower.includes('does not exist');
+
+        if (!rawText) {
+          if ((is503UnavailableError(lastGroqError) || isModelMissingOrDecommissioned) && fallbackGroqModel !== primaryGroqModel && !controller.signal.aborted) {
+            console.warn(`[BETSLIP OCR] [stage=${currentStage}] [FALLBACK] Switching to backup Groq model '${fallbackGroqModel}'...`);
+            try {
+              rawText = await callGroqWithSchemaFallback(fallbackGroqModel);
+              usedFallbackModel = true;
+              modelUsed = fallbackGroqModel;
+              console.log(`[BETSLIP OCR] [stage=${currentStage}] [FALLBACK] Successfully extracted betslip using '${fallbackGroqModel}'!`);
+            } catch (fallbackErr: any) {
+              console.error(`[BETSLIP OCR] [stage=${currentStage}] [FALLBACK] Backup Groq model ${fallbackGroqModel} failed: ${fallbackErr.message}`);
+              throw fallbackErr;
+            }
+          } else if (lastGroqError) {
+            throw lastGroqError;
+          }
+        }
+
+        currentStage = 'groq_response';
       }
 
-      currentStage = 'gemini_response';
       // Clear the timeout as soon as response arrives
       if (abortTimeout) {
         clearTimeout(abortTimeout);
@@ -466,18 +977,23 @@ Special parsing & Extraction Rules:
       imageData = null;
 
       const elapsedMs = Date.now() - startTime;
-      const rawText = response.text;
       if (!rawText) {
-        console.warn(`[BETSLIP OCR] [stage=${currentStage}] ⚠️ Gemini returned empty text after ${elapsedMs} ms`);
-        throw new Error('Gemini OCR returned an empty text response.');
+        console.warn(`[BETSLIP OCR] [stage=${currentStage}] ⚠️ ${provider} returned empty text after ${elapsedMs} ms`);
+        throw new Error(`${provider === 'groq' ? 'Groq' : 'Gemini'} OCR returned an empty text response.`);
       }
 
-      console.log(`[BETSLIP OCR] [stage=${currentStage}] Gemini response received in ${elapsedMs} ms (Text length: ${rawText.length})`);
+      console.log(`[BETSLIP OCR] [stage=${currentStage}] ${provider} response received in ${elapsedMs} ms (Text length: ${rawText.length})`);
 
       currentStage = 'json_parse';
-      // Safe parse to verify structure and log raw extraction
-      const parsedData = JSON.parse(rawText.trim());
-      console.log(`[BETSLIP OCR] [stage=${currentStage}] Gemini response parsed successfully`);
+      // Strip optional <think> blocks and markdown code fences if returned by model, then parse JSON
+      const cleanedRawText = rawText
+        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        .trim()
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+      const parsedData = JSON.parse(cleanedRawText);
+      console.log(`[BETSLIP OCR] [stage=${currentStage}] ${provider} response parsed successfully`);
 
       // Server-side European date normalization to prevent US MM/DD inversions
       function serverNormalizeDate(dateStr?: string): string | undefined {
@@ -549,12 +1065,21 @@ Special parsing & Extraction Rules:
         }
       }
 
+      recordOcrAttempt(provider, {
+        tokens: extractedTokens,
+        costUsd: null,
+        rateLimitHeaders: capturedRateHeaders,
+        errorCode: null,
+      });
+
+      parsedData.providerUsed = provider;
       parsedData.usedFallbackModel = usedFallbackModel;
       parsedData.modelUsed = modelUsed;
+      parsedData.providersSnapshot = buildProviderPayload();
 
       currentStage = 'http_response';
       const legsCount = Array.isArray(parsedData.legs) ? parsedData.legs.length : 0;
-      console.log(`[BETSLIP OCR] [stage=${currentStage}] Sending JSON response (${legsCount} legs, bookmaker: "${parsedData.bookmaker}", stake: ${parsedData.stake}, model: ${modelUsed}, fallback: ${usedFallbackModel})`);
+      console.log(`[BETSLIP OCR] [stage=${currentStage}] Sending JSON response (${legsCount} legs, bookmaker: "${parsedData.bookmaker}", stake: ${parsedData.stake}, provider: ${provider}, model: ${modelUsed}, fallback: ${usedFallbackModel})`);
 
       return res.json(parsedData);
     } catch (err: any) {
@@ -569,24 +1094,35 @@ Special parsing & Extraction Rules:
 
       const elapsedMs = Date.now() - startTime;
       const errMsg = (err.message || '').toLowerCase();
-      console.error(`[BETSLIP OCR] FAILURE stage=${currentStage} elapsed=${elapsedMs}ms error=${err.message || err}`);
+      const errStatus = err.status || err.statusCode;
+      const providerLabel = provider === 'groq' ? 'Groq' : 'Gemini';
+      const codePrefix = provider === 'groq' ? 'GROQ' : 'GEMINI';
+      console.error(`[BETSLIP OCR] FAILURE provider=${provider} stage=${currentStage} elapsed=${elapsedMs}ms status=${errStatus || 'n/a'} error=${err.message || err}`);
 
       // Handle Timeout / Abort
       if (err.name === 'AbortError' || errMsg.includes('abort') || errMsg.includes('deadline') || errMsg.includes('timeout') || errMsg.includes('504')) {
+        recordOcrAttempt(provider, { errorCode: `${codePrefix}_TIMEOUT` });
         return res.status(504).json({
-          error: 'Gemini OCR analysis timed out after 65 seconds. The image processing took too long to complete.',
-          code: 'GEMINI_TIMEOUT',
+          error: `${providerLabel} OCR analysis timed out after 80 seconds. Both the primary and backup engines took too long under upstream load.`,
+          code: `${codePrefix}_TIMEOUT`,
+          provider,
           stage: currentStage,
           retryable: true,
           details: err.message,
         });
       }
 
-      // Handle Quota / Rate Limit (429)
-      if (errMsg.includes('resource_exhausted') || errMsg.includes('quota') || errMsg.includes('limit exceeded') || errMsg.includes('429')) {
+      // Handle Quota / Rate Limit (429) or Groq 413 TPM exceeded
+      if (errStatus === 429 || errMsg.includes('resource_exhausted') || errMsg.includes('quota') || errMsg.includes('rate limit') || errMsg.includes('rate_limit') || errMsg.includes('tokens per minute') || errMsg.includes('limit exceeded') || errMsg.includes('429')) {
+        recordOcrAttempt(provider, { errorCode: `${codePrefix}_QUOTA`, rateLimitHeaders: capturedRateHeaders });
+        const retryMatch = String(err.message || '').match(/try again in\s+([0-9.]+s)/i);
+        const retryHint = retryMatch ? ` Please retry in ~${retryMatch[1]}.` : ' Wait a few seconds and retry.';
         return res.status(429).json({
-          error: 'Gemini API Rate Limit Exceeded (429 RESOURCE_EXHAUSTED). Free tier allows 15 Requests Per Minute. Please wait 30 seconds and retry.',
-          code: 'GEMINI_QUOTA',
+          error: provider === 'groq'
+            ? `Groq Free-Tier Rate Limit Reached (429). Free tier allows ~30 RPM, ~1,000 RPD, and ~7k input / 8k total TPM on Qwen 3.8 27B.${retryHint}`
+            : 'Gemini API Rate Limit Exceeded (429 RESOURCE_EXHAUSTED). Free tier allows 15 Requests Per Minute. Please wait 30 seconds and retry.',
+          code: `${codePrefix}_QUOTA`,
+          provider,
           stage: currentStage,
           retryable: true,
           details: err.message,
@@ -594,10 +1130,14 @@ Special parsing & Extraction Rules:
       }
 
       // Handle Permission / API Key / Auth (401, 403)
-      if (errMsg.includes('permission_denied') || errMsg.includes('api_key') || errMsg.includes('unauthenticated') || errMsg.includes('401') || errMsg.includes('403')) {
+      if (errStatus === 401 || errStatus === 403 || errMsg.includes('permission_denied') || errMsg.includes('api_key') || errMsg.includes('invalid api key') || errMsg.includes('unauthenticated') || errMsg.includes('unauthorized') || errMsg.includes('401') || errMsg.includes('403')) {
+        recordOcrAttempt(provider, { errorCode: `${codePrefix}_AUTH` });
         return res.status(403).json({
-          error: 'Gemini API Authentication Failed (403 PERMISSION_DENIED). Please verify that GEMINI_API_KEY is configured in Settings > Secrets.',
-          code: 'GEMINI_AUTH',
+          error: provider === 'groq'
+            ? 'Groq API Authentication Failed. Please verify that GROQ_API_KEY (or GROK_API_KEY) is a valid Groq Console key (console.groq.com) in Settings > Secrets or Render Environment Variables.'
+            : 'Gemini API Authentication Failed (403 PERMISSION_DENIED). Please verify that GEMINI_API_KEY is configured in Settings > Secrets or Render Environment Variables.',
+          code: `${codePrefix}_AUTH`,
+          provider,
           stage: currentStage,
           retryable: false,
           details: err.message,
@@ -605,11 +1145,13 @@ Special parsing & Extraction Rules:
       }
 
       // Handle Service Unavailable / High Demand (503)
-      const is503 = err.status === 503 || err.statusCode === 503 || err.code === 503 || errMsg.includes('503') || errMsg.includes('unavailable') || errMsg.includes('high demand') || errMsg.includes('overloaded');
+      const is503 = errStatus === 503 || err.code === 503 || errMsg.includes('503') || errMsg.includes('unavailable') || errMsg.includes('high demand') || errMsg.includes('overloaded');
       if (is503) {
+        recordOcrAttempt(provider, { errorCode: `${codePrefix}_UNAVAILABLE`, rateLimitHeaders: capturedRateHeaders });
         return res.status(503).json({
-          error: 'Gemini OCR models are currently experiencing temporary high demand (503 UNAVAILABLE). Automatic retries and the backup model were attempted, but upstream capacity remains temporarily constrained. Please try again shortly.',
-          code: 'GEMINI_UNAVAILABLE',
+          error: `${providerLabel} OCR models are currently experiencing temporary high demand (503 UNAVAILABLE). Automatic retries and the backup model were attempted, but upstream capacity remains temporarily constrained. Please try again shortly.`,
+          code: `${codePrefix}_UNAVAILABLE`,
+          provider,
           stage: currentStage,
           retryable: true,
           details: err.message,
@@ -617,19 +1159,23 @@ Special parsing & Extraction Rules:
       }
 
       // Handle Payload Too Large (413)
-      if (errMsg.includes('payload') || errMsg.includes('too large') || errMsg.includes('413')) {
+      if (errStatus === 413 || errMsg.includes('payload') || errMsg.includes('too large') || errMsg.includes('413')) {
+        recordOcrAttempt(provider, { errorCode: 'PAYLOAD_TOO_LARGE', rateLimitHeaders: capturedRateHeaders });
         return res.status(413).json({
-          error: 'Image payload is too large. Please upload an image under 15MB.',
+          error: 'Image payload is too large. Please upload a smaller or lower-resolution image.',
           code: 'PAYLOAD_TOO_LARGE',
+          provider,
           stage: currentStage,
           retryable: true,
           details: err.message,
         });
       }
 
+      recordOcrAttempt(provider, { errorCode: 'SERVER_ERROR', rateLimitHeaders: capturedRateHeaders });
       return res.status(500).json({
-        error: err.message || 'Failed to scan and parse the betslip using server-side Gemini OCR.',
+        error: err.message || `Failed to scan and parse the betslip using server-side ${providerLabel} OCR.`,
         code: 'SERVER_ERROR',
+        provider,
         stage: currentStage,
         retryable: true,
         details: err.message,
@@ -645,38 +1191,105 @@ Special parsing & Extraction Rules:
   });
 
   // Diagnostic Endpoint: Check Gemini Model Status
-  app.get('/api/diagnostics/gemini-status', async (req, res) => {
+  app.get('/api/diagnostics/gemini-status', async (_req, res) => {
     res.setHeader('Content-Type', 'application/json');
-    if (!process.env.GEMINI_API_KEY) {
+    const client = getGeminiClient();
+    if (!client) {
       return res.status(500).json({
         available: false,
-        model: 'gemini-3.1-flash-lite',
+        model: 'gemini-3.5-flash-lite',
         error: 'GEMINI_API_KEY environment variable is missing.',
         code: 'GEMINI_KEY_MISSING'
       });
     }
 
     try {
-      const ping = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite',
+      const ping = await client.models.generateContent({
+        model: 'gemini-3.5-flash-lite',
         contents: ['Return the word PONG in plain text.'],
       });
       return res.json({
         available: true,
-        model: 'gemini-3.1-flash-lite',
+        model: 'gemini-3.5-flash-lite',
         response: (ping.text || '').trim(),
         timestamp: new Date().toISOString()
       });
     } catch (err: any) {
       return res.status(500).json({
         available: false,
-        model: 'gemini-3.1-flash-lite',
+        model: 'gemini-3.5-flash-lite',
         error: err.message || 'Failed to reach Gemini API',
         code: 'GEMINI_MODEL_UNAVAILABLE',
         details: err
       });
     }
   });
+
+  // Diagnostic Endpoint: Check Groq (console.groq.com) Model Status & Rate Limits
+  const handleGroqStatusCheck = async (_req: express.Request, res: express.Response) => {
+    res.setHeader('Content-Type', 'application/json');
+    const groqKey = getGroqApiKey();
+    const groqModel = getGroqPrimaryModel();
+    if (!groqKey) {
+      return res.status(500).json({
+        available: false,
+        model: groqModel,
+        error: 'GROQ_API_KEY (or GROK_API_KEY) environment variable is missing.',
+        code: 'GROQ_KEY_MISSING',
+      });
+    }
+
+    try {
+      const pingRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${groqKey}`,
+        },
+        body: JSON.stringify({
+          model: groqModel,
+          max_completion_tokens: 16,
+          temperature: 0,
+          messages: [{ role: 'user', content: 'Return the word PONG in plain text.' }],
+        }),
+      });
+      const rateLimits = {
+        limitRequests: pingRes.headers.get('x-ratelimit-limit-requests'),
+        remainingRequests: pingRes.headers.get('x-ratelimit-remaining-requests'),
+        limitTokens: pingRes.headers.get('x-ratelimit-limit-tokens'),
+        remainingTokens: pingRes.headers.get('x-ratelimit-remaining-tokens'),
+        resetRequests: pingRes.headers.get('x-ratelimit-reset-requests'),
+        resetTokens: pingRes.headers.get('x-ratelimit-reset-tokens'),
+      };
+      const pingText = await pingRes.text();
+      if (!pingRes.ok) {
+        return res.status(pingRes.status === 401 || pingRes.status === 403 ? 403 : 500).json({
+          available: false,
+          model: groqModel,
+          error: pingText || `HTTP ${pingRes.status}`,
+          code: pingRes.status === 401 || pingRes.status === 403 ? 'GROQ_AUTH' : 'GROQ_MODEL_UNAVAILABLE',
+          rateLimits,
+        });
+      }
+      const parsed = JSON.parse(pingText);
+      return res.json({
+        available: true,
+        model: groqModel,
+        response: (parsed?.choices?.[0]?.message?.content || '').trim(),
+        rateLimits,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        available: false,
+        model: groqModel,
+        error: err.message || 'Failed to reach Groq API',
+        code: 'GROQ_MODEL_UNAVAILABLE',
+      });
+    }
+  };
+  app.get('/api/diagnostics/groq-status', handleGroqStatusCheck);
+  app.get('/api/diagnostics/grok-status', handleGroqStatusCheck);
 
   // Diagnostic Endpoint: Test A, B, and C matrix on an image
   app.post('/api/diagnostics/gemini-ocr-test', async (req, res) => {
@@ -688,12 +1301,17 @@ Special parsing & Extraction Rules:
       return res.status(400).json({ error: 'Missing image in body', code: 'INVALID_REQUEST' });
     }
 
-    const results: any = { model: 'gemini-3.1-flash-lite' };
+    const client = getGeminiClient();
+    if (!client) {
+      return res.status(500).json({ error: 'GEMINI_API_KEY missing', code: 'GEMINI_KEY_MISSING' });
+    }
+
+    const results: any = { model: 'gemini-3.5-flash-lite' };
 
     // Test A: Plain text
     try {
-      const resA = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite',
+      const resA = await client.models.generateContent({
+        model: 'gemini-3.5-flash-lite',
         contents: [
           { inlineData: { mimeType, data: imageData } },
           'Describe what is visible on this betting slip in plain text.'
@@ -706,8 +1324,8 @@ Special parsing & Extraction Rules:
 
     // Test B: Simple JSON
     try {
-      const resB = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite',
+      const resB = await client.models.generateContent({
+        model: 'gemini-3.5-flash-lite',
         contents: [
           { inlineData: { mimeType, data: imageData } },
           'Look at this image and return JSON object with description.'
@@ -746,7 +1364,7 @@ Special parsing & Extraction Rules:
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false, ws: false },
       appType: 'spa',
     });
     app.use(vite.middlewares);

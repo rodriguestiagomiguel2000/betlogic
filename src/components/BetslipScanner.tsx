@@ -66,8 +66,49 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   const [isCreatingTipster, setIsCreatingTipster] = useState<boolean>(false);
   const [isSubmittingBet, setIsSubmittingBet] = useState<boolean>(false);
   const [scanningState, setScanningState] = useState<'idle' | 'scanning' | 'scanned' | 'error'>('idle');
+  const [selectedProvider, setSelectedProvider] = useState<'gemini' | 'groq'>('gemini');
+  const [showLimitsInfo, setShowLimitsInfo] = useState<boolean>(true);
+  type ProviderCardInfo = {
+    available: boolean;
+    label: string;
+    model: string;
+    fallbackModel?: string;
+    envHint?: string;
+    freeTier?: boolean;
+    billingModel?: string;
+    limits?: {
+      rpm?: number | null;
+      rpd?: number | null;
+      tpm?: number | null;
+      tpd?: number | null;
+      resetNote?: string;
+    };
+    usage?: {
+      requestsLastMinute: number;
+      requestsToday: number;
+      tokensToday: number;
+      lastTokens: number | null;
+      lastCostUsd: number | null;
+      lastScanAt: string | null;
+      lastErrorCode: string | null;
+      rateLimitHeaders: {
+        limitRequests?: string | null;
+        remainingRequests?: string | null;
+        limitTokens?: string | null;
+        remainingTokens?: string | null;
+        resetRequests?: string | null;
+        resetTokens?: string | null;
+      } | null;
+    };
+  };
+  const [providerAvailability, setProviderAvailability] = useState<{
+    gemini: ProviderCardInfo;
+    groq: ProviderCardInfo;
+  } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<{
+    provider?: 'gemini' | 'groq';
+    is402?: boolean;
     is403?: boolean;
     isQuotaExceeded?: boolean;
     isTimeout?: boolean;
@@ -83,6 +124,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   const [showRawDrawer, setShowRawDrawer] = useState<boolean>(false);
   const [scanElapsedSec, setScanElapsedSec] = useState<number>(0);
   const [scanMetadata, setScanMetadata] = useState<{
+    providerUsed?: 'gemini' | 'groq';
     usedFallbackModel?: boolean;
     modelUsed?: string;
   } | null>(null);
@@ -92,6 +134,41 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   const timeoutTimerRef = useRef<NodeJS.Timeout | null>(null);
   const scanTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isManuallyCancelledRef = useRef<boolean>(false);
+
+  // Fetch configured OCR provider availability (Gemini & Groq) from backend
+  useEffect(() => {
+    let cancelled = false;
+    const loadProviders = async () => {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          const res = await fetch('/api/ocr-providers');
+          const ct = res.headers.get('content-type') || '';
+          if (!ct.includes('application/json')) {
+            if (attempt < 3) {
+              await new Promise((r) => setTimeout(r, 1500));
+              continue;
+            }
+            return;
+          }
+          const data = await res.json();
+          if (cancelled || !data?.providers) return;
+          setProviderAvailability(data.providers);
+          if (!data.providers.gemini?.available && data.providers.groq?.available) {
+            setSelectedProvider('groq');
+          }
+          return;
+        } catch {
+          if (attempt < 3) {
+            await new Promise((r) => setTimeout(r, 1500));
+          }
+        }
+      }
+    };
+    loadProviders();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Clean up timers and in-flight fetch requests on component unmount
   useEffect(() => {
@@ -152,7 +229,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
   const [isLive, setIsLive] = useState<boolean>(false);
   const [isFreeBet, setIsFreeBet] = useState<boolean>(false);
   const [freeBetDestination, setFreeBetDestination] = useState<'cash' | 'free_bet'>('cash');
-  const [notes, setNotes] = useState<string>('Scanned via Gemini 3.1 Flash Lite OCR engine');
+  const [notes, setNotes] = useState<string>('Scanned via AI Vision OCR engine');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [customTagInput, setCustomTagInput] = useState<string>('');
 
@@ -258,7 +335,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
           resolve({ base64, mimeType: mime, dataUrl: rawDataUrl });
         };
         img.onload = () => {
-          const MAX_DIM = 2048;
+          const MAX_DIM = 1600;
           let { width, height } = img;
           
           if (width > MAX_DIM || height > MAX_DIM) {
@@ -275,7 +352,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
             const ctx = canvas.getContext('2d');
             if (ctx) {
               ctx.drawImage(img, 0, 0, width, height);
-              const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+              const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
               const base64 = compressedDataUrl.split(',')[1] || '';
               resolve({ base64, mimeType: 'image/jpeg', dataUrl: compressedDataUrl });
               return;
@@ -305,7 +382,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     try {
       const { base64, mimeType, dataUrl } = await processAndCompressImage(file);
       setUploadedImage(dataUrl);
-      await runGeminiOcr(base64, mimeType, dataUrl);
+      await runOcrScan(base64, mimeType, dataUrl, false, 'parlay', selectedProvider);
     } catch (err: any) {
       console.error('Image compression/read error:', err);
       setErrorMessage(err.message || 'Failed to read image file');
@@ -330,16 +407,20 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     setUploadedImage(sampleUrl);
 
     const dummyBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
-    runGeminiOcr(dummyBase64, 'image/png', sampleUrl, true, sampleType);
+    runOcrScan(dummyBase64, 'image/png', sampleUrl, true, sampleType, selectedProvider);
   };
 
-  const runGeminiOcr = async (
+  const runOcrScan = async (
     base64Data: string,
     mimeType: string,
-    displayUrl: string,
+    _displayUrl: string,
     isSample: boolean = false,
-    sampleType: 'parlay' | 'single' = 'parlay'
+    sampleType: 'parlay' | 'single' = 'parlay',
+    providerOverride?: 'gemini' | 'groq'
   ) => {
+    const activeProvider = providerOverride || selectedProvider;
+    const providerDisplayName = activeProvider === 'groq' ? 'Groq Vision' : 'Gemini';
+
     isManuallyCancelledRef.current = false;
     setScanningState('scanning');
     setErrorMessage(null);
@@ -407,47 +488,88 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
 
         const jsonString = JSON.stringify(sampleResult, null, 2);
         setRawOcrJson(jsonString);
-        applyParsedData(sampleResult);
+        setScanMetadata({
+          providerUsed: activeProvider,
+          usedFallbackModel: false,
+          modelUsed: 'demo-sample',
+        });
+        applyParsedData(sampleResult, 'Demo Sample OCR');
         setNotes('Scanned via Demo Sample OCR');
         setScanningState('scanned');
       }, 1200);
       return;
     }
 
-    // Set up AbortController with a 70s frontend safety timeout
+    // Set up AbortController with a 95s frontend safety timeout (stays above backend's 80s cap)
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
     timeoutTimerRef.current = setTimeout(() => {
-      console.warn('Frontend OCR safety timeout reached (70s) - aborting request');
+      console.warn('Frontend OCR safety timeout reached (95s) - aborting request');
       controller.abort();
-    }, 70000);
+    }, 95000);
 
     try {
-      const response = await fetch('/api/scan-betslip', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          image: base64Data,
-          mimeType: mimeType || 'image/jpeg'
-        }),
-        signal: controller.signal
-      });
+      const maxWarmupRetries = 6;
+      let response!: Response;
+      let contentType = '';
+      let status = 0;
+      let statusText = '';
+      let nonJsonRawText: string | null = null;
+
+      for (let attempt = 0; attempt <= maxWarmupRetries; attempt++) {
+        nonJsonRawText = null;
+        response = await fetch('/api/scan-betslip', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            image: base64Data,
+            mimeType: mimeType || 'image/jpeg',
+            provider: activeProvider,
+          }),
+          signal: controller.signal
+        });
+
+        contentType = response.headers.get('content-type') || '';
+        status = response.status;
+        statusText = response.statusText;
+
+        if (contentType.includes('application/json')) {
+          break;
+        }
+
+        nonJsonRawText = await response.text();
+        const isServerStartingPage =
+          nonJsonRawText.includes('Starting Server...') ||
+          (status === 502 || status === 503 || status === 504);
+
+        if (isServerStartingPage && attempt < maxWarmupRetries && !controller.signal.aborted) {
+          await new Promise<void>((resolve, reject) => {
+            const onAbort = () => {
+              clearTimeout(timer);
+              reject(new DOMException('Aborted', 'AbortError'));
+            };
+            const timer = setTimeout(() => {
+              controller.signal.removeEventListener('abort', onAbort);
+              resolve();
+            }, 2500);
+            controller.signal.addEventListener('abort', onAbort, { once: true });
+          });
+          continue;
+        }
+        break;
+      }
 
       if (timeoutTimerRef.current) {
         clearTimeout(timeoutTimerRef.current);
         timeoutTimerRef.current = null;
       }
 
-      const contentType = response.headers.get('content-type') || '';
-      const status = response.status;
-      const statusText = response.statusText;
-
       // Handle non-JSON responses (such as unexpected HTML 404/500 pages or proxy fallback)
       if (!contentType.includes('application/json')) {
-        const rawText = await response.text();
+        const rawText = nonJsonRawText ?? (await response.text());
         console.error('[BETSLIP OCR] Non-JSON response received from server', {
           status,
           statusText,
@@ -456,7 +578,10 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
         });
 
         const isHtml = rawText.trim().toLowerCase().startsWith('<!doctype') || rawText.trim().toLowerCase().startsWith('<html');
-        const hint = isHtml
+        const isStarting = rawText.includes('Starting Server...');
+        const hint = isStarting
+          ? 'The backend server is still starting up. Please wait a few seconds and retry.'
+          : isHtml
           ? 'The server or proxy returned an HTML page (likely an SPA index.html fallback or reverse-proxy error) instead of JSON.'
           : `Expected application/json but received "${contentType || 'unknown'}".`;
 
@@ -479,9 +604,18 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
         throw err;
       }
 
+      const codePrefix = activeProvider === 'groq' ? 'GROQ' : 'GEMINI';
       if (!response.ok) {
-        const msg = result.error || `Server-side OCR scan failed with status ${status}`;
-        const code = result.code || (status === 504 ? 'GEMINI_TIMEOUT' : status === 503 ? 'GEMINI_UNAVAILABLE' : status === 429 ? 'GEMINI_QUOTA' : status === 403 ? 'GEMINI_AUTH' : 'SERVER_ERROR');
+        // Refresh provider usage snapshot in background on error (so failed/rate-limited counts stay accurate)
+        fetch('/api/ocr-providers')
+          .then((r) => (r.headers.get('content-type')?.includes('application/json') ? r.json() : null))
+          .then((d) => {
+            if (d?.providers) setProviderAvailability(d.providers);
+          })
+          .catch(() => {});
+
+        const msg = result.error || `Server-side ${providerDisplayName} OCR scan failed with status ${status}`;
+        const code = result.code || (status === 504 ? `${codePrefix}_TIMEOUT` : status === 503 ? `${codePrefix}_UNAVAILABLE` : status === 429 ? `${codePrefix}_QUOTA` : status === 402 ? `${codePrefix}_NO_CREDITS` : status === 403 || status === 401 ? `${codePrefix}_AUTH` : 'SERVER_ERROR');
 
         const err: any = new Error(msg);
         err.status = status;
@@ -496,18 +630,27 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
         throw new Error('Server returned an invalid or empty OCR structure.');
       }
 
+      if (result.providersSnapshot) {
+        setProviderAvailability(result.providersSnapshot);
+      }
+
+      const resolvedProvider: 'gemini' | 'groq' = result.providerUsed === 'groq' ? 'groq' : activeProvider;
+      const defaultModel = resolvedProvider === 'groq'
+        ? (providerAvailability?.groq?.model || 'qwen/qwen3.8-27b')
+        : 'gemini-3.5-flash-lite';
+      const resolvedModel = result.modelUsed || defaultModel;
+      const engineLabel = resolvedProvider === 'groq'
+        ? `Groq (${resolvedModel})`
+        : (result.usedFallbackModel ? `Gemini (${resolvedModel})` : 'Gemini 3.5 Flash Lite');
+
       const jsonStr = JSON.stringify(result, null, 2);
       setRawOcrJson(jsonStr);
       setScanMetadata({
+        providerUsed: resolvedProvider,
         usedFallbackModel: Boolean(result.usedFallbackModel),
-        modelUsed: result.modelUsed || 'gemini-3.1-flash-lite'
+        modelUsed: resolvedModel
       });
-      applyParsedData(result);
-      if (result.usedFallbackModel) {
-        setNotes(`Scanned via backup engine (${result.modelUsed || 'Gemini 3.7 Flash'})`);
-      } else {
-        setNotes(`Scanned via Gemini 3.1 Flash Lite OCR engine`);
-      }
+      applyParsedData(result, engineLabel);
       setScanningState('scanned');
     } catch (err: any) {
       if (timeoutTimerRef.current) {
@@ -520,29 +663,37 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
         return;
       }
 
-      console.error("Gemini OCR Parsing Error:", err);
+      console.warn(`${providerDisplayName} OCR Parsing Warning:`, err?.message || err);
+      const codePrefix = activeProvider === 'groq' ? 'GROQ' : 'GEMINI';
       const isAbort = err.name === 'AbortError' || (err.message || '').toLowerCase().includes('abort');
-      const isTimeout = isAbort || err.status === 504 || err.code === 'GEMINI_TIMEOUT' || (err.message || '').toLowerCase().includes('time');
-      const is403 = err.status === 403 || err.code === 'GEMINI_AUTH' || (err.message || '').includes('403') || (err.message || '').toLowerCase().includes('api key');
-      const isQuotaExceeded = err.status === 429 || err.code === 'GEMINI_QUOTA' || (err.message || '').toLowerCase().includes('quota') || (err.message || '').toLowerCase().includes('exhausted') || (err.message || '').includes('429');
-      const isUnavailable = err.status === 503 || err.code === 'GEMINI_UNAVAILABLE' || (err.message || '').includes('503') || (err.message || '').toLowerCase().includes('unavailable') || (err.message || '').toLowerCase().includes('high demand');
+      const isTimeout = isAbort || err.status === 504 || err.code === `${codePrefix}_TIMEOUT` || (err.message || '').toLowerCase().includes('time');
+      const is402 = err.status === 402 || err.code === `${codePrefix}_NO_CREDITS` || (err.message || '').toLowerCase().includes('insufficient_quota') || (err.message || '').toLowerCase().includes('credits exhausted');
+      const is403 = !is402 && (err.status === 401 || err.status === 403 || err.code === `${codePrefix}_AUTH` || (err.message || '').includes('403') || (err.message || '').includes('401') || (err.message || '').toLowerCase().includes('api key'));
+      const isQuotaExceeded = !is402 && (err.status === 429 || err.code === `${codePrefix}_QUOTA` || (err.message || '').toLowerCase().includes('quota') || (err.message || '').toLowerCase().includes('rate limit') || (err.message || '').toLowerCase().includes('exhausted') || (err.message || '').includes('429'));
+      const isUnavailable = err.status === 503 || err.code === `${codePrefix}_UNAVAILABLE` || (err.message || '').includes('503') || (err.message || '').toLowerCase().includes('unavailable') || (err.message || '').toLowerCase().includes('high demand');
       const isSizeError = err.status === 413 || err.code === 'PAYLOAD_TOO_LARGE' || (err.message || '').toLowerCase().includes('too large');
 
-      let finalErrorMessage = err.message || "Failed to scan and analyze betslip image.";
+      let finalErrorMessage = err.message || `Failed to scan and analyze betslip image using ${providerDisplayName}.`;
       if (isTimeout) {
-        finalErrorMessage = "The betslip scan timed out after 70 seconds. The server took too long to analyze the image or your network connection stalled.";
+        finalErrorMessage = "The betslip scan timed out after 95 seconds. The server took too long to analyze the image or your network connection stalled.";
       }
+
+      const attemptedModels = activeProvider === 'groq'
+        ? [providerAvailability?.groq?.model || 'qwen/qwen3.8-27b', `${providerAvailability?.groq?.fallbackModel || 'meta-models/muse-spark-open'} (fallback)`]
+        : ['gemini-3.5-flash-lite', 'gemini-3.8-flash (fallback)'];
 
       setErrorMessage(finalErrorMessage);
       setErrorDetails({
+        provider: activeProvider,
+        is402,
         is403,
         isQuotaExceeded,
         isTimeout,
         isSizeError,
         isUnavailable,
         isHtmlResponse: Boolean(err.isHtmlResponse),
-        code: err.code || (isTimeout ? 'GEMINI_TIMEOUT' : isUnavailable ? 'GEMINI_UNAVAILABLE' : isQuotaExceeded ? 'GEMINI_QUOTA' : is403 ? 'GEMINI_AUTH' : 'SERVER_ERROR'),
-        attemptedModels: ['gemini-3.1-flash-lite', 'gemini-3.7-flash (fallback)'],
+        code: err.code || (isTimeout ? `${codePrefix}_TIMEOUT` : is402 ? `${codePrefix}_NO_CREDITS` : isUnavailable ? `${codePrefix}_UNAVAILABLE` : isQuotaExceeded ? `${codePrefix}_QUOTA` : is403 ? `${codePrefix}_AUTH` : 'SERVER_ERROR'),
+        attemptedModels,
         message: finalErrorMessage
       });
       setScanningState('error');
@@ -551,7 +702,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     }
   };
 
-  const applyParsedData = (parsed: any) => {
+  const applyParsedData = (parsed: any, engineLabel: string = 'Gemini 3.5 Flash Lite') => {
     // Live detection
     const isLiveDetected = Boolean(
       parsed.is_live === true ||
@@ -612,7 +763,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
     const rawDateStr = parsed.placed_at || new Date().toISOString().slice(0, 10);
     const dateStr = normalizeScannedDate(rawDateStr) || new Date().toISOString().slice(0, 10);
     const idStr = parsed.bet_id ? ` [Ref: ${parsed.bet_id}]` : '';
-    setNotes(`Scanned via Gemini 3.1 Flash Lite on ${dateStr}${idStr}`);
+    setNotes(`Scanned via ${engineLabel} on ${dateStr}${idStr}`);
 
     // Detect Sport Helper
     const parseSportStr = (src: any): SportType | '' => {
@@ -939,14 +1090,18 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
             <ScanLine className="text-[#2563eb]" />
-            <span>Optical Betslip Scanner (Gemini 3.1 Flash Lite OCR)</span>
+            <span>Optical Betslip Scanner</span>
           </h2>
-          <span className="text-xs font-mono bg-[#2563eb]/20 text-[#2563eb] border border-[#2563eb]/30 px-2.5 py-1 rounded-md flex items-center gap-1">
-            <Sparkles size={12} /> Gemini Vision AI
+          <span className={`text-xs font-mono px-2.5 py-1 rounded-md flex items-center gap-1 border ${
+            selectedProvider === 'groq'
+              ? 'bg-emerald-500/15 text-[#4edea3] border-emerald-500/30'
+              : 'bg-[#2563eb]/20 text-[#2563eb] border-[#2563eb]/30'
+          }`}>
+            <Sparkles size={12} /> {selectedProvider === 'groq' ? 'Groq Vision AI' : 'Gemini Vision AI'}
           </span>
         </div>
         <p className="text-sm text-[#8d90a0] mt-1">
-          Upload or photograph a sports betslip image. Gemini 3.1 Flash Lite extracts multi-leg events, decimal odds, parlay structures, and bookmaker metadata into your selected bankroll.
+          Upload or photograph a sports betslip image. Choose between Gemini or Groq Vision OCR (free tier) to extract multi-leg events, decimal odds, parlay structures, and bookmaker metadata into your selected bankroll.
         </p>
       </div>
 
@@ -1014,6 +1169,181 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
               <span>Please select a target bankroll above before uploading or photographing a betslip.</span>
             </div>
           )}
+
+          {/* OCR Engine Provider Selector & Usage Limits */}
+          <div className="bg-[#171f33] p-4 rounded-xl border border-[#27314a] space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Sparkles size={15} className="text-[#2563eb]" />
+                <span className="text-xs font-bold uppercase tracking-wider text-white">
+                  Choose OCR Vision Engine
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLimitsInfo((prev) => !prev)}
+                className="text-[11px] font-medium text-[#8d90a0] hover:text-white flex items-center gap-1 cursor-pointer"
+              >
+                <Clock size={12} />
+                <span>{showLimitsInfo ? 'Hide Usage & Tier Limits' : 'Show Usage & Tier Limits'}</span>
+                {showLimitsInfo ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {(['gemini', 'groq'] as const).map((providerId) => {
+                const isSelected = selectedProvider === providerId;
+                const info = providerAvailability?.[providerId];
+                const isAvailable = info ? info.available : true;
+                const title = providerId === 'gemini' ? 'Gemini Vision' : 'Groq Vision (console.groq.com)';
+                const modelDesc = providerId === 'gemini'
+                  ? `${info?.model || 'gemini-3.5-flash-lite'} (backup: ${info?.fallbackModel || 'gemini-3.8-flash'})`
+                  : `${info?.model || 'qwen/qwen3.8-27b'} (backup: ${info?.fallbackModel || 'meta-models/muse-spark-open'})`;
+                const usage = info?.usage;
+                const rl = usage?.rateLimitHeaders;
+
+                return (
+                  <button
+                    key={providerId}
+                    type="button"
+                    onClick={() => setSelectedProvider(providerId)}
+                    className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between gap-2.5 cursor-pointer ${
+                      isSelected
+                        ? providerId === 'groq'
+                          ? 'bg-emerald-950/30 border-[#4edea3] ring-1 ring-[#4edea3]/40'
+                          : 'bg-[#2563eb]/15 border-[#2563eb] ring-1 ring-[#2563eb]/40'
+                        : 'bg-[#0b1326] border-[#27314a] hover:border-slate-500'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3 w-full">
+                      <div className="space-y-0.5 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                              isSelected
+                                ? providerId === 'groq'
+                                  ? 'bg-[#4edea3]'
+                                  : 'bg-[#2563eb]'
+                                : 'bg-slate-600'
+                            }`}
+                          />
+                          <span className="text-sm font-bold text-white">{title}</span>
+                        </div>
+                        <p className="text-[11px] font-mono text-[#8d90a0] truncate pl-4.5">
+                          {modelDesc}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                        <span
+                          className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
+                            providerId === 'gemini'
+                              ? 'bg-blue-500/15 text-blue-300 border-blue-500/30'
+                              : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                          }`}
+                        >
+                          FREE TIER
+                        </span>
+                        {info && (
+                          <span
+                            className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
+                              isAvailable
+                                ? 'bg-emerald-500/15 text-[#4edea3] border-emerald-500/30'
+                                : 'bg-slate-700/40 text-slate-300 border-slate-600/40'
+                            }`}
+                          >
+                            {isAvailable ? 'Key Ready' : 'No Key'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Compact per-provider limit & live usage line */}
+                    <div className="pt-2 border-t border-[#27314a]/70 flex items-center justify-between gap-2 text-[11px] font-mono text-[#8d90a0] w-full flex-wrap">
+                      {providerId === 'gemini' ? (
+                        <>
+                          <span>Free limit: 15/min • 500/day</span>
+                          <span className="text-slate-300">
+                            Used: {usage?.requestsLastMinute ?? 0}/15 min • {usage?.requestsToday ?? 0}/500 today
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span>Free limit: 30/min • 1,000/day • 8k tok/min</span>
+                          <span className="text-slate-300">
+                            {rl?.remainingRequests && rl?.limitRequests
+                              ? `Left: ${rl.remainingRequests}/${rl.limitRequests} RPD${rl.remainingTokens && rl.limitTokens ? ` • Tokens: ${rl.remainingTokens}/${rl.limitTokens} TPM` : ''}${rl.resetRequests ? ` (resets ${rl.resetRequests})` : ''}`
+                              : `Used: ${usage?.requestsLastMinute ?? 0}/30 min • ${usage?.requestsToday ?? 0}/1,000 today`}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {showLimitsInfo && (
+              <div className="bg-[#0b1326] border border-[#27314a] rounded-xl p-3.5 grid grid-cols-1 sm:grid-cols-2 gap-3 text-[11px] text-[#8d90a0]">
+                <div className="space-y-1">
+                  <div className="font-bold text-blue-300 flex items-center gap-1.5">
+                    <CheckCircle2 size={12} /> Gemini Free Tier Quotas
+                  </div>
+                  <p className="leading-relaxed">
+                    {providerAvailability?.gemini?.limits?.resetNote ||
+                      'Free tier (~15 RPM, ~500 RPD, 250k TPM) resets daily at midnight Pacific Time and is pooled across your Google AI Studio project.'}
+                  </p>
+                  {providerAvailability?.gemini?.usage && providerAvailability.gemini.usage.tokensToday > 0 && (
+                    <p className="font-mono text-slate-300 pt-0.5">
+                      Session tokens today: {providerAvailability.gemini.usage.tokensToday.toLocaleString()}
+                      {providerAvailability.gemini.usage.lastTokens ? ` (last scan: ${providerAvailability.gemini.usage.lastTokens.toLocaleString()})` : ''}
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-1 sm:border-l sm:border-[#27314a] sm:pl-3">
+                  <div className="font-bold text-[#4edea3] flex items-center gap-1.5">
+                    <CheckCircle2 size={12} /> Groq Free Tier Quotas (console.groq.com)
+                  </div>
+                  <p className="leading-relaxed">
+                    {providerAvailability?.groq?.limits?.resetNote ||
+                      'Groq Free Tier (~30 RPM, ~1,000 RPD, ~8,000 TPM, ~200k TPD on Qwen 3.8 27B) is completely free and shared across your Groq Console organization (console.groq.com/settings/limits).'}
+                  </p>
+                  {providerAvailability?.groq?.usage?.rateLimitHeaders && (
+                    <p className="font-mono text-slate-300 pt-0.5">
+                      Live Groq quota:
+                      {providerAvailability.groq.usage.rateLimitHeaders.remainingRequests && providerAvailability.groq.usage.rateLimitHeaders.limitRequests
+                        ? ` ${providerAvailability.groq.usage.rateLimitHeaders.remainingRequests}/${providerAvailability.groq.usage.rateLimitHeaders.limitRequests} req/day`
+                        : ''}
+                      {providerAvailability.groq.usage.rateLimitHeaders.remainingTokens && providerAvailability.groq.usage.rateLimitHeaders.limitTokens
+                        ? ` • ${providerAvailability.groq.usage.rateLimitHeaders.remainingTokens}/${providerAvailability.groq.usage.rateLimitHeaders.limitTokens} tok/min`
+                        : ''}
+                      {providerAvailability.groq.usage.rateLimitHeaders.resetRequests
+                        ? ` • resets in ${providerAvailability.groq.usage.rateLimitHeaders.resetRequests}`
+                        : ''}
+                    </p>
+                  )}
+                  {providerAvailability?.groq?.usage && providerAvailability.groq.usage.tokensToday > 0 && (
+                    <p className="font-mono text-slate-300 pt-0.5">
+                      Session tokens today: {providerAvailability.groq.usage.tokensToday.toLocaleString()}
+                      {providerAvailability.groq.usage.lastTokens ? ` (last scan: ${providerAvailability.groq.usage.lastTokens.toLocaleString()})` : ''}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {providerAvailability && !providerAvailability[selectedProvider]?.available && (
+              <div className="bg-amber-950/35 border border-amber-700/50 px-3 py-2 rounded-lg text-[11px] text-amber-200 flex items-center gap-2">
+                <Key size={13} className="text-amber-400 shrink-0" />
+                <span>
+                  {selectedProvider === 'groq'
+                    ? 'No Groq API key detected on the server yet. Add GROQ_API_KEY or GROK_API_KEY in AI Studio Secrets or Render Environment Variables.'
+                    : 'No Gemini API key detected on the server yet. Add GEMINI_API_KEY in AI Studio Secrets or Render Environment Variables.'}
+                </span>
+              </div>
+            )}
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* File Upload Box */}
@@ -1129,7 +1459,9 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
 
           <div className="space-y-2 max-w-md mx-auto">
             <h3 className="text-base font-bold text-white flex items-center justify-center gap-2">
-              <span>Analyzing Betslip with Gemini 3.1 Flash Lite OCR...</span>
+              <span>
+                Analyzing Betslip with {selectedProvider === 'groq' ? `Groq (${providerAvailability?.groq?.model || 'qwen/qwen3.8-27b'})` : 'Gemini 3.5 Flash Lite'} OCR...
+              </span>
             </h3>
             <p className="text-xs text-[#8d90a0] leading-relaxed">
               Extracting sportsbook metadata, fixture legs, selections, decimal odds, stake values, and payout structures.
@@ -1169,19 +1501,17 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
             <div className="space-y-1.5 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-base font-bold text-white">
-                  {errorDetails?.isTimeout
-                    ? '504 GATEWAY_TIMEOUT: Gemini OCR Request Timed Out'
-                    : errorDetails?.isUnavailable
-                    ? '503 SERVICE_UNAVAILABLE: High Demand on Gemini OCR'
-                    : errorDetails?.isQuotaExceeded 
-                    ? '429 RESOURCE_EXHAUSTED: Gemini API Quota Limit Reached'
-                    : errorDetails?.is403 
-                    ? '403 PERMISSION_DENIED: Gemini API Access Restricted' 
-                    : errorDetails?.isSizeError
-                    ? '413 PAYLOAD_TOO_LARGE: Betslip Image Exceeds Size Limits'
-                    : errorDetails?.isHtmlResponse
-                    ? 'NON_JSON_RESPONSE: Server Returned HTML Instead of JSON'
-                    : 'Gemini OCR Parsing Failed'}
+                  {(() => {
+                    const pName = (errorDetails?.provider || selectedProvider) === 'groq' ? 'Groq' : 'Gemini';
+                    if (errorDetails?.isTimeout) return `504 GATEWAY_TIMEOUT: ${pName} OCR Request Timed Out`;
+                    if (errorDetails?.isUnavailable) return `503 SERVICE_UNAVAILABLE: High Demand on ${pName} OCR`;
+                    if (errorDetails?.is402) return `402 PAYMENT_REQUIRED: ${pName} API Credits Needed`;
+                    if (errorDetails?.isQuotaExceeded) return `429 RESOURCE_EXHAUSTED: ${pName} API Quota Limit Reached`;
+                    if (errorDetails?.is403) return `403 PERMISSION_DENIED: ${pName} API Access Restricted`;
+                    if (errorDetails?.isSizeError) return '413 PAYLOAD_TOO_LARGE: Betslip Image Exceeds Size Limits';
+                    if (errorDetails?.isHtmlResponse) return 'NON_JSON_RESPONSE: Server Returned HTML Instead of JSON';
+                    return `${pName} OCR Parsing Failed`;
+                  })()}
                 </h3>
                 {errorDetails?.isTimeout && (
                   <span className="bg-amber-500/20 text-amber-400 border border-amber-500/40 text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase">
@@ -1191,6 +1521,11 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                 {errorDetails?.isUnavailable && (
                   <span className="bg-amber-500/20 text-amber-400 border border-amber-500/40 text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase">
                     HTTP 503 UNAVAILABLE
+                  </span>
+                )}
+                {errorDetails?.is402 && (
+                  <span className="bg-amber-500/20 text-amber-400 border border-amber-500/40 text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase">
+                    HTTP 402 CREDITS
                   </span>
                 )}
                 {errorDetails?.isQuotaExceeded && (
@@ -1268,24 +1603,55 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
             </div>
           )}
 
+          {errorDetails?.is402 && (
+            <div className="bg-[#0b1326] border border-[#27314a] p-4.5 rounded-xl space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+                <AlertTriangle size={15} /> Billing & Tier Limit Information
+              </h4>
+              <ul className="space-y-2.5 text-xs text-[#8d90a0]">
+                <li className="flex items-start gap-2.5">
+                  <div className="w-5 h-5 rounded-full bg-amber-950 text-amber-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-amber-800">1</div>
+                  <div>
+                    <strong className="text-white block font-semibold">Provider Billing / Quota Restriction</strong>
+                    <span>
+                      The upstream provider returned HTTP 402. Use the <strong>Switch Engine & Retry</strong> button below to fall back to the other free-tier provider.
+                    </span>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          )}
+
           {errorDetails?.is403 && (
             <div className="bg-[#0b1326] border border-[#27314a] p-4.5 rounded-xl space-y-3">
               <h4 className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
-                <Key size={15} /> Gemini API Diagnostic Checklist & Solutions
+                <Key size={15} /> {(errorDetails.provider || selectedProvider) === 'groq' ? 'Groq' : 'Gemini'} API Diagnostic Checklist & Solutions
               </h4>
               <ul className="space-y-2.5 text-xs text-[#8d90a0]">
                 <li className="flex items-start gap-2.5">
                   <div className="w-5 h-5 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">1</div>
                   <div>
                     <strong className="text-white block font-semibold">Server-Side API Key Validation</strong>
-                    <span>Ensure <code className="text-[#4edea3] bg-[#171f33] px-1.5 py-0.5 rounded font-mono">GEMINI_API_KEY</code> is configured in your server environment variables.</span>
+                    {(errorDetails.provider || selectedProvider) === 'groq' ? (
+                      <span>
+                        Ensure your Groq key from <code className="text-slate-300 font-mono">console.groq.com</code> is stored in <code className="text-[#4edea3] bg-[#171f33] px-1.5 py-0.5 rounded font-mono">GROQ_API_KEY</code> or <code className="text-[#4edea3] bg-[#171f33] px-1.5 py-0.5 rounded font-mono">GROK_API_KEY</code> in AI Studio Secrets or Render Environment / Secret File (<code className="text-slate-300 font-mono">/etc/secrets/.env</code>).
+                      </span>
+                    ) : (
+                      <span>Ensure <code className="text-[#4edea3] bg-[#171f33] px-1.5 py-0.5 rounded font-mono">GEMINI_API_KEY</code> is configured in your server environment variables or Render Secrets.</span>
+                    )}
                   </div>
                 </li>
                 <li className="flex items-start gap-2.5">
                   <div className="w-5 h-5 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">2</div>
                   <div>
-                    <strong className="text-white block font-semibold">Enable Generative Language API</strong>
-                    <span>Verify that the <strong>Generative Language API</strong> is enabled in your Google AI Studio / Google Cloud project.</span>
+                    <strong className="text-white block font-semibold">
+                      {(errorDetails.provider || selectedProvider) === 'groq' ? 'Verify Groq Console Account & Key Permissions' : 'Enable Generative Language API'}
+                    </strong>
+                    <span>
+                      {(errorDetails.provider || selectedProvider) === 'groq'
+                        ? 'Verify that your Groq API key is active in console.groq.com and that the vision model is enabled for your organization.'
+                        : 'Verify that the Generative Language API is enabled in your Google AI Studio / Google Cloud project.'}
+                    </span>
                   </div>
                 </li>
               </ul>
@@ -1301,8 +1667,14 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                 <li className="flex items-start gap-2.5">
                   <div className="w-5 h-5 rounded-full bg-amber-950 text-amber-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-amber-800">1</div>
                   <div>
-                    <strong className="text-white block font-semibold">Free-Tier Requests Per Minute Limit</strong>
-                    <span>Free Google AI Studio API Keys have a rate limit of 15 Requests Per Minute (RPM). Please wait 30-60 seconds before retrying.</span>
+                    <strong className="text-white block font-semibold">
+                      {(errorDetails.provider || selectedProvider) === 'groq' ? 'Groq Free-Tier Rate Limit (RPM / TPM / RPD)' : 'Free-Tier Requests Per Minute Limit'}
+                    </strong>
+                    <span>
+                      {(errorDetails.provider || selectedProvider) === 'groq'
+                        ? 'Your Groq free-tier limit (~30 RPM, ~8,000 TPM, ~1,000 RPD) was temporarily reached. Wait briefly for the token/request window to reset, or switch to Gemini below.'
+                        : 'Free Google AI Studio API Keys have a rate limit of 15 Requests Per Minute (RPM). Please wait 30-60 seconds before retrying or switch to Groq below.'}
+                    </span>
                   </div>
                 </li>
               </ul>
@@ -1317,19 +1689,38 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
               <Sparkles size={14} /> Run Instant Demo Sample (No Key Required)
             </button>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={() => setScanningState('idle')}
                 className="px-4 py-2 bg-[#0b1326] hover:bg-[#131b2e] border border-[#27314a] text-slate-300 hover:text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
               >
                 Dismiss & Back to Upload
               </button>
+              {uploadedImage && (() => {
+                const failedProvider = errorDetails?.provider || selectedProvider;
+                const altProvider: 'gemini' | 'groq' = failedProvider === 'groq' ? 'gemini' : 'groq';
+                const altAvailable = providerAvailability?.[altProvider]?.available;
+                if (!altAvailable) return null;
+                return (
+                  <button
+                    onClick={() => {
+                      const mime = uploadedImage.split(';')[0].replace('data:', '') || 'image/jpeg';
+                      const base64 = uploadedImage.split(',')[1] || '';
+                      setSelectedProvider(altProvider);
+                      runOcrScan(base64, mime, uploadedImage, false, 'parlay', altProvider);
+                    }}
+                    className="px-4 py-2 bg-[#0b1326] hover:bg-[#131b2e] border border-[#4edea3]/50 text-[#4edea3] text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Sparkles size={14} /> Switch to {altProvider === 'groq' ? 'Groq' : 'Gemini'} & Retry
+                  </button>
+                );
+              })()}
               {uploadedImage && (
                 <button
                   onClick={() => {
                     const mime = uploadedImage.split(';')[0].replace('data:', '') || 'image/jpeg';
                     const base64 = uploadedImage.split(',')[1] || '';
-                    runGeminiOcr(base64, mime, uploadedImage, false);
+                    runOcrScan(base64, mime, uploadedImage, false, 'parlay', errorDetails?.provider || selectedProvider);
                   }}
                   className="px-4 py-2 bg-[#2563eb] hover:bg-[#1d4ed8] text-white text-xs font-bold rounded-lg shadow transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
@@ -1348,17 +1739,19 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
           <div className="bg-[#00a572]/10 border border-[#00a572]/30 p-5 rounded-xl flex items-center justify-between flex-wrap gap-3 text-xs">
             <div className="flex items-center gap-2.5 text-[#4edea3] font-semibold">
               <CheckCircle2 size={18} />
-              <span>Gemini OCR Extracted Successfully! Review & edit extracted wagers below.</span>
+              <span>
+                {(scanMetadata?.providerUsed || selectedProvider) === 'groq' ? 'Groq Vision' : 'Gemini'} OCR Extracted Successfully! Review & edit extracted wagers below.
+              </span>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               {scanMetadata?.usedFallbackModel ? (
                 <span className="text-amber-300 bg-amber-500/15 border border-amber-500/40 px-2.5 py-1 rounded text-[11px] font-mono flex items-center gap-1.5 font-semibold">
                   <Sparkles size={12} className="text-amber-400" />
-                  Scanned with backup engine ({scanMetadata.modelUsed || 'Gemini 3.7 Flash'})
+                  Scanned with backup engine ({scanMetadata.modelUsed || ((scanMetadata.providerUsed || selectedProvider) === 'groq' ? 'meta-models/muse-spark-open' : 'Gemini 3.8 Flash')})
                 </span>
               ) : (
                 <span className="text-slate-400 font-mono text-[11px] bg-[#0b1326] px-2.5 py-1 rounded border border-[#27314a]">
-                  Engine: Gemini 3.1 Flash Lite
+                  Engine: {(scanMetadata?.providerUsed || selectedProvider) === 'groq' ? `Groq (${scanMetadata?.modelUsed || 'qwen/qwen3.8-27b'})` : (scanMetadata?.modelUsed || 'Gemini 3.5 Flash Lite')}
                 </span>
               )}
               <span className="text-slate-300 font-mono text-[11px] bg-[#0b1326] px-2.5 py-1 rounded border border-[#27314a]">
@@ -1401,7 +1794,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                   >
                     <div className="flex items-center gap-2 text-[#4edea3]">
                       <Code size={16} />
-                      <span>Raw Gemini OCR JSON Response</span>
+                      <span>Raw {(scanMetadata?.providerUsed || selectedProvider) === 'groq' ? 'Groq' : 'Gemini'} OCR JSON Response</span>
                     </div>
                     {showRawDrawer ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   </button>
@@ -1409,7 +1802,7 @@ export const BetslipScanner: React.FC<BetslipScannerProps> = ({
                   {showRawDrawer && (
                     <div className="p-3 bg-[#070d19] border-t border-[#27314a] space-y-2">
                       <div className="flex items-center justify-between text-[11px] text-[#8d90a0]">
-                        <span>Model: gemini-3.1-flash-lite (Primary OCR Engine)</span>
+                        <span>Model: {scanMetadata?.modelUsed || ((scanMetadata?.providerUsed || selectedProvider) === 'groq' ? 'qwen/qwen3.8-27b' : 'gemini-3.5-flash-lite')} ({scanMetadata?.usedFallbackModel ? 'Backup OCR Engine' : 'Primary OCR Engine'})</span>
                         <button
                           onClick={() => {
                             if (rawOcrJson) {
